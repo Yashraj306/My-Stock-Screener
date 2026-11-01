@@ -3,7 +3,7 @@ name: Pre-Market Screener
 on:
   schedule:
     - cron: "42 3 * * 1-5"   # 03:42 UTC = 09:12 AM IST, Mon-Fri
-  workflow_dispatch:          # manual run button for testing
+  workflow_dispatch:
 
 jobs:
   run:
@@ -19,4 +19,4 @@ jobs:
           EMAIL_USER: ${{ secrets.EMAIL_USER }}
           EMAIL_PASS: ${{ secrets.EMAIL_PASS }}
           EMAIL_TO: ${{ secrets.EMAIL_TO }}
-          
+          UPSTOX_TOKEN: ${{ secrets.UPSTOX_TOKEN }}
