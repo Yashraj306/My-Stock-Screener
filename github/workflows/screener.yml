@@ -1,0 +1,22 @@
+name: Pre-Market Screener
+
+on:
+  schedule:
+    - cron: "42 3 * * 1-5"   # 03:42 UTC = 09:12 AM IST, Mon-Fri
+  workflow_dispatch:          # manual run button for testing
+
+jobs:
+  run:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.11"
+      - run: pip install -r requirements.txt
+      - run: python screener.py
+        env:
+          EMAIL_USER: ${{ secrets.EMAIL_USER }}
+          EMAIL_PASS: ${{ secrets.EMAIL_PASS }}
+          EMAIL_TO: ${{ secrets.EMAIL_TO }}
+          
