@@ -391,4 +391,109 @@ def build_html(today, gl, gscore, gtone, gnote, secs, nc, bc, top, src_note, nif
         h.append(f'<div style="font-size:15px"><b>{i}. {r["name"]}</b> '
                  f'<span style="color:{dc}"><b>{r["action"]}</b></span> '
                  f'<span style="float:right;color:{cc}">Confidence: <b>{r["conf"]}</b> ({r["score"]:.0f})</span></div>')
-        h.append(f
+        h.append(f'<div style="font-size:12px;margin:4px 0">Prev close <b>{r["price"]:.2f}</b> ({r["chg"]:+.2f}%) | '
+                 f'RSI {r["rsi"]:.0f} | Volume {r["vr"]:.1f}x | ATR {r["atr_pct"]:.1f}% | '
+                 f'52w range {r["lo52"]:.0f} - {r["hi52"]:.0f} | Pressure: {r["pressure"]} | Sector: {r.get("sector","-")}</div>')
+        h.append('<div style="font-size:12px"><b>Why:</b><ul style="margin:3px 0 3px 18px;padding:0">'
+                 + "".join(f"<li>{x}</li>" for x in r["reasons"]) + '</ul></div>')
+        oc = r.get("oc")
+        if oc:
+            h.append(f'<div style="font-size:12px;background:#f6f8fa;padding:6px;border-radius:4px">'
+                     f'<b>Option chain ({oc["src"]}, expiry {oc["expiry"]})</b><br>'
+                     f'PCR {oc["pcr"]:.2f} | Support {oc["support"]:.0f} | Resistance {oc["resistance"]:.0f} | '
+                     f'Max pain {oc["max_pain"]:.0f} | ATM IV {oc["iv"]:.1f}<br>'
+                     f'OI buildup: <b>{oc["buildup"]}</b> ({oc["oi_chg_pct"]:+.1f}% OI) | OI bias: {oc["bias"]}</div>')
+            b = oc.get("best")
+            if b:
+                g = ""
+                if b["delta"]:
+                    g = (f'<br>Delta {b["delta"]:.2f} | Theta {b["theta"]:.2f}/day '
+                         f'({b["decay"]:.1f}% of premium) | Gamma {b["gamma"]:.4f} | Vega {b["vega"]:.2f}')
+                h.append(f'<div style="font-size:12px;background:#fff8e6;padding:6px;margin-top:4px;border-radius:4px">'
+                         f'<b>Best strike: {b["strike"]:.0f} {b["side"]}</b> | Premium {b["ltp"]:.1f} | '
+                         f'OI {b["oi"]:,.0f} ({b["oi_up"]:+.1f}%) | Volume {b["vol"]:,.0f} | IV {b["iv"]:.1f}{g}</div>')
+        else:
+            h.append('<div style="font-size:12px;color:#888">Option chain unavailable for this stock today.</div>')
+        h.append('</div>')
+
+    h.append('<div style="font-size:11px;color:#777;border-top:1px solid #ddd;padding-top:8px">'
+             'Based on previous-day data and the latest option chain snapshot. Ideas for your watchlist only, not advice. '
+             'Confirm with live price action after 9:15, avoid chasing gaps, size small, always use a stop-loss. '
+             'Index weights in this script are approximate and need updating every March and September.</div>')
+    h.append('</body></html>')
+    return "".join(h)
+
+def send_mail(html, subject):
+    m = MIMEMultipart("alternative")
+    m["Subject"], m["From"], m["To"] = subject, EMAIL_USER, EMAIL_TO
+    m.attach(MIMEText(html, "html"))
+    with smtplib.SMTP_SSL("smtp.gmail.com", 465, context=ssl.create_default_context()) as s:
+        s.login(EMAIL_USER, EMAIL_PASS)
+        s.sendmail(EMAIL_USER, EMAIL_TO.split(","), m.as_string())
+
+# ---------- MAIN ----------
+def main():
+    gl, gscore, gtone, gnote = global_cues()
+
+    symbols = {**INDICES, **{s: f"{s}.NS" for s in STOCKS}}
+    data = yf.download(list(symbols.values()), period="1y", interval="1d", group_by="ticker",
+                       auto_adjust=True, progress=False, threads=True)
+    avail = set(data.columns.get_level_values(0))
+    tech = {}
+    for name, tk in symbols.items():
+        if tk in avail:
+            t = analyze(data[tk])
+            if t: tech[name] = t
+
+    secs = sector_table(tech)
+    nifty_lvl = tech["NIFTY"]["price"] if "NIFTY" in tech else 24000
+    bank_lvl = tech["BANKNIFTY"]["price"] if "BANKNIFTY" in tech else 52000
+    nc = contribution(tech, NIFTY_W, nifty_lvl)
+    bc = contribution(tech, BANKNIFTY_W, bank_lvl)
+
+    cands = []
+    for name, t in tech.items():
+        d = direction_of(t)
+        if d:
+            r = dict(t); r.update(name=name, direction=d, is_index=name in INDICES,
+                                  sector=SECTOR_OF.get(name, "INDEX"))
+            cands.append(r)
+    cands.sort(key=lambda x: abs(x["diff"]), reverse=True)
+    short = cands[:TOP_N_CHAIN]
+    for r in cands:
+        if r["is_index"] and r not in short: short.append(r)
+
+    nse_sess = None
+    used_src = set()
+    for r in short:
+        res = chain_upstox(r["name"]) if UPSTOX_TOKEN else None
+        if res is None:
+            if nse_sess is None:
+                try:
+                    nse_sess = requests.Session()
+                    nse_sess.headers.update({"User-Agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 Chrome/124 Safari/537.36",
+                                             "Accept": "application/json", "Referer": "https://www.nseindia.com/option-chain"})
+                    nse_sess.get("https://www.nseindia.com", timeout=15)
+                except Exception:
+                    nse_sess = False
+            if nse_sess:
+                res = chain_nse(r["name"], nse_sess)
+        r["oc"] = None
+        if res:
+            df, exp, src = res
+            r["oc"] = analyze_chain(df, exp, src, r["chg"], r["direction"])
+            if r["oc"]: used_src.add(src)
+        make_signal(r, gtone)
+        time.sleep(0.4)
+
+    short.sort(key=lambda x: x["score"], reverse=True)
+    top = short[:TOP_N_REPORT]
+    nifty_row = tech.get("NIFTY"); bank_row = tech.get("BANKNIFTY")
+    today = dt.datetime.now().strftime("%A, %d %b %Y")
+    src_note = "Yahoo Finance + " + (", ".join(sorted(used_src)) if used_src else "no option chain")
+    html = build_html(today, gl, gscore, gtone, gnote, secs, nc, bc, top, src_note, nifty_row, bank_row)
+    send_mail(html, f"Pre-Market Screener | {gtone} global cues | {today}")
+    print("sent", [t["name"] for t in top])
+
+if __name__ == "__main__":
+    main()
