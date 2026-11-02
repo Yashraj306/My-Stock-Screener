@@ -2,7 +2,8 @@ name: Pre-Market Screener
 
 on:
   schedule:
-    - cron: "30 2 * * 1-5"   # 03:42 UTC = 09:12 AM IST, Mon-Fri
+    - cron: "7 1 * * 1-5"   # 06:37 AM IST, Mon-Fri (main run)
+    - cron: "7 2 * * 1-5"   # 07:37 AM IST, Mon-Fri (backup if main was skipped or failed)
   workflow_dispatch:
 
 jobs:
@@ -10,11 +11,32 @@ jobs:
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v4
+
+      - name: Today's date (IST)
+        id: d
+        run: echo "day=$(TZ=Asia/Kolkata date +%F)" >> "$GITHUB_OUTPUT"
+
+      - name: Check if today's report was already sent
+        id: sent
+        uses: actions/cache@v4
+        with:
+          path: .sent
+          key: sent-${{ steps.d.outputs.day }}
+
       - uses: actions/setup-python@v5
+        if: steps.sent.outputs.cache-hit != 'true' || github.event_name == 'workflow_dispatch'
         with:
           python-version: "3.11"
-      - run: pip install -r requirements.txt
-      - run: python screener.py
+
+      - name: Install
+        if: steps.sent.outputs.cache-hit != 'true' || github.event_name == 'workflow_dispatch'
+        run: pip install -r requirements.txt
+
+      - name: Run screener
+        if: steps.sent.outputs.cache-hit != 'true' || github.event_name == 'workflow_dispatch'
+        run: |
+          python screener.py
+          mkdir -p .sent && touch .sent/ok
         env:
           EMAIL_USER: ${{ secrets.EMAIL_USER }}
           EMAIL_PASS: ${{ secrets.EMAIL_PASS }}
