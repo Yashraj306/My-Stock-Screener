@@ -78,7 +78,7 @@ def analyze(d):
     r = rsi(c).iloc[-1]
     chg = pct(last, c.iloc[-2])
     avgv = v.iloc[-21:-1].mean()
-    vr = v.iloc[-1] / avgv if avgv > 0 else 1.0
+    vr = (v.iloc[-1] / avgv if avgv > 0 else 1.0) / vol_factor()
     hi20, lo20 = h.iloc[-21:-1].max(), l.iloc[-21:-1].min()
     hi52, lo52 = h.iloc[-252:].max(), l.iloc[-252:].min()
     tr = pd.concat([h-l, (h-c.shift()).abs(), (l-c.shift()).abs()], axis=1).max(axis=1)
@@ -115,7 +115,7 @@ def analyze(d):
     return dict(price=last, chg=chg, rsi=r, vr=vr, atr=atr, atr_pct=atr/last*100,
                 hi52=hi52, lo52=lo52, pressure=pressure, bull=bull, bear=bear,
                 diff=bull-bear, why=why, lvl_res=st["res"], lvl_sup=st["sup"],
-                asof=str(d.index[-1].date()))
+                close_pos=close_pos, asof=str(d.index[-1].date()))
 
 def direction_of(t):
     if t["diff"] >= 3: return "BULLISH"
