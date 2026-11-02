@@ -22,6 +22,11 @@ def freshness_note(asof):
     ist = dt.datetime.utcnow() + dt.timedelta(hours=5, minutes=30)
     exp = expected_session(ist)
     got = dt.date.fromisoformat(asof)
+    if MODE == "BTST":
+        exp = ist.date() if ist.weekday() < 5 else exp
+        if got == exp:
+            return f"Live prices as of {asof} ~{ist:%H:%M} IST (data may lag about 15 min)", False
+        return f"Price data as of {asof}. WARNING: expected today's live data ({exp}), ignore if market holiday", True
     if got < exp:
         return f"Price data as of {asof}. WARNING: STALE, expected {exp} (ignore if market holiday)", True
     if got > exp:
@@ -51,6 +56,9 @@ def main():
     cands = []
     for name, t in tech.items():
         strong = direction_of(t)
+        if MODE == "BTST" and strong:
+            if (strong == "BULLISH" and t["close_pos"] < 0.65) or (strong == "BEARISH" and t["close_pos"] > 0.35):
+                strong = None   # BTST needs the stock to be holding its strength into the close
         d = strong or direction_weak(t)
         if d:
             r = dict(t); r.update(name=name, direction=d, weak=strong is None, is_index=name in INDICES,
@@ -81,7 +89,11 @@ def main():
             df, exp, src = res
             r["oc"] = analyze_chain(df, exp, src, r["chg"], r["direction"])
             if r["oc"]: used_src.add(src)
-        make_signal(r, gtone)
+        make_signal(r, "MIXED" if MODE == "BTST" else gtone)
+        if MODE == "BTST" and ((r["direction"] == "BULLISH" and r["pressure"] == "BUYING") or (r["direction"] == "BEARISH" and r["pressure"] == "SELLING")):
+            r["score"] += 10
+            r["reasons"].append("BTST: holding strength near the day's extreme in trade direction")
+            r["conf"] = "HIGH" if r["score"] >= 90 else "MEDIUM" if r["score"] >= 60 else "LOW"
         if r["weak"]:
             r["conf"] = "LOW"
             r["action"] += " (WATCH)"
@@ -97,7 +109,8 @@ def main():
     fresh_txt, fresh_bad = freshness_note(asof)
     src_note += " | " + fresh_txt
     html = build_html(today, gl, gscore, gtone, gnote, secs, nc, bc, top, src_note, nifty_row, bank_row)
-    send_mail(html, ("CHECK DATA | " if fresh_bad else "") + f"Pre-Market Screener | {gtone} global cues | {today}")
+    subj = f"{TITLE} | {today}" if MODE == "BTST" else f"{TITLE} | {gtone} global cues | {today}"
+    send_mail(html, ("CHECK DATA | " if fresh_bad else "") + subj)
     print("sent", [t["name"] for t in top])
 
 if __name__ == "__main__":
