@@ -1,109 +1,91 @@
-import ssl, smtplib
 from email.mime.multipart import MIMEMultipart
 from email.mime.text import MIMEText
 from config import *
+from cards import card, track_html, n, FONT
 
-SECT_WHEN = "today" if MODE == "BTST" else "yesterday"
-BTST_NOTE = ("BTST plan: these ideas use live prices from the afternoon. Buy only if the stock still holds its strength "
-             "around 3:00 to 3:20 PM, check US futures and news before holding overnight, keep a stop-loss, "
-             "and plan to exit in the first hour next morning. Options lose value overnight, so avoid near-expiry strikes.")
-
-# ---------- HTML ----------
 def col(x): return "#0a7d2c" if x >= 0 else "#c0392b"
 
-def build_html(today, gl, gscore, gtone, gnote, secs, nc, bc, top, src_note, nifty_row, bank_row):
-    css = ("font-family:Arial,Helvetica,sans-serif;color:#222;")
-    h = [f'<html><body style="{css}max-width:760px;margin:auto">']
-    h.append(f'<div style="background:#12263f;color:#fff;padding:14px 18px;border-radius:6px">'
-             f'<div style="font-size:18px;font-weight:bold">{TITLE}</div>'
-             f'<div style="font-size:12px;opacity:.8">{today} | Data source: {src_note}</div></div>')
+def h2(t, sub=""):
+    s = f'<div style="font-size:12px;color:#6b7280;margin-top:2px">{sub}</div>' if sub else ""
+    return (f'<div style="{FONT}margin:22px 0 10px;padding-bottom:6px;border-bottom:2px solid #12263f">'
+            f'<span style="font-size:16px;font-weight:bold;color:#12263f">{t}</span>{s}</div>')
 
-    tcol = {"POSITIVE": "#0a7d2c", "NEGATIVE": "#c0392b", "MIXED": "#b9770e"}[gtone]
-    h.append(f'<h3 style="margin:18px 0 6px">1. Global cues: <span style="color:{tcol}">{gtone}</span></h3>')
-    h.append(f'<div style="font-size:13px;margin-bottom:6px">{gnote}. Score {gscore:+.1f}</div>')
-    h.append('<table cellpadding="5" style="border-collapse:collapse;font-size:12px;width:100%">')
-    cells = "".join(f'<td style="border:1px solid #ddd;text-align:center"><b>{n}</b><br>{v:,.1f}<br>'
-                    f'<span style="color:{col(c)}">{c:+.2f}%</span></td>' for n, v, c in gl)
-    h.append(f'<tr>{cells}</tr></table>')
-    h.append('<div style="font-size:11px;color:#777;margin-top:4px">US markets close after India does, so '
-             'their move shows how India may open. Crude, dollar and US yields move opposite to Indian equities.</div>')
-
-    h.append('<h3 style="margin:18px 0 6px">2. Index view</h3>')
-    for nm, row, contrib in (("NIFTY", nifty_row, nc), ("BANKNIFTY", bank_row, bc)):
+def build_html(c):
+    sect_when = "today" if MODE == "BTST" else "yesterday"
+    h = [f'<html><body style="{FONT}color:#111;background:#f3f4f6;margin:0;padding:12px"><div style="max-width:680px;margin:auto;background:#fff;padding:16px;border-radius:8px">']
+    h.append(f'<div style="background:#12263f;color:#fff;padding:16px 18px;border-radius:6px">'
+             f'<div style="font-size:20px;font-weight:bold">{TITLE}</div>'
+             f'<div style="font-size:12px;opacity:.85;margin-top:3px">{c["today"]}</div></div>')
+    # summary
+    nf = c["nifty"]
+    br = c["breadth"]
+    tcol = {"POSITIVE": "#0a7d2c", "NEGATIVE": "#c0392b", "MIXED": "#b45309"}[c["gtone"]]
+    trend = "above" if nf["price"] > nf["ema20"] else "below"
+    top = [r for r in c["all_ideas"] if r["grade"] == "A"][:3]
+    top_txt = ", ".join(f'{r["name"]} ({"CE" if r["direction"] == "BULLISH" else "PE"})' for r in top) or "none rated A today"
+    warn = f'<div style="margin-top:6px;color:#b45309">&#9888; {c["fresh_txt"]}</div>' if c["fresh_level"] != "ok" else ""
+    h.append(f'<div style="{FONT}background:#f9fafb;border:1px solid #e5e7eb;border-radius:6px;padding:12px;margin-top:12px;font-size:13px;line-height:1.6">'
+             f'<b>Summary</b><br>'
+             f'Nifty {n(nf["price"])} ({nf["chg"]:+.2f}%), {trend} its 20-day average, RSI {nf["rsi"]:.0f}<br>'
+             f'Breadth: {br["adv"]} up / {br["dec"]} down | {br["a20"]:.0f}% above EMA20 | {br["a50"]:.0f}% above EMA50 | <b>{br["tone"]}</b><br>'
+             + (f'Global tone: <b style="color:{tcol}">{c["gtone"]}</b> ({c["gnote"]})<br>' if MODE != "BTST" else '')
+             + f'Scanned {c["n_scanned"]} stocks and indices | Ideas: {len(c["all_ideas"])} '
+               f'(pre-rally {c["n_pre"]}, continuation {c["n_post"]})<br>'
+               f'Best rated (Grade A): {top_txt}<br>'
+               f'<span style="font-size:11px;color:#6b7280">{c["fresh_txt_ok"]} | {c["src_note"]} | {c["uni_note"]}</span>{warn}</div>')
+    # market context
+    if MODE != "BTST":
+        h.append(h2("Global cues", "US markets close after India, so their move hints at today's open"))
+        cells = "".join(f'<td style="border:1px solid #e5e7eb;text-align:center;padding:6px;font-size:11px"><b>{a}</b><br>{b:,.1f}<br>'
+                        f'<span style="color:{col(d)}">{d:+.2f}%</span></td>' for a, b, d in c["gl"])
+        h.append(f'<div style="overflow-x:auto"><table cellpadding="0" cellspacing="0" style="border-collapse:collapse;width:100%"><tr>{cells}</tr></table></div>')
+    h.append(h2("Index view"))
+    for nm, row, ct in (("NIFTY", c["nifty"], c["nc"]), ("BANKNIFTY", c["bank"], c["bc"])):
         if not row: continue
-        up = contrib[:3]; dn = contrib[-3:][::-1]
-        ups = ", ".join(f"{s} ({p:+.0f} pts)" for s, c, w, p in up)
-        dns = ", ".join(f"{s} ({p:+.0f} pts)" for s, c, w, p in dn)
-        h.append(f'<div style="border:1px solid #ddd;padding:8px;margin-bottom:6px;font-size:13px">'
-                 f'<b>{nm}</b> {row["price"]:.0f} ({row["chg"]:+.2f}%) | RSI {row["rsi"]:.0f} | '
-                 f'Pressure: {row["pressure"]}<br>'
-                 f'<span style="color:#0a7d2c">Biggest support: {ups}</span><br>'
-                 f'<span style="color:#c0392b">Biggest drag: {dns}</span></div>')
-
-    h.append(f'<h3 style="margin:18px 0 6px">3. Sector strength ({SECT_WHEN})</h3>')
-    h.append('<table cellpadding="5" style="border-collapse:collapse;font-size:12px;width:100%">'
-             '<tr style="background:#eee"><th align="left">Sector</th><th>Avg move</th><th>Stocks up</th><th>Read</th></tr>')
-    for sec, avg, up, n in secs:
-        read = "Strong" if avg > 0.7 and up / n > 0.6 else "Weak" if avg < -0.7 and up / n < 0.4 else "Mixed"
-        h.append(f'<tr><td style="border:1px solid #ddd">{sec}</td>'
-                 f'<td style="border:1px solid #ddd;color:{col(avg)};text-align:center">{avg:+.2f}%</td>'
-                 f'<td style="border:1px solid #ddd;text-align:center">{up}/{n}</td>'
-                 f'<td style="border:1px solid #ddd;text-align:center">{read}</td></tr>')
-    h.append('</table>')
-
-    bulls = [x for x in top if x["direction"] == "BULLISH"]
-    bears = [x for x in top if x["direction"] == "BEARISH"]
-    seq = []
-    for title, grp in (("4. Bullish ideas: BUY CALL", bulls), ("5. Bearish ideas: BUY PUT", bears)):
-        seq.append((title, None, 0, len(grp)))
-        seq += [(None, x, k, 0) for k, x in enumerate(grp, 1)]
-    for title, r, i, n in seq:
-        if title:
-            h.append(f'<h3 style="margin:18px 0 6px">{title}</h3>')
-            if n == 0:
-                h.append('<p style="font-size:13px">No strong setup today.</p>')
-            continue
-        dc = "#0a7d2c" if r["direction"] == "BULLISH" else "#c0392b"
-        cc = {"HIGH": "#0a7d2c", "MEDIUM": "#b9770e", "LOW": "#777"}[r["conf"]]
-        h.append(f'<div style="border:1px solid #ccc;border-left:5px solid {dc};padding:10px;margin-bottom:10px;border-radius:4px">')
-        h.append(f'<div style="font-size:15px"><b>{i}. {r["name"]}</b> '
-                 f'<span style="color:{dc}"><b>{r["action"]}</b></span> '
-                 f'<span style="float:right;color:{cc}">Confidence: <b>{r["conf"]}</b> ({r["score"]:.0f})</span></div>')
-        h.append(f'<div style="font-size:12px;margin:4px 0">Prev close <b>{r["price"]:.2f}</b> ({r["chg"]:+.2f}%) | '
-                 f'RSI {r["rsi"]:.0f} | Volume {r["vr"]:.1f}x | ATR {r["atr_pct"]:.1f}% | '
-                 f'52w range {r["lo52"]:.0f} - {r["hi52"]:.0f} | Pressure: {r["pressure"]} | Sector: {r.get("sector","-")}</div>')
-        if r.get("lvl_res") and r.get("lvl_sup"):
-            h.append(f'<div style="font-size:12px;margin:2px 0">Key levels (swing): Resistance <b>{r["lvl_res"]:.0f}</b> | Support <b>{r["lvl_sup"]:.0f}</b></div>')
-        h.append('<div style="font-size:12px"><b>Why:</b><ul style="margin:3px 0 3px 18px;padding:0">'
-                 + "".join(f"<li>{x}</li>" for x in r["reasons"]) + '</ul></div>')
-        oc = r.get("oc")
-        if oc:
-            h.append(f'<div style="font-size:12px;background:#f6f8fa;padding:6px;border-radius:4px">'
-                     f'<b>Option chain ({oc["src"]}, expiry {oc["expiry"]})</b><br>'
-                     f'PCR {oc["pcr"]:.2f} | Support {oc["support"]:.0f} | Resistance {oc["resistance"]:.0f} | '
-                     f'Max pain {oc["max_pain"]:.0f} | ATM IV {oc["iv"]:.1f}<br>'
-                     f'OI buildup: <b>{oc["buildup"]}</b> ({oc["oi_chg_pct"]:+.1f}% OI) | OI bias: {oc["bias"]}</div>')
-            b = oc.get("best")
-            if b:
-                g = ""
-                if b["delta"]:
-                    g = (f'<br>Delta {b["delta"]:.2f} | Theta {b["theta"]:.2f}/day '
-                         f'({b["decay"]:.1f}% of premium) | Gamma {b["gamma"]:.4f} | Vega {b["vega"]:.2f}')
-                h.append(f'<div style="font-size:12px;background:#fff8e6;padding:6px;margin-top:4px;border-radius:4px">'
-                         f'<b>Best strike: {b["strike"]:.0f} {b["side"]}</b> | Premium {b["ltp"]:.1f} | '
-                         f'OI {b["oi"]:,.0f} ({b["oi_up"]:+.1f}%) | Volume {b["vol"]:,.0f} | IV {b["iv"]:.1f}{g}</div>')
-        else:
-            h.append('<div style="font-size:12px;color:#888">Option chain unavailable for this stock today.</div>')
-        h.append('</div>')
-
+        up = ", ".join(f"{s} ({p:+.0f})" for s, _, _, p in ct[:3])
+        dn = ", ".join(f"{s} ({p:+.0f})" for s, _, _, p in ct[-3:][::-1])
+        h.append(f'<div style="font-size:13px;border:1px solid #e5e7eb;border-radius:6px;padding:10px;margin-bottom:8px;line-height:1.6">'
+                 f'<b>{nm}</b> {n(row["price"])} ({row["chg"]:+.2f}%) | RSI {row["rsi"]:.0f}<br>'
+                 f'<span style="color:#0a7d2c">Lifting: {up}</span><br><span style="color:#c0392b">Dragging: {dn}</span> '
+                 f'<span style="font-size:11px;color:#6b7280">(index points)</span></div>')
+    h.append(h2(f"Sector strength ({sect_when})"))
+    rows = ""
+    for sec, avg, up, tot in c["secs"][:12]:
+        read = "Strong" if avg > 0.7 and up / tot > 0.6 else "Weak" if avg < -0.7 and up / tot < 0.4 else "Mixed"
+        rows += (f'<tr><td style="padding:5px 8px;border:1px solid #e5e7eb">{sec}</td>'
+                 f'<td align="center" style="border:1px solid #e5e7eb;color:{col(avg)}">{avg:+.2f}%</td>'
+                 f'<td align="center" style="border:1px solid #e5e7eb">{up}/{tot}</td>'
+                 f'<td align="center" style="border:1px solid #e5e7eb">{read}</td></tr>')
+    h.append(f'<table width="100%" cellpadding="0" cellspacing="0" style="border-collapse:collapse;font-size:12px">'
+             f'<tr style="background:#f3f4f6"><th align="left" style="padding:5px 8px">Sector</th><th>Avg move</th><th>Up</th><th>Read</th></tr>{rows}</table>')
+    # ideas
+    blocks = (("PRE", "BULLISH", "Pre-rally setups: bullish (BUY CALL)", "Coiling under resistance. Best entries come on the break."),
+              ("PRE", "BEARISH", "Pre-rally setups: bearish (BUY PUT)", "Pressing on support. Best entries come on the break."),
+              ("POST", "BULLISH", "Continuation: bullish (BUY CALL)", "Move has started. Prefer pullbacks, avoid chasing."),
+              ("POST", "BEARISH", "Continuation: bearish (BUY PUT)", "Move has started. Prefer bounces that fail, avoid chasing."))
+    for kind, side, title, sub in blocks:
+        items = c["ideas"][kind][side]
+        h.append(h2(title, sub))
+        h.append("".join(card(r) for r in items) if items else
+                 '<div style="font-size:13px;color:#6b7280">Nothing passed the quality filters today. Fewer, better ideas is intended.</div>')
+    h.append(h2("Track record", "How past ideas actually performed"))
+    h.append(track_html(c["stats"]))
     if MODE == "BTST":
-        h.append('<div style="font-size:12px;background:#eef6ff;padding:8px;margin-top:10px;border-radius:4px">' + BTST_NOTE + '</div>')
-    h.append('<div style="font-size:11px;color:#777;border-top:1px solid #ddd;padding-top:8px">'
-             'Based on previous-day data and the latest option chain snapshot. Ideas for your watchlist only, not advice. '
-             'Confirm with live price action after 9:15, avoid chasing gaps, size small, always use a stop-loss. '
-             'Index weights in this script are approximate and need updating every March and September.</div>')
-    h.append('</body></html>')
+        h.append('<div style="font-size:12px;background:#eef6ff;padding:10px;margin-top:14px;border-radius:4px;line-height:1.5">'
+                 '<b>BTST plan:</b> buy only if the stock still holds strength around 3:00 to 3:20 PM. Check US futures and news before holding overnight, '
+                 'keep a stop-loss, and plan to exit in the first hour next morning. Options lose value overnight.</div>')
+    h.append('<div style="font-size:11px;color:#6b7280;border-top:1px solid #e5e7eb;margin-top:16px;padding-top:8px;line-height:1.5">'
+             'Grades count independent confirmations (trend, level, volume, options, sector, relative strength). They are not probabilities. '
+             'Ideas only, not advice. Confirm with live price action, size small, always use a stop-loss. '
+             'Index weights are approximate and need updating every March and September.</div>')
+    h.append('</div></body></html>')
     return "".join(h)
+
+def build_stale_html(txt):
+    return (f'<html><body style="{FONT}"><div style="max-width:560px;margin:auto;padding:16px">'
+            f'<h3>{TITLE}: no ideas generated</h3><p>{txt}</p>'
+            '<p>Reason for stopping: ideas built on old prices would be misleading. If today is a market holiday, ignore this mail. '
+            'Otherwise re-run the workflow later.</p></div></body></html>')
 
 def send_mail(html, subject):
     m = MIMEMultipart("alternative")
@@ -112,4 +94,3 @@ def send_mail(html, subject):
     with smtplib.SMTP_SSL("smtp.gmail.com", 465, context=ssl.create_default_context()) as s:
         s.login(EMAIL_USER, EMAIL_PASS)
         s.sendmail(EMAIL_USER, EMAIL_TO.split(","), m.as_string())
-
