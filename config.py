@@ -1,74 +1,332 @@
-import os, io, gzip, json, time, ssl, smtplib, datetime as dt
+
 import numpy as np
 import pandas as pd
-import requests
- 
-EMAIL_USER = os.environ["EMAIL_USER"]
-EMAIL_PASS = os.environ["EMAIL_PASS"]
-EMAIL_TO = os.environ.get("EMAIL_TO", EMAIL_USER)
-UPSTOX_TOKEN = os.environ.get("UPSTOX_TOKEN", "")
-MODE = os.environ.get("MODE", "MORNING")          # MORNING or BTST
-TITLE = "BTST Options Screener" if MODE == "BTST" else "Pre-Market Options Screener"
- 
-INDICES = {"NIFTY": "^NSEI", "BANKNIFTY": "^NSEBANK"}
-CHAIN_LIMITS = {"PRE": 8, "POST": 6}   # candidates per side sent to option-chain analysis
-SHOW_LIMITS = {"PRE": 5, "POST": 4}    # ideas shown per side
- 
-# used only if the Upstox instrument file cannot be read
-FALLBACK_STOCKS = [
-    "RELIANCE","TCS","HDFCBANK","ICICIBANK","INFY","SBIN","BHARTIARTL","ITC","LT","AXISBANK","KOTAKBANK",
-    "HINDUNILVR","BAJFINANCE","MARUTI","SUNPHARMA","TATASTEEL","NTPC","POWERGRID","ONGC","ADANIENT",
-    "ADANIPORTS","ASIANPAINT","TITAN","ULTRACEMCO","WIPRO","HCLTECH","TECHM","JSWSTEEL","HINDALCO",
-    "COALINDIA","BAJAJFINSV","M&M","INDUSINDBK","DRREDDY","CIPLA","EICHERMOT","GRASIM","HEROMOTOCO",
-    "BPCL","IOC","VEDL","DLF","PNB","BANKBARODA","CANBK","FEDERALBNK","IDFCFIRSTB","AUBANK","TATAPOWER",
-    "SAIL","NMDC","GAIL","HAL","BEL","IRCTC","TRENT","LUPIN","TVSMOTOR","PFC","RECLTD","BHEL","INDIGO",
-    "SIEMENS","ABB",
-]
-SECTORS = {
-    "BANK": ["HDFCBANK","ICICIBANK","SBIN","AXISBANK","KOTAKBANK","INDUSINDBK","BANKBARODA","PNB","CANBK","FEDERALBNK","IDFCFIRSTB","AUBANK"],
-    "IT": ["TCS","INFY","WIPRO","HCLTECH","TECHM"],
-    "AUTO": ["MARUTI","M&M","EICHERMOT","HEROMOTOCO","TVSMOTOR"],
-    "METAL": ["TATASTEEL","JSWSTEEL","HINDALCO","VEDL","SAIL","NMDC","COALINDIA"],
-    "PHARMA": ["SUNPHARMA","DRREDDY","CIPLA","LUPIN"],
-    "ENERGY": ["RELIANCE","ONGC","BPCL","IOC","NTPC","POWERGRID","TATAPOWER","GAIL"],
-    "FINANCE": ["BAJFINANCE","BAJAJFINSV","PFC","RECLTD"],
-    "FMCG": ["ITC","HINDUNILVR"],
-    "INFRA": ["LT","ADANIENT","ADANIPORTS","ULTRACEMCO","GRASIM","DLF","HAL","BEL","BHEL","SIEMENS","ABB"],
-    "CONSUMER": ["TITAN","ASIANPAINT","TRENT","IRCTC","INDIGO"],
-    "TELECOM": ["BHARTIARTL"],
-}
-SECTOR_OF = {s: k for k, v in SECTORS.items() for s in v}
- 
-# Approximate index weights (%). Update every March/September from niftyindices.com
-NIFTY_W = {"HDFCBANK":13.0,"RELIANCE":8.5,"ICICIBANK":8.5,"INFY":5.0,"BHARTIARTL":5.0,"TCS":3.5,"ITC":3.5,"LT":3.5,
-    "AXISBANK":3.0,"SBIN":3.0,"KOTAKBANK":2.7,"M&M":2.5,"BAJFINANCE":2.3,"HCLTECH":1.8,"SUNPHARMA":1.7,"MARUTI":1.7,
-    "NTPC":1.5,"TITAN":1.5,"ULTRACEMCO":1.3,"TATASTEEL":1.2,"POWERGRID":1.2,"ASIANPAINT":1.0,"HINDUNILVR":2.0,
-    "BAJAJFINSV":1.1,"ADANIPORTS":1.1,"JSWSTEEL":1.0,"ONGC":0.9,"COALINDIA":0.8,"WIPRO":0.7,"TECHM":0.7,
-    "INDUSINDBK":0.6,"HINDALCO":0.9,"GRASIM":0.9,"CIPLA":0.6,"DRREDDY":0.6,"EICHERMOT":0.7,"HEROMOTOCO":0.5,
-    "BPCL":0.5,"ADANIENT":0.8,"TRENT":0.8,"INDIGO":0.8}
-BANKNIFTY_W = {"HDFCBANK":29.0,"ICICIBANK":24.0,"SBIN":9.5,"AXISBANK":8.5,"KOTAKBANK":7.5,"INDUSINDBK":3.0,
-    "BANKBARODA":3.0,"PNB":2.5,"CANBK":2.5,"FEDERALBNK":2.5,"IDFCFIRSTB":2.0,"AUBANK":2.0}
- 
-GLOBAL = {
-    "Nasdaq": ("^IXIC", 1.0), "Dow Jones": ("^DJI", 1.0), "S&P 500": ("^GSPC", 1.0),
-    "Nikkei": ("^N225", 0.6), "Hang Seng": ("^HSI", 0.6),
-    "Crude Oil": ("CL=F", -0.3), "US Dollar Idx": ("DX-Y.NYB", -0.4),
-    "US 10Y Yield": ("^TNX", -0.3), "India VIX": ("^INDIAVIX", -0.5),
-}
- 
-def ist_now():
-    return dt.datetime.utcnow() + dt.timedelta(hours=5, minutes=30)
- 
-def vol_factor():
-    """Fraction of the day's volume normally done by now (BTST runs mid-session)."""
-    if MODE != "BTST": return 1.0
-    n = ist_now()
-    mins = n.hour * 60 + n.minute - (9 * 60 + 15)
-    return min(1.0, max(0.3, mins / 375))
- 
-# ---------- RISK / ALERT SETTINGS (set as repo secrets or edit here) ----------
-CAPITAL = float(os.environ.get("CAPITAL") or 100000)     # trading capital in Rs
-RISK_PCT = float(os.environ.get("RISK_PCT") or 1)        # max loss per trade, % of capital
-TELEGRAM_TOKEN = os.environ.get("TELEGRAM_TOKEN", "")
-TELEGRAM_CHAT_ID = os.environ.get("TELEGRAM_CHAT_ID", "")
- 
+
+from config import *
+
+
+def rsi(s, n=14):
+    d = s.diff()
+
+    g = d.clip(lower=0).ewm(
+        alpha=1 / n, adjust=False
+    ).mean()
+
+    l = (-d.clip(upper=0)).ewm(
+        alpha=1 / n, adjust=False
+    ).mean()
+
+    rs = g / l.replace(0, np.nan)
+
+    out = 100 - 100 / (1 + rs)
+
+    out = out.mask((l == 0) & (g > 0), 100.0)
+    out = out.mask((l == 0) & (g == 0), 50.0)
+
+    return out
+
+
+def pct(a, b):
+    if b is None or pd.isna(b) or b == 0:
+        return 0.0
+
+    return (a / b - 1) * 100
+
+
+def atr(d, period=14):
+    h = d["High"]
+    l = d["Low"]
+    c = d["Close"]
+
+    tr = pd.concat([
+        h - l,
+        (h - c.shift()).abs(),
+        (l - c.shift()).abs()
+    ], axis=1).max(axis=1)
+
+    return tr.rolling(period).mean()
+
+
+def adx(d, period=14):
+    h = d["High"]
+    l = d["Low"]
+
+    tr = pd.concat([
+        h - l,
+        (h - d["Close"].shift()).abs(),
+        (l - d["Close"].shift()).abs()
+    ], axis=1).max(axis=1)
+
+    up = h.diff()
+    down = -l.diff()
+
+    plus_dm = up.where(
+        (up > down) & (up > 0), 0.0
+    )
+
+    minus_dm = down.where(
+        (down > up) & (down > 0), 0.0
+    )
+
+    atr_s = tr.ewm(
+        alpha=1 / period, adjust=False
+    ).mean()
+
+    plus_di = 100 * plus_dm.ewm(
+        alpha=1 / period, adjust=False
+    ).mean() / atr_s.replace(0, np.nan)
+
+    minus_di = 100 * minus_dm.ewm(
+        alpha=1 / period, adjust=False
+    ).mean() / atr_s.replace(0, np.nan)
+
+    dx = (
+        100 * (plus_di - minus_di).abs()
+        / (plus_di + minus_di).replace(0, np.nan)
+    )
+
+    return dx.ewm(
+        alpha=1 / period, adjust=False
+    ).mean()
+
+
+def swings(h, l, w=2, look=90):
+    H = h.iloc[-look:].values
+    L = l.iloc[-look:].values
+
+    sh, sl = [], []
+
+    for i in range(w, len(H) - w):
+
+        if H[i] > max(H[i-w:i]) and H[i] >= max(H[i+1:i+w+1]):
+            sh.append((i, float(H[i])))
+
+        if L[i] < min(L[i-w:i]) and L[i] <= min(L[i+1:i+w+1]):
+            sl.append((i, float(L[i])))
+
+    return sh, sl
+
+
+def structure(d):
+    sh, sl = swings(d["High"], d["Low"])
+
+    last = float(d["Close"].iloc[-1])
+
+    tags = []
+    bull = 0
+    bear = 0
+
+    res = sh[-1][1] if sh else None
+    sup = sl[-1][1] if sl else None
+
+    if len(sh) >= 2 and len(sl) >= 2:
+
+        up = (
+            sh[-1][1] > sh[-2][1]
+            and sl[-1][1] > sl[-2][1]
+        )
+
+        dn = (
+            sh[-1][1] < sh[-2][1]
+            and sl[-1][1] < sl[-2][1]
+        )
+
+        if last > sh[-1][1]:
+
+            if dn:
+                bull += 3
+                tags.append("Bullish Change of Structure")
+
+            else:
+                bull += 2
+                tags.append("Bullish Break of Structure")
+
+        elif last < sl[-1][1]:
+
+            if up:
+                bear += 3
+                tags.append("Bearish Change of Structure")
+
+            else:
+                bear += 2
+                tags.append("Bearish Break of Structure")
+
+    return {
+        "tags": tags,
+        "bull": bull,
+        "bear": bear,
+        "res": res,
+        "sup": sup
+    }
+
+
+def analyze(d, is_index=False):
+
+    required = {
+        "Open", "High", "Low", "Close", "Volume"
+    }
+
+    if d is None or not required.issubset(d.columns):
+        return None
+
+    d = d.copy().sort_index()
+
+    d = d[~d.index.duplicated(keep="last")]
+    d = d.dropna(subset=list(required))
+
+    if len(d) < 210:
+        return None
+
+    c = d["Close"]
+    o = d["Open"]
+    h = d["High"]
+    l = d["Low"]
+    v = d["Volume"]
+
+    last = float(c.iloc[-1])
+
+    ema20 = float(c.ewm(span=20, adjust=False).mean().iloc[-1])
+    ema50 = float(c.ewm(span=50, adjust=False).mean().iloc[-1])
+    ema200 = float(c.ewm(span=200, adjust=False).mean().iloc[-1])
+
+    r = float(rsi(c).iloc[-1])
+    a = float(atr(d).iloc[-1])
+    adx_value = float(adx(d).iloc[-1])
+
+    if not np.isfinite([r, a, adx_value]).all() or last <= 0:
+        return None
+
+    chg = pct(last, float(c.iloc[-2]))
+
+    avgv = v.iloc[-21:-1].mean()
+
+    vr = (
+        1.0 if is_index or avgv <= 0
+        else float(v.iloc[-1] / avgv) / vol_factor()
+    )
+
+    hi20 = float(h.iloc[-21:-1].max())
+    lo20 = float(l.iloc[-21:-1].min())
+
+    hi52 = float(h.iloc[-252:].max())
+    lo52 = float(l.iloc[-252:].min())
+
+    rng = float(h.iloc[-1] - l.iloc[-1])
+
+    close_pos = (
+        float((last - l.iloc[-1]) / rng)
+        if rng > 0 else 0.5
+    )
+
+    ret20 = pct(last, float(c.iloc[-21]))
+
+    st = structure(d)
+
+    bull = st["bull"]
+    bear = st["bear"]
+
+    why = list(st["tags"])
+
+    level_ok = bool(st["tags"])
+
+    if last > ema20 > ema50:
+        bull += 2
+        why.append("Bullish EMA trend")
+
+    elif last < ema20 < ema50:
+        bear += 2
+        why.append("Bearish EMA trend")
+
+    if 55 <= r <= 72:
+        bull += 1
+        why.append(f"RSI {r:.1f}: bullish momentum")
+
+    elif 32 <= r <= 45:
+        bear += 1
+        why.append(f"RSI {r:.1f}: bearish momentum")
+
+    if not is_index and vr >= 1.5:
+
+        if last > o.iloc[-1]:
+            bull += 2
+            why.append("High volume buying")
+
+        else:
+            bear += 2
+            why.append("High volume selling")
+
+    if last > hi20:
+        bull += 2
+        level_ok = True
+        why.append("20-day breakout")
+
+    elif last < lo20:
+        bear += 2
+        level_ok = True
+        why.append("20-day breakdown")
+
+    if last >= hi52 * 0.98:
+        bull += 1
+        why.append("Near 52-week high")
+
+    if last <= lo52 * 1.02:
+        bear += 1
+        why.append("Near 52-week low")
+
+    if close_pos >= 0.8 and vr >= 1.2:
+        bull += 1
+        why.append("Strong closing candle")
+
+    if close_pos <= 0.2 and vr >= 1.2:
+        bear += 1
+        why.append("Weak closing candle")
+
+    if chg >= 1.5:
+        bull += 1
+
+    elif chg <= -1.5:
+        bear += 1
+
+    if close_pos >= 0.7 and vr >= 1.0:
+        pressure = "BUYING"
+
+    elif close_pos <= 0.3 and vr >= 1.0:
+        pressure = "SELLING"
+
+    else:
+        pressure = "BALANCED"
+
+    return {
+        "price": last,
+        "chg": chg,
+        "rsi": r,
+        "vr": vr,
+        "atr": a,
+        "atr_pct": a / last * 100,
+        "ema20": ema20,
+        "ema50": ema50,
+        "ema200": ema200,
+        "adx": adx_value,
+        "hi52": hi52,
+        "lo52": lo52,
+        "pressure": pressure,
+        "diff": bull - bear,
+        "why": why,
+        "level_ok": level_ok,
+        "lvl_res": st["res"],
+        "lvl_sup": st["sup"],
+        "close_pos": close_pos,
+        "ret20": ret20,
+        "asof": str(d.index[-1].date())
+    }
+
+
+def direction_of(t):
+
+    if t["diff"] >= 3:
+        return "BULLISH"
+
+    if t["diff"] <= -3:
+        return "BEARISH"
+
+    return None
