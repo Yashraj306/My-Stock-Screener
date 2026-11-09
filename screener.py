@@ -159,21 +159,23 @@ def run_screener():
 
         opt_info = analyze_chain(chain_df) if (chain_df is not None and not chain_df.empty) else None
 
+        # Trend & Weakness detection (Balanced filters to capture bearish setups)
         is_bullish = price > ema20 and ema20 > ema50
-        is_bearish = price < ema20 and ema20 < ema50
+        is_bearish = (price < ema20) or (price < ema50 and ema20 < ema50)
 
+        # Range Contraction (Coiling)
         recent_range = df["High"].tail(5) - df["Low"].tail(5)
         prior_range = df["High"].tail(20) - df["Low"].tail(20)
         is_contracted = recent_range.mean() < prior_range.mean() * 0.75
 
         checks = {
-            "trend": is_bullish,
+            "trend": is_bullish or is_bearish,
             "level": True,
             "compression": is_contracted,
-            "volume": vr >= 1.1,
-            "options": (opt_info and opt_info["oi_pcr"] >= 0.85) if is_bullish else False,
+            "volume": vr >= 1.0,
+            "options": (opt_info and opt_info["oi_pcr"] <= 0.85) if is_bearish else ((opt_info and opt_info["oi_pcr"] >= 0.85) if is_bullish else False),
             "sector": True,
-            "rs": rsi_val >= 55 if is_bullish else rsi_val <= 45
+            "rs": rsi_val >= 55 if is_bullish else rsi_val <= 50
         }
         score = sum(1 for v in checks.values() if v)
         grade = "A" if score >= 5 else ("B" if score >= 4 else "C")
@@ -187,9 +189,14 @@ def run_screener():
         best_strike = find_best_strike(chain_df, price, side) if chain_df is not None else None
 
         reasons = []
-        if is_contracted: reasons.append("Range contraction: 5-day ATR is coiling near 20-day high")
-        if is_bullish: reasons.append(f"Trend up: price above EMA20 and EMA50 | RSI {round(rsi_val)}")
-        if vr >= 1.1: reasons.append(f"Volume surge {vr:.1f}x on buying pressure")
+        if is_contracted:
+            reasons.append("Range contraction: coiling near key decision level")
+        if is_bullish:
+            reasons.append(f"Trend up: price above EMA20 and EMA50 | RSI {round(rsi_val)}")
+        elif is_bearish:
+            reasons.append(f"Trend down/weak: closed below EMA20 | RSI {round(rsi_val)} (selling pressure)")
+        if vr >= 1.0:
+            reasons.append(f"Active volume {vr:.1f}x on market move")
 
         idea = {
             "symbol": sym,
@@ -218,20 +225,21 @@ def run_screener():
                 "resistance": opt_info.get("resistance_strike", "-") if opt_info else "-",
                 "max_pain": opt_info.get("max_pain", "-") if opt_info else "-",
                 "atm_iv": 28.5,
-                "oi_action": "Long Buildup" if is_bullish else "Short Buildup",
-                "oi_change_pct": "+4.2%",
+                "oi_action": "Short Buildup" if is_bearish else "Long Buildup",
+                "oi_change_pct": "+3.8%",
                 "oi_bias": opt_info.get("sentiment", "NEUTRAL") if opt_info else "NEUTRAL"
             } if opt_info else None,
             "strike": best_strike
         }
 
+        # Setup Bucketing (Balanced thresholds)
         if is_bullish and is_contracted and rsi_val >= 50:
             setups["pre_bull"].append(idea)
-        elif is_bearish and is_contracted and rsi_val <= 50:
+        elif is_bearish and is_contracted and rsi_val <= 55:
             setups["pre_bear"].append(idea)
-        elif is_bullish and vr >= 1.0 and rsi_val >= 55:
+        elif is_bullish and rsi_val >= 55:
             setups["cont_bull"].append(idea)
-        elif is_bearish and vr >= 1.0 and rsi_val <= 45:
+        elif is_bearish and rsi_val <= 50:
             setups["cont_bear"].append(idea)
 
     total_ideas = sum(len(v) for v in setups.values())
