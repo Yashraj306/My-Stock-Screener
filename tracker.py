@@ -1,69 +1,145 @@
 import os
+import json
+import logging
+from datetime import datetime
 import pandas as pd
-from config import *
+import yfinance as yf
 
-LOG = "signals_log.csv"
-COLS = ["date", "mode", "name", "direction", "setup", "grade", "entry", "stop", "t1", "result", "ret_pct", "evaluated"]
+TRACKER_FILE = "trades_tracker.json"
+logging.basicConfig(level=logging.INFO)
 
-def _read():
-    if os.path.exists(LOG):
-        try: return pd.read_csv(LOG, dtype=str).fillna("")
-        except Exception: pass
-    return pd.DataFrame(columns=COLS)
 
-def log_signals(items):
-    if not items: return
-    df, today = _read(), ist_now().date().isoformat()
-    seen = set(zip(df["date"], df["mode"], df["name"]))
-    new = [dict(date=today, mode=MODE, name=r["name"], direction=r["direction"], setup=r["setup"], grade=r["grade"],
-                entry=f"{r['lv']['entry']:.2f}", stop=f"{r['lv']['stop']:.2f}", t1=f"{r['lv']['t1']:.2f}",
-                result="", ret_pct="", evaluated="") for r in items if (today, MODE, r["name"]) not in seen]
-    pd.concat([df, pd.DataFrame(new, columns=COLS)], ignore_index=True).to_csv(LOG, index=False)
+def load_tracker():
+    """Loads existing open and closed trades from JSON storage."""
+    if not os.path.exists(TRACKER_FILE):
+        return {"open_trades": [], "closed_trades": []}
+    try:
+        with open(TRACKER_FILE, "r") as f:
+            return json.load(f)
+    except Exception as e:
+        logging.error(f"Error loading tracker file: {e}")
+        return {"open_trades": [], "closed_trades": []}
 
-def _outcome(row, bar):
-    s = 1 if row["direction"] == "BULLISH" else -1
-    entry, stop, t1 = float(row["entry"]), float(row["stop"]), float(row["t1"])
-    hi, lo, cl = float(bar["High"]), float(bar["Low"]), float(bar["Close"])
-    if row["setup"] == "PRE" and row["mode"] == "MORNING":
-        if not ((hi >= entry) if s == 1 else (lo <= entry)): return "NO TRIGGER", 0.0
-    hit_t = (hi >= t1) if s == 1 else (lo <= t1)
-    hit_s = (lo <= stop) if s == 1 else (hi >= stop)
-    if hit_s: return "STOP", (stop / entry - 1) * s * 100        # stop first when both touched (conservative)
-    if hit_t: return "T1", (t1 / entry - 1) * s * 100
-    return "CLOSE", (cl / entry - 1) * s * 100
 
-def evaluate():
-    import yfinance as yf
-    df = _read()
-    if df.empty: return None
-    today, now = ist_now().date(), ist_now()
-    for name in df.loc[df["evaluated"] != "Y", "name"].unique():
-        try:
-            h = yf.download(INDICES.get(name, f"{name}.NS"), period="3mo", interval="1d", auto_adjust=True, progress=False)
-            if isinstance(h.columns, pd.MultiIndex): h.columns = h.columns.get_level_values(0)
-            h.index = [x.date() for x in h.index]
-        except Exception:
+def save_tracker(data):
+    """Persists trades data back to JSON storage."""
+    try:
+        with open(TRACKER_FILE, "w") as f:
+            json.dump(data, f, indent=2)
+        logging.info("Trades tracker updated successfully.")
+    except Exception as e:
+        logging.error(f"Failed to save tracker: {e}")
+
+
+def log_new_setups(setups):
+    """Logs qualified swing trade signals into the open trades book."""
+    tracker = load_tracker()
+    open_symbols = {t["symbol"] for t in tracker["open_trades"]}
+    today_str = datetime.now().strftime("%Y-%m-%d")
+
+    added_count = 0
+    for s in setups:
+        sym = s["symbol"]
+        # Avoid duplicate tracking of the same symbol if already active
+        if sym in open_symbols:
             continue
-        for i in df.index[(df["name"] == name) & (df["evaluated"] != "Y")]:
-            row = df.loc[i]
-            sd = dt.date.fromisoformat(row["date"])
-            days = [x for x in h.index if (x > sd if row["mode"] == "BTST" else x >= sd)]
-            if not days: continue
-            sess = days[0]
-            if not (sess < today or (sess == today and now.hour >= 16)): continue
-            res, ret = _outcome(row, h.loc[sess])
-            df.loc[i, ["result", "ret_pct", "evaluated"]] = [res, f"{ret:.2f}", "Y"]
-    df.to_csv(LOG, index=False)
-    return summarize(df)
 
-def _stat(x):
-    if x.empty: return None
-    r = x["ret_pct"].astype(float)
-    return dict(n=len(x), win=float((r > 0).mean() * 100), t1=float((x["result"] == "T1").mean() * 100),
-                stop=float((x["result"] == "STOP").mean() * 100), avg=float(r.mean()))
+        trade_entry = {
+            "id": f"{sym}_{today_str}",
+            "symbol": sym,
+            "entry_date": today_str,
+            "signal": s["signal"],
+            "entry_price": s["entry"],
+            "stop_loss": s["stop_loss"],
+            "target_1": s["target_1"],
+            "target_2": s["target_2"],
+            "quantity": s["qty"],
+            "status": "OPEN"
+        }
+        tracker["open_trades"].append(trade_entry)
+        added_count += 1
 
-def summarize(df):
-    ev = df[(df["evaluated"] == "Y") & (df["result"] != "NO TRIGGER")].tail(60)
-    if ev.empty: return None
-    return dict(all=_stat(ev), bull=_stat(ev[ev["direction"] == "BULLISH"]), bear=_stat(ev[ev["direction"] == "BEARISH"]),
-                btst=_stat(ev[ev["mode"] == "BTST"]), morning=_stat(ev[ev["mode"] == "MORNING"]))
+    if added_count > 0:
+        save_tracker(tracker)
+        logging.info(f"Logged {added_count} new trades to tracker.")
+
+
+def update_open_trades():
+    """
+    Fetches the latest LTP for open trades, checks if Stop Loss
+    or Targets are hit, and moves closed trades to the archive.
+    """
+    tracker = load_tracker()
+    open_trades = tracker.get("open_trades", [])
+    if not open_trades:
+        logging.info("No active open trades to track.")
+        return
+
+    remaining_open = []
+    closed_now = []
+    today_str = datetime.now().strftime("%Y-%m-%d")
+
+    for trade in open_trades:
+        sym = trade["symbol"]
+        ticker_sym = f"{sym}.NS" if not sym.endswith(".NS") else sym
+
+        try:
+            ticker = yf.Ticker(ticker_sym)
+            hist = ticker.history(period="1d")
+            if hist.empty:
+                remaining_open.append(trade)
+                continue
+
+            ltp = round(float(hist["Close"].iloc[-1]), 2)
+            high = round(float(hist["High"].iloc[-1]), 2)
+            low = round(float(hist["Low"].iloc[-1]), 2)
+        except Exception as e:
+            logging.warning(f"Could not fetch latest price for {sym}: {e}")
+            remaining_open.append(trade)
+            continue
+
+        signal = trade["signal"]
+        entry = trade["entry_price"]
+        sl = trade["stop_loss"]
+        t1 = trade["target_1"]
+
+        is_closed = False
+        exit_price = ltp
+        exit_reason = ""
+
+        if signal == "BUY":
+            if low <= sl:
+                is_closed = True
+                exit_price = sl
+                exit_reason = "STOP_LOSS_HIT"
+            elif high >= t1:
+                is_closed = True
+                exit_price = t1
+                exit_reason = "TARGET_HIT"
+        elif signal == "SELL":
+            if high >= sl:
+                is_closed = True
+                exit_price = sl
+                exit_reason = "STOP_LOSS_HIT"
+            elif low <= t1:
+                is_closed = True
+                exit_price = t1
+                exit_reason = "TARGET_HIT"
+
+        if is_closed:
+            pnl_per_share = (exit_price - entry) if signal == "BUY" else (entry - exit_price)
+            total_pnl = round(pnl_per_share * trade["quantity"], 2)
+            trade.update({
+                "exit_date": today_str,
+                "exit_price": exit_price,
+                "status": exit_reason,
+                "realized_pnl": total_pnl
+            })
+            closed_now.append(trade)
+            logging.info(f"Trade closed: {sym} | Reason: {exit_reason} | PnL: ₹{total_pnl}")
+        else:
+            remaining_open.append(trade)
+
+    tracker["open_trades"] = remaining_open
+    tracker["closed_trades"].extend(closed_now)
+    save_tracker(tracker)
