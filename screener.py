@@ -7,7 +7,7 @@ import yfinance as yf
 
 warnings.filterwarnings("ignore")
 
-from config import TITLE, CAPITAL, RISK_PCT
+from config import MODE, TITLE, CAPITAL, RISK_PCT
 from universe import INDEX_MAP, STOCKS_UNIVERSE
 from tech import analyze
 from options_data import chain_upstox, chain_nse, nse_session
@@ -64,6 +64,9 @@ def select_best_contract(chain_df, spot, side="CE", days_to_exp=14):
         approx_prem = round(spot * 0.015, 1)
         hedge_strike = (chosen_strike + 2 * step) if side == "CE" else (chosen_strike - 2 * step)
 
+        pos_text = "BTST Entry: Confirm strength near 3:15 PM." if MODE == "BTST" else "Morning Entry: Wait for initial 15-min range confirmation."
+        spread_text = f"Spread Hedge: Buy {int(chosen_strike)} {side}, Sell {int(hedge_strike)} {side}"
+
         return {
             "strike_name": f"{int(chosen_strike)} {side}",
             "ltp": approx_prem,
@@ -78,8 +81,8 @@ def select_best_contract(chain_df, spot, side="CE", days_to_exp=14):
             "vega": 0.18,
             "sl": round(approx_prem * 0.65, 1),
             "t1": round(approx_prem * 1.45, 1),
-            "position_text": "Verify live price action. Enter only if holding strength at 3:15 PM.",
-            "spread_strategy": f"Bull Call Spread: Buy {int(chosen_strike)} CE, Sell {int(hedge_strike)} CE." if side == "CE" else f"Bear Put Spread: Buy {int(chosen_strike)} PE, Sell {int(hedge_strike)} PE.",
+            "position_text": pos_text,
+            "spread_strategy": spread_text,
             "is_synthetic": True
         }
 
@@ -100,7 +103,9 @@ def select_best_contract(chain_df, spot, side="CE", days_to_exp=14):
     theta_pct = f"{abs(theta)/ltp*100:.1f}%" if ltp > 0 else "0.0%"
 
     hedge_strike_val = strike_val + 2 * step if side == "CE" else strike_val - 2 * step
-    spread_advice = f"Buy {int(strike_val)} CE & Sell {int(hedge_strike_val)} CE" if side == "CE" else f"Buy {int(strike_val)} PE & Sell {int(hedge_strike_val)} PE"
+    spread_advice = f"Buy {int(strike_val)} {side} & Sell {int(hedge_strike_val)} {side} (Caps overnight risk)"
+
+    pos_text = "BTST: Verify stock holds VWAP & near High at 3:15 PM." if MODE == "BTST" else "Morning: Take entry on break of opening 15-min range."
 
     return {
         "strike_name": f"{int(strike_val)} {side}",
@@ -116,18 +121,18 @@ def select_best_contract(chain_df, spot, side="CE", days_to_exp=14):
         "vega": round(row.get("ce_vega", 0.20), 2) if "ce_vega" in row else 0.20,
         "sl": round(ltp * 0.65, 1),
         "t1": round(ltp * 1.45, 1),
-        "position_text": "Enter between 3:10 PM - 3:25 PM if price sustains relative to VWAP.",
+        "position_text": pos_text,
         "spread_strategy": spread_advice,
         "is_synthetic": False
     }
 
 
 def run_screener():
-    logging.info("Executing High-Precision F&O Screener (Top 5 Bullish & 5 Bearish)")
+    logging.info(f"Running Specialized Screener Engine in MODE: {MODE}")
     candles = batch_fetch_candles()
     sess = nse_session()
 
-    # 1. Benchmarks
+    # 1. Market Benchmarks
     nifty_df = candles.get("NIFTY")
     nifty_spot = round(nifty_df["Close"].iloc[-1]) if nifty_df is not None else 25000
     nifty_prev = nifty_df["Close"].iloc[-2] if nifty_df is not None else nifty_spot
@@ -156,12 +161,11 @@ def run_screener():
                 if c > t.get("ema50", c): above_50 += 1
 
     breadth_tone = "BULLISH" if ups > downs * 1.3 else ("BEARISH" if downs > ups * 1.3 else "MIXED")
-
     sector_list = compute_sector_strength(candles)
     contributors = compute_point_contributors(candles, nifty_spot, bnf_spot)
-    global_cues = fetch_global_cues()
+    global_cues = fetch_global_cues() if MODE == "MORNING" else []
 
-    # 2. Index Trade Suggestions (Nifty, Bank Nifty, Sensex)
+    # 2. Index Trade Plans
     index_trades = []
     for idx_name in ["NIFTY", "BANKNIFTY", "SENSEX"]:
         df = candles.get(idx_name)
@@ -211,15 +215,15 @@ def run_screener():
         }
 
         reasons = [
-            f"Index momentum: Holding {'above' if is_bullish else 'below'} 20 EMA & VWAP benchmark"
+            f"{MODE} Index Signal: {'Holding above 20 EMA & VWAP' if is_bullish else 'Trading below 20 EMA & VWAP'}"
         ]
         if opt_info:
-            reasons.append(f"PCR bias: {opt_info['sentiment']} ({opt_info['intraday_pcr']} Intraday PCR)")
+            reasons.append(f"Institutional PCR: {opt_info['sentiment']} ({opt_info['intraday_pcr']} PCR)")
 
         index_trades.append({
             "symbol": idx_name,
             "side": "BUY CALL (CE)" if is_bullish else "BUY PUT (PE)",
-            "setup_kind": "Index Core Strategy",
+            "setup_kind": f"{MODE} Index Momentum",
             "grade": "A",
             "sector": "INDEX",
             "close": price,
@@ -250,7 +254,7 @@ def run_screener():
             "strike": best_strike
         })
 
-    # 3. Constituents Evaluation & Precision Scoring
+    # 3. Stock Scanning with Differentiated Factors (BTST vs MORNING)
     all_scored_stocks = []
 
     for sym in STOCKS_UNIVERSE:
@@ -271,17 +275,35 @@ def run_screener():
         ema20, ema50 = t["ema20"], t["ema50"]
         vwap = t.get("vwap", price)
         sec = SECTOR_MAP.get(sym, "OTHER")
+        
+        high_val = df["High"].iloc[-1]
+        low_val = df["Low"].iloc[-1]
+        day_range = (high_val - low_val) or 1.0
 
-        # Quant Bull/Bear relative strength score
-        # Higher positive score = Strongly Bullish; Lower negative score = Strongly Bearish
-        bull_score = (
-            (1.5 if price > ema20 else 0) +
-            (1.0 if ema20 > ema50 else 0) +
-            (1.5 if price >= vwap else 0) +
-            (1.0 if change_pct > 0 else 0) +
-            (vr * 0.5) +
-            ((rsi_val - 50) / 10.0)
-        )
+        # === Factor Separation Logic ===
+        if MODE == "BTST":
+            # BTST Factors: Closing near High, VWAP sustain, Heavy late volume
+            close_strength = (price - low_val) / day_range  # 1.0 = at day high, 0.0 = at day low
+            bull_score = (
+                (close_strength * 4.0) +
+                (2.0 if price > vwap else -2.0) +
+                (1.5 if price > ema20 else -1.0) +
+                (vr * 1.5) +
+                ((rsi_val - 50) / 10.0)
+            )
+        else:
+            # MORNING Factors: Multi-day trend, gap-followthrough, Breakout headroom
+            recent_range = df["High"].tail(5) - df["Low"].tail(5)
+            prior_range = df["High"].tail(20) - df["Low"].tail(20)
+            is_contracted = recent_range.mean() < prior_range.mean() * 0.75
+
+            bull_score = (
+                (2.5 if price > ema20 and ema20 > ema50 else -2.0) +
+                (2.0 if is_contracted else 0.5) +
+                (1.5 if price > prev_close else -1.5) +
+                ((rsi_val - 50) / 8.0) +
+                (vr * 1.0)
+            )
 
         all_scored_stocks.append({
             "symbol": sym,
@@ -299,7 +321,7 @@ def run_screener():
             "bull_score": bull_score
         })
 
-    # Sort strictly into Top 5 Bullish and Top 5 Bearish
+    # Pick exactly Top 5 Bullish and Top 5 Bearish
     sorted_bulls = sorted(all_scored_stocks, key=lambda x: x["bull_score"], reverse=True)[:5]
     sorted_bears = sorted(all_scored_stocks, key=lambda x: x["bull_score"])[:5]
 
@@ -346,19 +368,27 @@ def run_screener():
         grade = "A" if score >= 5 else "B"
 
         reasons = []
-        if is_bullish:
-            reasons.append(f"Bullish strength: Price above key EMA levels | RSI {round(rsi_val)}")
-            if vr >= 1.0:
-                reasons.append(f"Institutional participation: Volume {vr:.1f}x average")
+        if MODE == "BTST":
+            if is_bullish:
+                reasons.append(f"BTST Bullish: Holding near day-high & above VWAP | RSI {round(rsi_val)}")
+                reasons.append(f"Institutional volume surge: {vr:.1f}x average volume")
+            else:
+                reasons.append(f"BTST Bearish: Closing near day-low & below VWAP | RSI {round(rsi_val)}")
+                reasons.append(f"Institutional selling pressure: {vr:.1f}x volume")
         else:
-            reasons.append(f"Bearish breakdown: Trading below EMA20 and VWAP | RSI {round(rsi_val)}")
-            if vr >= 1.0:
-                reasons.append(f"Selling volume: {vr:.1f}x volume under pressure")
+            if is_bullish:
+                reasons.append(f"Morning Momentum: Strong multi-day trend above EMA20 | RSI {round(rsi_val)}")
+                reasons.append("Breakout continuation profile ahead of the bell")
+            else:
+                reasons.append(f"Morning Breakdown: Structure weak under key EMAs | RSI {round(rsi_val)}")
+                reasons.append("Downside follow-through setup on opening")
+
+        setup_name = f"{MODE} Bullish Carry" if is_bullish else f"{MODE} Bearish Breakdown"
 
         return {
             "symbol": sym,
             "side": "BUY CALL (CE)" if is_bullish else "BUY PUT (PE)",
-            "setup_kind": "Momentum / Breakout Continuation" if is_bullish else "Breakdown / Trend Continuation",
+            "setup_kind": setup_name,
             "grade": grade,
             "sector": sec,
             "close": price,
@@ -396,6 +426,7 @@ def run_screener():
     best_rated = f"{final_bulls[0]['symbol']} (CE) [Grade {final_bulls[0]['grade']}]" if final_bulls else "None"
 
     payload = {
+        "mode": MODE,
         "summary": {
             "nifty_spot": f"{nifty_spot:,}",
             "nifty_chg": nifty_chg,
@@ -440,7 +471,7 @@ def run_screener():
     }
 
     send_alert(payload)
-    logging.info("Dispatched exactly 5 Bullish & 5 Bearish trade recommendations + 3 Indices!")
+    logging.info(f"Dispatched specialized {MODE} report with 5 Bullish, 5 Bearish & 3 Indices!")
     return payload
 
 
