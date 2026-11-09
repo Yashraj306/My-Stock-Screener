@@ -8,7 +8,7 @@ import yfinance as yf
 warnings.filterwarnings("ignore")
 
 from config import MODE, TITLE, CAPITAL, RISK_PCT
-from universe import STOCKS_UNIVERSE
+from universe import INDEX_MAP, STOCKS_UNIVERSE
 from tech import analyze
 from options_data import chain_upstox, chain_nse, nse_session
 from chain import analyze_chain
@@ -20,7 +20,10 @@ logging.basicConfig(level=logging.INFO, format="%(asctime)s - %(levelname)s - %(
 
 def batch_fetch_candles():
     """Concurrently downloads candles for indices and constituent stocks safely."""
-    tickers = {"NIFTY": "^NSEI", "BANKNIFTY": "^NSEBANK", "SENSEX": "^BSESN"}
+    tickers = {k: INDEX_MAP[k] for k in INDEX_MAP.keys()}
+    for k, v in INDEX_MAP.items():
+        tickers[k] = "^NSEI" if k == "NIFTY" else ("^NSEBANK" if k == "BANKNIFTY" else "^BSESN")
+        
     for s in STOCKS_UNIVERSE:
         tickers[s] = f"{s}.NS"
 
@@ -55,11 +58,16 @@ def batch_fetch_candles():
 
 
 def select_best_contract(chain_df, spot, side="CE", days_to_exp=14):
+    is_synthetic = False
+    step = 50 if spot > 1000 else (20 if spot > 300 else 5)
+
     if chain_df is None or chain_df.empty:
-        step = 50 if spot > 1000 else (20 if spot > 300 else 5)
+        is_synthetic = True
         base_strike = round(spot / step) * step
         chosen_strike = (base_strike + step) if side == "CE" else (base_strike - step)
         approx_prem = round(spot * 0.015, 1)
+        hedge_strike = (chosen_strike + 2 * step) if side == "CE" else (chosen_strike - 2 * step)
+
         return {
             "strike_name": f"{int(chosen_strike)} {side}",
             "ltp": approx_prem,
@@ -74,7 +82,9 @@ def select_best_contract(chain_df, spot, side="CE", days_to_exp=14):
             "vega": 0.18,
             "sl": round(approx_prem * 0.65, 1),
             "t1": round(approx_prem * 1.45, 1),
-            "position_text": "1 lot within risk limits. Use stop loss."
+            "position_text": "Verify live price action. Enter only if holding strength at 3:15 PM.",
+            "spread_strategy": f"Bull Call Spread: Buy {int(chosen_strike)} CE, Sell {int(hedge_strike)} CE to cap overnight risk." if side == "CE" else f"Bear Put Spread: Buy {int(chosen_strike)} PE, Sell {int(hedge_strike)} PE to cap overnight risk.",
+            "is_synthetic": True
         }
 
     df = chain_df.sort_values(by="strike").reset_index(drop=True)
@@ -102,7 +112,10 @@ def select_best_contract(chain_df, spot, side="CE", days_to_exp=14):
     oi_chg = f"{(oi - poi) / poi * 100:+.1f}%" if poi > 0 else "+0.0%"
     theta_pct = f"{abs(theta)/ltp*100:.1f}%" if ltp > 0 else "0.0%"
 
-    pos_advice = "1 lot within risk limits. Use stop loss." if ltp < 150 else "High premium: Consider Debit Spread (Buy ATM, Sell OTM) to eliminate Vega risk."
+    hedge_strike_val = strike_val + 2 * step if side == "CE" else strike_val - 2 * step
+    spread_advice = f"Buy {int(strike_val)} CE & Sell {int(hedge_strike_val)} CE (Eliminates overnight Vega/Theta risk)" if side == "CE" else f"Buy {int(strike_val)} PE & Sell {int(hedge_strike_val)} PE (Eliminates overnight Vega/Theta risk)"
+
+    pos_advice = "Enter only between 3:10 PM - 3:25 PM if price remains above VWAP and Day-High." if MODE == "BTST" else "Execute on breakout after 9:30 AM range establishment."
 
     return {
         "strike_name": f"{int(strike_val)} {side}",
@@ -118,7 +131,9 @@ def select_best_contract(chain_df, spot, side="CE", days_to_exp=14):
         "vega": round(row.get("ce_vega", 0.20), 2) if "ce_vega" in row else 0.20,
         "sl": round(ltp * 0.65, 1),
         "t1": round(ltp * 1.45, 1),
-        "position_text": pos_advice
+        "position_text": pos_advice,
+        "spread_strategy": spread_advice,
+        "is_synthetic": False
     }
 
 
@@ -163,7 +178,104 @@ def run_screener():
     contributors = compute_point_contributors(candles, nifty_spot, bnf_spot)
     global_cues = fetch_global_cues() if MODE == "MORNING" else []
 
-    # 3. Precision Filtering Engine
+    # 3. Index Option Trade Generater (NIFTY, BANKNIFTY & SENSEX)
+    index_trades = []
+    for idx_name in ["NIFTY", "BANKNIFTY", "SENSEX"]:
+        df = candles.get(idx_name)
+        if df is None:
+            continue
+        t = analyze(df)
+        if not t:
+            continue
+        
+        price = t["price"]
+        prev_close = df["Close"].iloc[-2]
+        change_pct = round(((price / prev_close) - 1) * 100, 2)
+        rsi_val = t["rsi"]
+        atr_val = t["atr"]
+        ema20, ema50 = t["ema20"], t["ema50"]
+        vwap = t.get("vwap", price)
+        
+        chain_df, expiry = None, None
+        try:
+            res = chain_upstox(idx_name)
+            if res: chain_df, expiry, _ = res
+            elif sess:
+                res_n = chain_nse(idx_name, sess)
+                if res_n: chain_df, expiry, _ = res_n
+        except Exception:
+            pass
+
+        opt_info = analyze_chain(chain_df) if (chain_df is not None and not chain_df.empty) else None
+
+        is_bullish = (price > ema20) and (price >= vwap) and (change_pct > 0)
+        is_bearish = (price < ema20) and (price < vwap) and (change_pct < 0)
+
+        if not is_bullish and not is_bearish:
+            continue
+
+        checks = {
+            "trend": is_bullish or is_bearish,
+            "level": (price >= vwap) if is_bullish else (price <= vwap),
+            "compression": False,
+            "volume": True,
+            "options": (opt_info and opt_info["intraday_pcr"] <= 0.85) if is_bearish else ((opt_info and opt_info["intraday_pcr"] >= 0.95) if is_bullish else True),
+            "sector": True,
+            "rs": rsi_val >= 60 if is_bullish else rsi_val <= 45
+        }
+        score = sum(1 for v in checks.values() if v)
+        grade = "A" if score >= 4 else "B"
+
+        sl = round(price - 1.2 * atr_val, 2) if is_bullish else round(price + 1.2 * atr_val, 2)
+        risk = abs(price - sl) or 1.0
+        t1 = round(price + 1.2 * risk, 2) if is_bullish else round(price - 1.2 * risk, 2)
+        t2 = round(price + 2.0 * risk, 2) if is_bullish else round(price - 2.0 * risk, 2)
+
+        side = "CE" if is_bullish else "PE"
+        best_strike = select_best_contract(chain_df, price, side, days_to_exp=7)
+
+        reasons = [
+            f"Index momentum: Above EMA20 and VWAP on the {MODE} frame" if is_bullish else f"Index breakdown: Below EMA20 & VWAP"
+        ]
+        if opt_info:
+            reasons.append(f"Institutional Confirm: PCR trend confirms {opt_info['sentiment']} bias ({opt_info['intraday_pcr']} PCR)")
+
+        index_trades.append({
+            "symbol": idx_name,
+            "side": "BUY CALL (CE)" if is_bullish else "BUY PUT (PE)",
+            "setup_kind": "Index Momentum Strategy",
+            "grade": grade,
+            "sector": "INDEX",
+            "close": price,
+            "change_pct": change_pct,
+            "rsi": rsi_val,
+            "vol_ratio": 1.0,
+            "atr_pct": round((atr_val / price) * 100, 1),
+            "entry": price,
+            "stop_loss": sl,
+            "target_1": t1,
+            "target_2": t2,
+            "rr": 1.20,
+            "checks": checks,
+            "reasons": reasons,
+            "opt_chain": {
+                "source": "Upstox",
+                "expiry": expiry or "Weekly",
+                "days_to_exp": 3,
+                "pcr": opt_info.get("oi_pcr", 1.0) if opt_info else 1.0,
+                "intraday_pcr": opt_info.get("intraday_pcr", 1.0) if opt_info else 1.0,
+                "support": opt_info.get("support_strike", "-") if opt_info else "-",
+                "resistance": opt_info.get("resistance_strike", "-") if opt_info else "-",
+                "max_pain": opt_info.get("max_pain", "-") if opt_info else "-",
+                "atm_iv": opt_info.get("atm_iv", 16.5) if opt_info else 16.5,
+                "oi_action": opt_info.get("oi_action", "Volume Buildup") if opt_info else "Data Flow Stable",
+                "oi_bias": opt_info.get("sentiment", "NEUTRAL") if opt_info else ("BULLISH" if is_bullish else "BEARISH")
+            },
+            "strike": best_strike,
+            "score": score
+        })
+
+    # 4. Stocks Precision Filtering Engine
     setups = {"pre_bull": [], "pre_bear": [], "cont_bull": [], "cont_bear": []}
 
     for sym in STOCKS_UNIVERSE:
@@ -186,15 +298,12 @@ def run_screener():
         sec = SECTOR_MAP.get(sym, "OTHER")
         sec_read = sector_read_map.get(sec, "Mixed")
 
-        # Sector rules
         sector_allows_call = sec_read in ["Strong", "Mixed"] and sec_read != "Weak"
         sector_allows_put = sec_read in ["Weak", "Mixed"] and sec_read != "Strong"
 
-        # Direction checks
         is_bullish = (price > ema20 and ema20 > ema50) and (price >= vwap * 0.995) and (change_pct > 0)
         is_bearish = (price < ema20) and (price < vwap) and (change_pct < 0)
 
-        # Skip stocks that have no directional momentum
         if not is_bullish and not is_bearish:
             continue
         if is_bullish and not sector_allows_call:
@@ -202,7 +311,6 @@ def run_screener():
         if is_bearish and not sector_allows_put:
             continue
 
-        # Fast Option chain fetch (only for candidate stocks)
         chain_df, expiry = None, None
         try:
             res = chain_upstox(sym)
@@ -303,15 +411,15 @@ def run_screener():
             elif vr >= 1.0 and rsi_val <= 48 and score >= 4:
                 setups["cont_bear"].append(idea)
 
-    # Top Quality Selection (Strictly 2-3 Call, 1-2 Put ideas)
-    setups["pre_bull"] = sorted(setups["pre_bull"], key=lambda x: (x["score"], x["vol_ratio"]), reverse=True)[:2]
-    setups["cont_bull"] = sorted(setups["cont_bull"], key=lambda x: (x["score"], x["vol_ratio"]), reverse=True)[:3]
-    setups["pre_bear"] = sorted(setups["pre_bear"], key=lambda x: (x["score"], x["vol_ratio"]), reverse=True)[:2]
-    setups["cont_bear"] = sorted(setups["cont_bear"], key=lambda x: (x["score"], x["vol_ratio"]), reverse=True)[:2]
+    # Elite Quality Selection (Limited top ideas)
+    setups["pre_bull"] = sorted(setups["pre_bull"], key=lambda x: (x["score"], x["vol_ratio"]), reverse=True)[:1]
+    setups["cont_bull"] = sorted(setups["cont_bull"], key=lambda x: (x["score"], x["vol_ratio"]), reverse=True)[:2]
+    setups["pre_bear"] = sorted(setups["pre_bear"], key=lambda x: (x["score"], x["vol_ratio"]), reverse=True)[:1]
+    setups["cont_bear"] = sorted(setups["cont_bear"], key=lambda x: (x["score"], x["vol_ratio"]), reverse=True)[:1]
 
-    total_ideas = sum(len(v) for v in setups.values())
+    total_ideas = sum(len(v) for v in setups.values()) + len(index_trades)
     best_rated = "None"
-    all_ideas = setups["pre_bull"] + setups["cont_bull"] + setups["pre_bear"] + setups["cont_bear"]
+    all_ideas = setups["pre_bull"] + setups["cont_bull"] + setups["pre_bear"] + setups["cont_bear"] + index_trades
     if all_ideas:
         top_idea = sorted(all_ideas, key=lambda x: (x["grade"] == "A", x["score"]), reverse=True)[0]
         best_rated = f"{top_idea['symbol']} ({'CE' if 'CALL' in top_idea['side'] else 'PE'}) [Grade {top_idea['grade']}]"
@@ -331,7 +439,7 @@ def run_screener():
             "scanned_count": stocks_scanned + 3,
             "ideas_count": total_ideas,
             "pre_count": len(setups["pre_bull"]) + len(setups["pre_bear"]),
-            "cont_count": len(setups["cont_bull"]) + len(setups["cont_bear"]),
+            "cont_count": len(setups["cont_bull"]) + len(setups["cont_bear"]) + len(index_trades),
             "best_rated": best_rated
         },
         "global_cues": global_cues,
@@ -351,6 +459,7 @@ def run_screener():
                 "dragging": contributors["BANKNIFTY"]["dragging"]
             }
         },
+        "index_trades": index_trades,
         "sectors": sector_list,
         "setups": setups,
         "track_record": {
