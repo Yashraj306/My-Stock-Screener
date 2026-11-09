@@ -25,7 +25,7 @@ def send_telegram_summary(data):
         f"Nifty: *{s.get('nifty_spot')}* ({s.get('nifty_chg')}) | RSI {s.get('nifty_rsi')}\n"
         f"Breadth: {s.get('breadth_ratio')} | {s.get('breadth_tone')}\n"
         f"Ideas Generated: *{s.get('ideas_count')}* | Best: *{s.get('best_rated')}*\n\n"
-        f"Full detailed breakdown with strike Greeks & checklist has been dispatched to your Email! 📬"
+        f"Full report with strike Greeks & checklist has been dispatched to your Email! 📬"
     )
     url = f"https://api.telegram.org/bot{TELEGRAM_TOKEN}/sendMessage"
     try:
