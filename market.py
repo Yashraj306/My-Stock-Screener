@@ -27,7 +27,7 @@ SECTOR_MAP = {
     # FMCG
     "ITC": "FMCG", "HINDUNILVR": "FMCG", "NESTLEIND": "FMCG", "BRITANNIA": "FMCG",
     
-    # Infra & Others
+    # Financials & Others
     "LT": "INFRA", "BHARTIARTL": "TELECOM", "BAJFINANCE": "FINANCE", "BAJAJFINSV": "FINANCE",
     "SHRIRAMFIN": "FINANCE", "ADANIENT": "OTHER", "ADANIPORTS": "OTHER", "ULTRACEMCO": "OTHER",
     "GRASIM": "OTHER", "TITAN": "OTHER", "TRENT": "OTHER", "BEL": "OTHER", "ASIANPAINT": "OTHER"
@@ -37,7 +37,7 @@ SECTOR_MAP = {
 def fetch_global_cues():
     """
     Fetches real-time global indicators including GIFT Nifty (IN=F) 
-    to project opening momentum.
+    and India VIX (^INDIAVIX).
     """
     cues_tickers = {
         "GIFT Nifty": "IN=F",
@@ -81,7 +81,8 @@ def fetch_global_cues():
                 results.append({
                     "name": name,
                     "val": val_str,
-                    "chg": chg_str
+                    "chg": chg_str,
+                    "raw_val": float(close)
                 })
         except Exception:
             continue
