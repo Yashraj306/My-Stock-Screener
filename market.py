@@ -1,109 +1,144 @@
 import yfinance as yf
 import pandas as pd
-
-
-GLOBAL_TICKERS = {
-    "Nasdaq": "^IXIC",
-    "Dow Jones": "^DJI",
-    "S&P 500": "^GSPC",
-    "Nikkei": "^N225",
-    "Hang Seng": "^HSI",
-    "Crude Oil": "CL=F",
-    "US Dollar Idx": "DX-Y.NYB",
-    "US 10Y Yield": "^TNX",
-    "India VIX": "^INDIAVIX"
-}
+import logging
 
 SECTOR_MAP = {
-    "RELIANCE": "ENERGY", "ONGC": "ENERGY", "BPCL": "ENERGY",
-    "HDFCBANK": "BANK", "ICICIBANK": "BANK", "SBIN": "BANK", "KOTAKBANK": "BANK", "AXISBANK": "BANK", "BANKBARODA": "BANK", "PNB": "BANK", "CANBK": "BANK", "FEDERALBNK": "BANK", "IDFCFIRSTB": "BANK", "AUBANK": "BANK",
-    "TCS": "IT", "INFY": "IT", "HCLTECH": "IT", "WIPRO": "IT", "TECHM": "IT", "LTIM": "IT",
+    # Banking
+    "HDFCBANK": "BANK", "ICICIBANK": "BANK", "SBIN": "BANK", "KOTAKBANK": "BANK",
+    "AXISBANK": "BANK", "INDUSINDBK": "BANK", "BANKBARODA": "BANK", "PNB": "BANK",
+    "CANBK": "BANK", "FEDERALBNK": "BANK", "IDFCFIRSTB": "BANK", "AUBANK": "BANK",
+    
+    # IT
+    "TCS": "IT", "INFY": "IT", "HCLTECH": "IT", "WIPRO": "IT", "TECHM": "IT",
+    
+    # Pharma
     "SUNPHARMA": "PHARMA", "CIPLA": "PHARMA", "DRREDDY": "PHARMA", "DIVISLAB": "PHARMA",
+    "APOLLOHOSP": "PHARMA",
+    
+    # Auto
+    "MARUTI": "AUTO", "M&M": "AUTO", "BAJAJ-AUTO": "AUTO", "EICHERMOT": "AUTO", "HEROMOTOCO": "AUTO",
+    
+    # Energy & Oil
+    "RELIANCE": "ENERGY", "NTPC": "ENERGY", "POWERGRID": "ENERGY", "BPCL": "ENERGY", "ONGC": "ENERGY", "COALINDIA": "ENERGY",
+    
+    # Metal
     "TATASTEEL": "METAL", "JSWSTEEL": "METAL", "HINDALCO": "METAL",
-    "MARUTI": "AUTO", "M&M": "AUTO", "EICHERMOT": "AUTO", "HEROMOTOCO": "AUTO",
+    
+    # FMCG
     "ITC": "FMCG", "HINDUNILVR": "FMCG", "NESTLEIND": "FMCG", "BRITANNIA": "FMCG",
-    "LT": "INFRA", "POWERGRID": "INFRA", "NTPC": "INFRA",
-    "BHARTIARTL": "TELECOM"
-}
-
-INDEX_WEIGHTS_NIFTY = {
-    "HDFCBANK": 11.5, "RELIANCE": 9.2, "ICICIBANK": 7.9, "INFY": 5.8, "ITC": 4.3,
-    "TCS": 4.1, "BHARTIARTL": 3.9, "LT": 3.6, "AXISBANK": 3.4, "SBIN": 3.1
-}
-
-INDEX_WEIGHTS_BNF = {
-    "HDFCBANK": 29.1, "ICICIBANK": 23.4, "SBIN": 11.2, "AXISBANK": 9.8, "KOTAKBANK": 9.1
+    
+    # Infra & Others
+    "LT": "INFRA", "BHARTIARTL": "TELECOM", "BAJFINANCE": "FINANCE", "BAJAJFINSV": "FINANCE",
+    "SHRIRAMFIN": "FINANCE", "ADANIENT": "OTHER", "ADANIPORTS": "OTHER", "ULTRACEMCO": "OTHER",
+    "GRASIM": "OTHER", "TITAN": "OTHER", "TRENT": "OTHER", "BEL": "OTHER", "ASIANPAINT": "OTHER"
 }
 
 
 def fetch_global_cues():
-    cues = []
+    """
+    Fetches real-time global indicators including GIFT Nifty (IN=F) 
+    to project opening momentum.
+    """
+    cues_tickers = {
+        "GIFT Nifty": "IN=F",
+        "Nasdaq": "^IXIC",
+        "Dow Jones": "^DJI",
+        "S&P 500": "^GSPC",
+        "Nikkei": "^N225",
+        "Hang Seng": "^HSI",
+        "Crude Oil": "CL=F",
+        "US Dollar Idx": "DX-Y.NYB",
+        "US 10Y Yield": "^TNX",
+        "India VIX": "^INDIAVIX"
+    }
+
+    results = []
     try:
-        data = yf.download(" ".join(GLOBAL_TICKERS.values()), period="5d", interval="1d", progress=False, ignore_tz=True)
-        close = data["Close"] if isinstance(data.columns, pd.MultiIndex) else data
-        for name, sym in GLOBAL_TICKERS.items():
-            if sym in close.columns:
-                s = close[sym].dropna()
-                if len(s) >= 2:
-                    curr, prev = s.iloc[-1], s.iloc[-2]
-                    chg = ((curr / prev) - 1) * 100
-                    cues.append({
-                        "name": name,
-                        "val": f"{curr:,.1f}",
-                        "chg": f"{'+' if chg>=0 else ''}{chg:.2f}%"
-                    })
-    except Exception:
-        pass
-    return cues
+        data = yf.download(
+            " ".join(cues_tickers.values()),
+            period="5d",
+            interval="1d",
+            group_by="ticker",
+            threads=True,
+            progress=False,
+            timeout=15
+        )
+    except Exception as e:
+        logging.error(f"Failed to fetch global cues: {e}")
+        return results
+
+    is_multi = isinstance(data.columns, pd.MultiIndex)
+
+    for name, sym in cues_tickers.items():
+        try:
+            df = data[sym].dropna(how="all").copy() if is_multi else data.copy()
+            if not df.empty and len(df) >= 2:
+                close = df["Close"].iloc[-1]
+                prev = df["Close"].iloc[-2]
+                chg = ((close / prev) - 1) * 100
+                chg_str = f"{chg:+.2f}%"
+                val_str = f"{close:,.1f}" if close > 100 else f"{close:.2f}"
+                results.append({
+                    "name": name,
+                    "val": val_str,
+                    "chg": chg_str
+                })
+        except Exception:
+            continue
+
+    return results
 
 
-def compute_sector_strength(stock_candles):
+def compute_sector_strength(candles):
     sector_moves = {}
-    for sym, df in stock_candles.items():
-        sec = SECTOR_MAP.get(sym, "OTHER")
+    for sym, sec in SECTOR_MAP.items():
+        df = candles.get(sym)
         if df is not None and len(df) >= 2:
-            c, p = df["Close"].iloc[-1], df["Close"].iloc[-2]
-            move = ((c / p) - 1) * 100
-            sector_moves.setdefault(sec, []).append(move)
+            c = df["Close"].iloc[-1]
+            p = df["Close"].iloc[-2]
+            chg = ((c / p) - 1) * 100
+            sector_moves.setdefault(sec, []).append(chg)
 
-    res = []
+    sector_summary = []
     for sec, moves in sector_moves.items():
         if not moves:
             continue
         avg = sum(moves) / len(moves)
-        up = sum(1 for m in moves if m > 0)
+        up_count = sum(1 for m in moves if m > 0)
         tot = len(moves)
-        read = "Strong" if avg >= 0.5 and (up / tot) >= 0.6 else ("Weak" if avg <= -0.5 else "Mixed")
-        res.append({
+        read = "Strong" if avg >= 0.5 and (up_count / tot) >= 0.6 else ("Weak" if avg <= -0.5 and (up_count / tot) <= 0.4 else "Mixed")
+        sector_summary.append({
             "name": sec,
-            "avg_move": f"{'+' if avg>=0 else ''}{avg:.2f}%",
-            "up_down": f"{up}/{tot}",
+            "avg_move": f"{avg:+.2f}%",
+            "up_down": f"{up_count}/{tot}",
             "read": read,
             "raw_avg": avg
         })
-    return sorted(res, key=lambda x: x["raw_avg"], reverse=True)
+
+    return sorted(sector_summary, key=lambda x: x["raw_avg"], reverse=True)
 
 
-def compute_point_contributors(stock_candles, nifty_spot, bnf_spot):
-    def _get_contributors(weight_map, base_spot):
-        lifting, dragging = [], []
-        for sym, weight in weight_map.items():
-            df = stock_candles.get(sym)
+def compute_point_contributors(candles, nifty_spot, bnf_spot):
+    nifty_weights = {"HDFCBANK": 11.0, "RELIANCE": 9.5, "ICICIBANK": 8.0, "INFY": 5.5, "ITC": 4.0, "TCS": 3.8, "LT": 3.6, "SBIN": 3.2, "BHARTIARTL": 3.0}
+    bnf_weights = {"HDFCBANK": 29.0, "ICICIBANK": 24.0, "SBIN": 10.0, "KOTAKBANK": 9.0, "AXISBANK": 9.0}
+
+    def get_contribs(weights, spot):
+        gains, losses = [], []
+        for sym, wt in weights.items():
+            df = candles.get(sym)
             if df is not None and len(df) >= 2:
-                pct_val = ((df["Close"].iloc[-1] / df["Close"].iloc[-2]) - 1)
-                pts = round(pct_val * (weight / 100.0) * base_spot)
+                pct = ((df["Close"].iloc[-1] / df["Close"].iloc[-2]) - 1)
+                pts = round((pct * (wt / 100)) * spot)
                 if pts > 0:
-                    lifting.append((sym, pts))
+                    gains.append((sym, pts))
                 elif pts < 0:
-                    dragging.append((sym, pts))
-        lifting = sorted(lifting, key=lambda x: x[1], reverse=True)[:3]
-        dragging = sorted(dragging, key=lambda x: x[1])[:3]
-        return lifting, dragging
-
-    n_lift, n_drag = _get_contributors(INDEX_WEIGHTS_NIFTY, nifty_spot)
-    b_lift, b_drag = _get_contributors(INDEX_WEIGHTS_BNF, bnf_spot)
+                    losses.append((sym, pts))
+        return {
+            "lifting": sorted(gains, key=lambda x: x[1], reverse=True)[:3],
+            "dragging": sorted(losses, key=lambda x: x[1])[:3]
+        }
 
     return {
-        "NIFTY": {"lifting": n_lift, "dragging": n_drag},
-        "BANKNIFTY": {"lifting": b_lift, "dragging": b_drag}
+        "NIFTY": get_contribs(nifty_weights, nifty_spot),
+        "BANKNIFTY": get_contribs(bnf_weights, bnf_spot)
     }
