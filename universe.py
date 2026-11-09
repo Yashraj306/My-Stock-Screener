@@ -1,28 +1,29 @@
 """
 Core Indices & Constituent Stocks Universe for High-Speed F&O Screening.
-Excluded: TATAMOTORS, LTIM (Yahoo 404 / de-listing issues).
+Excluded: TATAMOTORS, LTIM (Yahoo 404 / Delisting issues).
 """
 
 INDEX_MAP = {
     "NIFTY": "NSE_INDEX|Nifty 50",
     "BANKNIFTY": "NSE_INDEX|Nifty Bank",
+    "FINNIFTY": "NSE_INDEX|Nifty Fin Service",
     "SENSEX": "BSE_INDEX|SENSEX"
 }
 
 STOCKS_UNIVERSE = [
-    # Nifty 50 & Sensex Common Heavyweights
+    # Heavyweights & Common Large Caps
     "RELIANCE", "TCS", "HDFCBANK", "ICICIBANK", "INFY", "BHARTIARTL", "SBIN",
     "ITC", "HINDUNILVR", "LT", "BAJFINANCE", "HCLTECH", "MARUTI", "SUNPHARMA",
     "ADANIENT", "KOTAKBANK", "TITAN", "NTPC", "AXISBANK",
     "POWERGRID", "ADANIPORTS", "ULTRACEMCO", "BAJAJFINSV", "WIPRO", "M&M",
     "JSWSTEEL", "TATASTEEL", "TECHM", "NESTLEIND",
     
-    # Remaining Nifty 50
+    # Active F&O Names
     "COALINDIA", "GRASIM", "BPCL", "EICHERMOT", "CIPLA", "DRREDDY",
     "BRITANNIA", "APOLLOHOSP", "DIVISLAB", "HINDALCO", "SHRIRAMFIN",
     "TRENT", "BEL", "HEROMOTOCO", "ONGC", "ASIANPAINT",
     
-    # Bank Nifty Constituents
+    # Financial Services & Banks
     "INDUSINDBK", "BANKBARODA", "PNB", "CANBK", "FEDERALBNK", "IDFCFIRSTB", "AUBANK"
 ]
 
