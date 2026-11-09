@@ -14,7 +14,6 @@ def render_html_report(data):
     setups = data.get("setups", {})
     track_record = data.get("track_record", {})
 
-    # 1. Global Cues Table
     cues_th = "".join([f'<th style="padding: 6px; border: 1px solid #ddd; font-size: 11px;">{c["name"]}</th>' for c in global_cues])
     cues_td = "".join([f'<td style="padding: 6px; border: 1px solid #ddd; font-size: 11px; text-align: center;"><b>{c["val"]}</b><br><span style="color: {"#00873c" if "+" in c["chg"] else "#d9534f"};">{c["chg"]}</span></td>' for c in global_cues])
     cues_html = f"""
@@ -28,7 +27,6 @@ def render_html_report(data):
     </div>
     """ if global_cues else ""
 
-    # 2. Index Points Contributors
     idx_blocks = ""
     for idx_name, info in index_view.items():
         lifting_str = ", ".join([f"{x[0]} (+{x[1]})" for x in info.get("lifting", [])])
@@ -41,7 +39,6 @@ def render_html_report(data):
         </div>
         """
 
-    # 3. Sector Table
     sec_rows = ""
     for s in sectors:
         col = "#27ae60" if s.get("read") == "Strong" else ("#e74c3c" if s.get("read") == "Weak" else "#7f8c8d")
@@ -54,7 +51,6 @@ def render_html_report(data):
         </tr>
         """
 
-    # 4. Setup Sections Renderer
     def render_section(heading, sub_desc, cards_list):
         content = "".join([build_stock_card(c) for c in cards_list]) if cards_list else '<div style="font-size: 12px; color: #888; font-style: italic; margin-bottom: 12px;">Nothing passed the quality filters today. Fewer, better ideas is intended.</div>'
         return f"""
@@ -70,7 +66,6 @@ def render_html_report(data):
     cont_bull = render_section("Continuation: bullish (BUY CALL)", "Move has started. Prefer pullbacks, avoid chasing.", setups.get("cont_bull", []))
     cont_bear = render_section("Continuation: bearish (BUY PUT)", "Move has started. Prefer bounces that fail, avoid chasing.", setups.get("cont_bear", []))
 
-    # 5. Track Record Table
     tr_rows = ""
     for row in track_record.get("rows", []):
         tr_rows += f"""
@@ -84,7 +79,7 @@ def render_html_report(data):
         </tr>
         """
 
-    html = f"""
+    return f"""
     <html>
     <body style="font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, Helvetica, Arial, sans-serif; background: #f4f6f8; margin: 0; padding: 12px; color: #2f3542;">
         <div style="max-width: 680px; margin: 0 auto; background: #ffffff; padding: 20px; border-radius: 8px; border: 1px solid #e1e8ed;">
@@ -99,8 +94,8 @@ def render_html_report(data):
                 <div style="font-weight: bold; font-size: 14px; margin-bottom: 4px;">Summary</div>
                 <div><b>Nifty {summary.get('nifty_spot')} ({summary.get('nifty_chg')})</b>, above its 20-day average, RSI {summary.get('nifty_rsi')}</div>
                 <div>Breadth: {summary.get('breadth_ratio')} | {summary.get('above_ema20')}% above EMA20 | {summary.get('above_ema50')}% above EMA50 | <b>{summary.get('breadth_tone')}</b></div>
-                {f"<div>Global tone: <b>{summary.get('global_tone')}</b></div>" if 'global_tone' in summary else ""}
-                <div>Scanned {summary.get('scanned_count', 220)} stocks and indices | Ideas: <b>{summary.get('ideas_count', 0)}</b> (pre-rally {summary.get('pre_count', 0)}, continuation {summary.get('cont_count', 0)})</div>
+                {f"<div>Global tone: <b>{summary.get('global_tone')}</b></div>" if summary.get('global_tone') else ""}
+                <div>Scanned {summary.get('scanned_count', 53)} stocks and indices | Ideas: <b>{summary.get('ideas_count', 0)}</b> (pre-rally {summary.get('pre_count', 0)}, continuation {summary.get('cont_count', 0)})</div>
                 <div>Best rated: <b>{summary.get('best_rated', 'None')}</b></div>
             </div>
 
@@ -158,4 +153,3 @@ def render_html_report(data):
     </body>
     </html>
     """
-    return html
