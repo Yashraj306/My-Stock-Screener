@@ -1,73 +1,74 @@
-import numpy as np
 import pandas as pd
+import numpy as np
 
 
-def rsi(series, period=14):
-    delta = series.diff()
-    gain = delta.clip(lower=0).ewm(alpha=1/period, adjust=False).mean()
-    loss = (-delta.clip(upper=0)).ewm(alpha=1/period, adjust=False).mean()
-    rs = gain / loss.replace(0, np.nan)
-    res = 100 - (100 / (1 + rs))
-    res = res.mask((loss == 0) & (gain > 0), 100.0)
-    res = res.mask((loss == 0) & (gain == 0), 50.0)
-    return res
+def analyze_chain(df):
+    """
+    Analyzes option chain data incorporating both Cumulative OI 
+    and Intraday Change in OI for real institutional sentiment.
+    """
+    if df is None or df.empty:
+        return None
 
+    # Filter out empty strikes
+    df = df.dropna(subset=["strike"]).copy()
+    if df.empty:
+        return None
 
-def atr(df, period=14):
-    high, low, close = df["High"], df["Low"], df["Close"]
-    tr1 = high - low
-    tr2 = (high - close.shift(1)).abs()
-    tr3 = (low - close.shift(1)).abs()
-    tr = pd.concat([tr1, tr2, tr3], axis=1).max(axis=1)
-    return tr.rolling(period).mean()
+    spot = df["spot"].iloc[0] if "spot" in df.columns and not pd.isna(df["spot"].iloc[0]) else 0
 
+    tot_ce_oi = df["ce_oi"].sum()
+    tot_pe_oi = df["pe_oi"].sum()
+    oi_pcr = round(tot_pe_oi / tot_ce_oi, 2) if tot_ce_oi > 0 else 1.0
 
-def adx(df, period=14):
-    high, low, close = df["High"], df["Low"], df["Close"]
-    up_move = high.diff()
-    down_move = -low.diff()
+    # Intraday Change in OI PCR
+    ce_chg_oi = (df["ce_oi"] - df["ce_poi"]).sum()
+    pe_chg_oi = (df["pe_oi"] - df["pe_poi"]).sum()
     
-    pos_dm = np.where((up_move > down_move) & (up_move > 0), up_move, 0.0)
-    neg_dm = np.where((down_move > up_move) & (down_move > 0), down_move, 0.0)
-    
-    tr = atr(df, period)
-    pos_di = 100 * pd.Series(pos_dm, index=df.index).ewm(alpha=1/period, adjust=False).mean() / tr.replace(0, np.nan)
-    neg_di = 100 * pd.Series(neg_dm, index=df.index).ewm(alpha=1/period, adjust=False).mean() / tr.replace(0, np.nan)
-    
-    dx = 100 * (pos_di - neg_di).abs() / (pos_di + neg_di).replace(0, np.nan)
-    return dx.ewm(alpha=1/period, adjust=False).mean()
+    if ce_chg_oi > 0:
+        intraday_pcr = round(pe_chg_oi / ce_chg_oi, 2)
+    else:
+        intraday_pcr = 1.5 if pe_chg_oi > 0 else 0.5
 
+    # Max Pain Calculation
+    strikes = df["strike"].values
+    loss_list = []
+    for s in strikes:
+        call_loss = np.maximum(0, s - strikes) * df["ce_oi"].values
+        put_loss = np.maximum(0, strikes - s) * df["pe_oi"].values
+        loss_list.append(call_loss.sum() + put_loss.sum())
+    
+    max_pain = strikes[np.argmin(loss_list)] if len(loss_list) > 0 else spot
 
-def pct(a, b):
-    if b is None or pd.isna(b) or b == 0:
-        return 0.0
-    return ((a / b) - 1.0) * 100.0
+    # Major Support and Resistance Strikes (based on OI concentration)
+    res_idx = df["ce_oi"].idxmax()
+    sup_idx = df["pe_oi"].idxmax()
+    resistance_strike = df.loc[res_idx, "strike"] if not pd.isna(res_idx) else spot
+    support_strike = df.loc[sup_idx, "strike"] if not pd.isna(sup_idx) else spot
 
+    # ATM Implied Volatility
+    atm_idx = (df["strike"] - spot).abs().idxmin()
+    atm_iv = round(float(df.loc[atm_idx, "ce_iv"]), 1) if ("ce_iv" in df.columns and not pd.isna(df.loc[atm_idx, "ce_iv"])) else 20.0
 
-def analyze(df):
-    if df is None or len(df) < 15:
-        return {}
-    
-    close = df["Close"]
-    c_rsi = rsi(close)
-    c_atr = atr(df)
-    c_adx = adx(df)
-    
-    ema20 = close.ewm(span=20, adjust=False).mean()
-    ema50 = close.ewm(span=50, adjust=False).mean()
-    ema200 = close.ewm(span=200, adjust=False).mean() if len(df) >= 200 else ema50
-    
-    avg_vol = df["Volume"].tail(20).mean() if "Volume" in df.columns else 1.0
-    last_vol = df["Volume"].iloc[-1] if "Volume" in df.columns else 1.0
-    vr = (last_vol / avg_vol) if avg_vol > 0 else 1.0
-    
+    # Institutional Sentiment Read
+    if oi_pcr >= 1.15 and intraday_pcr >= 1.0:
+        sentiment = "BULLISH"
+        oi_action = "Long Buildup (Call Absorption)"
+    elif oi_pcr <= 0.80 and intraday_pcr <= 0.85:
+        sentiment = "BEARISH"
+        oi_action = "Short Buildup (Heavy Call Writing)"
+    else:
+        sentiment = "NEUTRAL"
+        oi_action = "Unwinding / Balanced Activity"
+
     return {
-        "price": float(close.iloc[-1]),
-        "rsi": float(c_rsi.iloc[-1]) if not pd.isna(c_rsi.iloc[-1]) else 50.0,
-        "atr": float(c_atr.iloc[-1]) if not pd.isna(c_atr.iloc[-1]) else float(close.iloc[-1] * 0.015),
-        "adx": float(c_adx.iloc[-1]) if not pd.isna(c_adx.iloc[-1]) else 20.0,
-        "vr": float(vr),
-        "ema20": float(ema20.iloc[-1]),
-        "ema50": float(ema50.iloc[-1]),
-        "ema200": float(ema200.iloc[-1])
+        "spot": spot,
+        "oi_pcr": oi_pcr,
+        "intraday_pcr": intraday_pcr,
+        "max_pain": int(max_pain),
+        "resistance_strike": int(resistance_strike),
+        "support_strike": int(support_strike),
+        "atm_iv": atm_iv,
+        "sentiment": sentiment,
+        "oi_action": oi_action
     }
