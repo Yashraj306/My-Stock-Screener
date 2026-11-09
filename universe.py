@@ -1,6 +1,6 @@
 """
 Core Indices & Constituent Stocks Universe for High-Speed F&O Screening.
-TATAMOTORS has been excluded to prevent Yahoo Finance 404 download errors.
+Excluded: TATAMOTORS, LTIM (Yahoo 404 / de-listing issues).
 """
 
 INDEX_MAP = {
@@ -20,7 +20,7 @@ STOCKS_UNIVERSE = [
     # Remaining Nifty 50
     "COALINDIA", "GRASIM", "BPCL", "EICHERMOT", "CIPLA", "DRREDDY",
     "BRITANNIA", "APOLLOHOSP", "DIVISLAB", "HINDALCO", "SHRIRAMFIN",
-    "TRENT", "BEL", "HEROMOTOCO", "ONGC", "LTIM", "ASIANPAINT",
+    "TRENT", "BEL", "HEROMOTOCO", "ONGC", "ASIANPAINT",
     
     # Bank Nifty Constituents
     "INDUSINDBK", "BANKBARODA", "PNB", "CANBK", "FEDERALBNK", "IDFCFIRSTB", "AUBANK"
