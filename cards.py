@@ -1,5 +1,4 @@
 def make_checklist_html(checks):
-    """Generates the checkmark/cross confirmation row."""
     items = [
         ("Trend", checks.get("trend", False)),
         ("Key level", checks.get("level", False)),
@@ -19,8 +18,8 @@ def make_checklist_html(checks):
 
 def build_stock_card(idea):
     sym = idea["symbol"]
-    side = idea["side"]  # 'BUY CALL (CE)' or 'BUY PUT (PE)'
-    setup_kind = idea["setup_kind"]  # 'Pre-rally: coiling near a key level' or 'Continuation: move already started'
+    side = idea["side"]
+    setup_kind = idea["setup_kind"]
     grade = idea.get("grade", "B")
     sec = idea.get("sector", "OTHER")
     close = idea["close"]
@@ -37,10 +36,8 @@ def build_stock_card(idea):
     rr = idea.get("rr", 1.5)
 
     checklist_html = make_checklist_html(idea.get("checks", {}))
-
     bullets = "".join([f"<li>{r}</li>" for r in idea.get("reasons", [])])
 
-    # Option chain section
     opt = idea.get("opt_chain", {})
     strike = idea.get("strike", {})
 
@@ -59,7 +56,7 @@ def build_stock_card(idea):
                 <b>Best strike: {strike.get('strike_name')}</b> | Premium {strike.get('ltp', 0.0)} | OI {strike.get('oi', 0):,} ({strike.get('oi_chg', '+0.0%')}) | Volume {strike.get('volume', 0):,} | IV {strike.get('iv', 0.0)}<br>
                 Delta {strike.get('delta', 0.0)} | Theta {strike.get('theta', 0.0)}/day ({strike.get('theta_pct', '0.0%')} of premium) | Gamma {strike.get('gamma', 0.0)} | Vega {strike.get('vega', 0.0)}<br>
                 <b>Premium plan (approx.):</b> SL ~{strike.get('sl', 0.0)} | T1 ~{strike.get('t1', 0.0)} | R:R {rr} (delta-based)<br>
-                <i>Position size:</i> {strike.get('position_text', '1 lot risk within limits.')}
+                <i>Position size:</i> {strike.get('position_text', 'Risk 1% of Capital.')}
             </div>
         </div>
         """
