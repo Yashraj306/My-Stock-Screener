@@ -3,7 +3,8 @@ from cards import build_stock_card
 
 
 def render_html_report(data):
-    title = "Quant & F&O Market Screener"
+    mode = data.get("mode", "BTST")
+    title = f"{mode} Quant & F&O Market Screener"
     today_str = dt.datetime.now().strftime("%A, %d %b %Y")
 
     summary = data.get("summary", {})
@@ -14,13 +15,12 @@ def render_html_report(data):
     setups = data.get("setups", {})
     track_record = data.get("track_record", {})
 
-    # Global Cues Grid
     cues_th = "".join([f'<th style="padding: 6px; border: 1px solid #ddd; font-size: 11px;">{c["name"]}</th>' for c in global_cues])
     cues_td = "".join([f'<td style="padding: 6px; border: 1px solid #ddd; font-size: 11px; text-align: center;"><b>{c["val"]}</b><br><span style="color: {"#00873c" if "+" in c["chg"] else "#d9534f"};">{c["chg"]}</span></td>' for c in global_cues])
     cues_html = f"""
     <div style="margin-bottom: 18px;">
-        <h4 style="margin: 0 0 4px 0; color: #2c3e50;">Global cues</h4>
-        <div style="font-size: 11px; color: #7f8c8d; margin-bottom: 6px;">US markets close after India, so their move hints at today's open</div>
+        <h4 style="margin: 0 0 4px 0; color: #2c3e50;">Global cues & GIFT Nifty</h4>
+        <div style="font-size: 11px; color: #7f8c8d; margin-bottom: 6px;">Live indicators hinting at domestic market opening and volatility</div>
         <table style="width: 100%; border-collapse: collapse; background: #fff;">
             <tr style="background: #f8f9fa;">{cues_th}</tr>
             <tr>{cues_td}</tr>
@@ -28,7 +28,6 @@ def render_html_report(data):
     </div>
     """ if global_cues else ""
 
-    # Index Point Movers
     idx_blocks = ""
     for idx_name, info in index_view.items():
         lifting_str = ", ".join([f"{x[0]} (+{x[1]})" for x in info.get("lifting", [])])
@@ -41,18 +40,16 @@ def render_html_report(data):
         </div>
         """
 
-    # Index Trades
     idx_trades_html = ""
     if index_trades:
         idx_trades_html = """
         <div style="margin-top: 18px; border-left: 4px solid #10ac84; padding-left: 10px;">
-            <div style="font-size: 15px; font-weight: bold; color: #10ac84; margin-bottom: 8px;">🏛️ NIFTY, BANKNIFTY & SENSEX Trade Plans</div>
+            <div style="font-size: 15px; font-weight: bold; color: #10ac84; margin-bottom: 8px;">🏛️ Indices Trade Plans (NIFTY, BANKNIFTY, FINNIFTY, SENSEX)</div>
         """
         for it in index_trades:
             idx_trades_html += build_stock_card(it)
         idx_trades_html += "</div>"
 
-    # Sector Table
     sec_rows = ""
     for s in sectors:
         col = "#27ae60" if s.get("read") == "Strong" else ("#e74c3c" if s.get("read") == "Weak" else "#7f8c8d")
@@ -75,8 +72,8 @@ def render_html_report(data):
         </div>
         """
 
-    bull_cards = render_section("🟢 Top 5 Bullish Setups (BUY CALL / CE)", "High momentum & relative strength candidates.", setups.get("bullish", []))
-    bear_cards = render_section("🔴 Top 5 Bearish Setups (BUY PUT / PE)", "Breakdown & institutional weakness candidates.", setups.get("bearish", []))
+    bull_cards = render_section("🟢 Top 5 Bullish Stock Ideas (BUY CALL / CE)", "High relative strength and volume momentum candidates.", setups.get("bullish", []))
+    bear_cards = render_section("🔴 Top 5 Bearish Stock Ideas (BUY PUT / PE)", "Breakdown and institutional weakness candidates.", setups.get("bearish", []))
 
     tr_rows = ""
     for row in track_record.get("rows", []):
@@ -91,40 +88,50 @@ def render_html_report(data):
         </tr>
         """
 
+    vix_alert_box = ""
+    if summary.get("vix_alert"):
+        vix_alert_box = f"""
+        <div style="background: #fff3cd; border-left: 4px solid #ffbb33; padding: 8px 12px; margin-bottom: 14px; font-size: 12px; color: #856404;">
+            <b>Volatility Insight:</b> {summary.get("vix_alert")}
+        </div>
+        """
+
     return f"""
     <html>
     <body style="font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, Helvetica, Arial, sans-serif; background: #f4f6f8; margin: 0; padding: 12px; color: #2f3542;">
         <div style="max-width: 680px; margin: 0 auto; background: #ffffff; padding: 20px; border-radius: 8px; border: 1px solid #e1e8ed;">
             
-            <!-- Guaranteed Inline Rendered Logo Header -->
+            <!-- Guaranteed Clean Inline Logo Header -->
             <div style="border-bottom: 2px solid #2c3e50; padding-bottom: 12px; margin-bottom: 14px; display: flex; align-items: center; justify-content: space-between;">
                 <div>
                     <h2 style="margin: 0; color: #2c3e50; font-size: 20px;">{title}</h2>
                     <div style="font-size: 13px; color: #7f8c8d;">{today_str}</div>
                 </div>
                 <div>
-                    <div style="background: linear-gradient(135deg, #0d1b2a, #1b263b); border: 2px solid #00b894; border-radius: 10px; padding: 6px 12px; text-align: center; box-shadow: 0 2px 6px rgba(0,0,0,0.15);">
+                    <div style="background: linear-gradient(135deg, #0d1b2a, #1b263b); border: 2px solid #00b894; border-radius: 10px; padding: 6px 14px; text-align: center;">
                         <div style="font-size: 18px; line-height: 1.1;">🐂 📈 🐻</div>
                         <div style="color: #00cec9; font-weight: 900; font-size: 10px; letter-spacing: 1px; margin-top: 2px;">QUANT F&O</div>
                     </div>
                 </div>
             </div>
 
+            {vix_alert_box}
+
             <!-- Summary Box -->
             <div style="background: #f8f9fa; border-left: 4px solid #3498db; padding: 10px 14px; margin-bottom: 16px; font-size: 13px; line-height: 1.5;">
                 <div style="font-weight: bold; font-size: 14px; margin-bottom: 4px;">Summary</div>
-                <div><b>Nifty {summary.get('nifty_spot')} ({summary.get('nifty_chg')})</b>, above 20-day average, RSI {summary.get('nifty_rsi')}</div>
+                <div><b>Nifty {summary.get('nifty_spot')} ({summary.get('nifty_chg')})</b>, above 20-day EMA, RSI {summary.get('nifty_rsi')}</div>
                 <div>Breadth: {summary.get('breadth_ratio')} | {summary.get('above_ema20')}% above EMA20 | {summary.get('above_ema50')}% above EMA50 | <b>{summary.get('breadth_tone')}</b></div>
-                {f"<div>Global tone: <b>{summary.get('global_tone')}</b></div>" if summary.get('global_tone') else ""}
-                <div>Universe Scanned: <b>53 Constituents</b> | Top Trades: <b>10 Stock Ideas (5 Bullish + 5 Bearish)</b></div>
-                <div>Best Pick: <b>{summary.get('best_rated', 'None')}</b></div>
+                {f"<div>Opening Bias: <b>{summary.get('global_tone')}</b></div>" if summary.get('global_tone') else ""}
+                <div>Coverage: <b>4 Core Indices + 10 Selected Stocks (Top 5 Bullish & 5 Bearish)</b></div>
+                <div>Top Pick: <b>{summary.get('best_rated', 'None')}</b></div>
             </div>
 
             {cues_html}
 
             <!-- Index View -->
             <div style="margin-bottom: 18px;">
-                <h4 style="margin: 0 0 6px 0; color: #2c3e50;">Index view</h4>
+                <h4 style="margin: 0 0 6px 0; color: #2c3e50;">Index view & point contributors</h4>
                 {idx_blocks}
             </div>
 
@@ -142,10 +149,10 @@ def render_html_report(data):
                 </table>
             </div>
 
-            <!-- Index option Trades -->
+            <!-- Indices Trades -->
             {idx_trades_html}
 
-            <!-- Stock Setups -->
+            <!-- Stock Trades -->
             {bull_cards}
             {bear_cards}
 
@@ -162,12 +169,12 @@ def render_html_report(data):
                         <td style="padding: 5px; border: 1px solid #ddd; text-align: center;">Hit stop</td>
                         <td style="padding: 5px; border: 1px solid #ddd; text-align: center;">Avg move</td>
                     </tr>
-                    {tr_rows if tr_rows else "<tr><td colspan='6' style='padding: 6px; text-align: center; color: #888;'>Evaluating historical triggers.</td></tr>"}
+                    {tr_rows if tr_rows else "<tr><td colspan='6' style='padding: 6px; text-align: center; color: #888;'>Evaluating performance history.</td></tr>"}
                 </table>
             </div>
 
             <div style="margin-top: 16px; font-size: 10px; color: #95a5a6; line-height: 1.4;">
-                Plan: For swing & BTST, enter between 3:10 to 3:25 PM if the stock sustains direction relative to VWAP and day limits. Options lose value overnight; always maintain strict stop loss.
+                Rule: BTST entries should be validated near 3:15 PM if price sustains relative to VWAP and day limits. Morning entries should be taken on the break of opening 15-minute range. Options lose value overnight; always maintain strict stop loss.
             </div>
 
         </div>
