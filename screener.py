@@ -19,7 +19,12 @@ logging.basicConfig(level=logging.INFO, format="%(asctime)s - %(levelname)s - %(
 
 
 def batch_fetch_candles():
-    tickers = {k: ("^NSEI" if k == "NIFTY" else ("^NSEBANK" if k == "BANKNIFTY" else "^BSESN")) for k in INDEX_MAP.keys()}
+    tickers = {
+        "NIFTY": "^NSEI",
+        "BANKNIFTY": "^NSEBANK",
+        "FINNIFTY": "NIFTY_FIN_SERVICE.NS",
+        "SENSEX": "^BSESN"
+    }
     for s in STOCKS_UNIVERSE:
         tickers[s] = f"{s}.NS"
 
@@ -64,7 +69,7 @@ def select_best_contract(chain_df, spot, side="CE", days_to_exp=14):
         approx_prem = round(spot * 0.015, 1)
         hedge_strike = (chosen_strike + 2 * step) if side == "CE" else (chosen_strike - 2 * step)
 
-        pos_text = "BTST Entry: Confirm strength near 3:15 PM." if MODE == "BTST" else "Morning Entry: Wait for initial 15-min range confirmation."
+        pos_text = "BTST: Verify stock holds VWAP near 3:15 PM." if MODE == "BTST" else "Morning: Take entry on break of 15-min opening range."
         spread_text = f"Spread Hedge: Buy {int(chosen_strike)} {side}, Sell {int(hedge_strike)} {side}"
 
         return {
@@ -103,9 +108,9 @@ def select_best_contract(chain_df, spot, side="CE", days_to_exp=14):
     theta_pct = f"{abs(theta)/ltp*100:.1f}%" if ltp > 0 else "0.0%"
 
     hedge_strike_val = strike_val + 2 * step if side == "CE" else strike_val - 2 * step
-    spread_advice = f"Buy {int(strike_val)} {side} & Sell {int(hedge_strike_val)} {side} (Caps overnight risk)"
+    spread_advice = f"Buy {int(strike_val)} {side} & Sell {int(hedge_strike_val)} {side} (Caps overnight Vega/Theta risk)"
 
-    pos_text = "BTST: Verify stock holds VWAP & near High at 3:15 PM." if MODE == "BTST" else "Morning: Take entry on break of opening 15-min range."
+    pos_text = "BTST: Verify stock holds VWAP near 3:15 PM." if MODE == "BTST" else "Morning: Take entry on break of 15-min opening range."
 
     return {
         "strike_name": f"{int(strike_val)} {side}",
@@ -128,7 +133,7 @@ def select_best_contract(chain_df, spot, side="CE", days_to_exp=14):
 
 
 def run_screener():
-    logging.info(f"Running Specialized Screener Engine in MODE: {MODE}")
+    logging.info(f"Executing Full Screener in MODE: {MODE}")
     candles = batch_fetch_candles()
     sess = nse_session()
 
@@ -165,9 +170,19 @@ def run_screener():
     contributors = compute_point_contributors(candles, nifty_spot, bnf_spot)
     global_cues = fetch_global_cues() if MODE == "MORNING" else []
 
-    # 2. Index Trade Plans
+    # Dynamic India VIX Alert
+    vix_alert = None
+    for cue in global_cues:
+        if cue["name"] == "India VIX":
+            v = cue.get("raw_val", 14.0)
+            if v > 16.5:
+                vix_alert = f"India VIX elevated ({v:.1f}). Expect wider market swings. Maintain wider stop loss and reduce position sizing."
+            elif v < 12.0:
+                vix_alert = f"India VIX very low ({v:.1f}). Options premiums are cheap but vulnerable to theta decay. Prefer Bull/Bear spreads."
+
+    # 2. Four Indices Trade Plans (NIFTY, BANKNIFTY, FINNIFTY, SENSEX)
     index_trades = []
-    for idx_name in ["NIFTY", "BANKNIFTY", "SENSEX"]:
+    for idx_name in ["NIFTY", "BANKNIFTY", "FINNIFTY", "SENSEX"]:
         df = candles.get(idx_name)
         if df is None:
             continue
@@ -215,15 +230,15 @@ def run_screener():
         }
 
         reasons = [
-            f"{MODE} Index Signal: {'Holding above 20 EMA & VWAP' if is_bullish else 'Trading below 20 EMA & VWAP'}"
+            f"{MODE} Index Plan: Trading {'above' if is_bullish else 'below'} 20 EMA & VWAP reference level."
         ]
         if opt_info:
-            reasons.append(f"Institutional PCR: {opt_info['sentiment']} ({opt_info['intraday_pcr']} PCR)")
+            reasons.append(f"Institutional PCR reading: {opt_info['sentiment']} ({opt_info['intraday_pcr']} Intraday PCR).")
 
         index_trades.append({
             "symbol": idx_name,
             "side": "BUY CALL (CE)" if is_bullish else "BUY PUT (PE)",
-            "setup_kind": f"{MODE} Index Momentum",
+            "setup_kind": f"{MODE} Index Strategy",
             "grade": "A",
             "sector": "INDEX",
             "close": price,
@@ -254,7 +269,7 @@ def run_screener():
             "strike": best_strike
         })
 
-    # 3. Stock Scanning with Differentiated Factors (BTST vs MORNING)
+    # 3. Stock Scanning with Distinct BTST vs MORNING Criteria
     all_scored_stocks = []
 
     for sym in STOCKS_UNIVERSE:
@@ -280,19 +295,18 @@ def run_screener():
         low_val = df["Low"].iloc[-1]
         day_range = (high_val - low_val) or 1.0
 
-        # === Factor Separation Logic ===
         if MODE == "BTST":
-            # BTST Factors: Closing near High, VWAP sustain, Heavy late volume
-            close_strength = (price - low_val) / day_range  # 1.0 = at day high, 0.0 = at day low
+            # BTST Factor: Close near day-high, VWAP sustain, afternoon volume
+            close_position = (price - low_val) / day_range
             bull_score = (
-                (close_strength * 4.0) +
+                (close_position * 4.0) +
                 (2.0 if price > vwap else -2.0) +
                 (1.5 if price > ema20 else -1.0) +
                 (vr * 1.5) +
                 ((rsi_val - 50) / 10.0)
             )
         else:
-            # MORNING Factors: Multi-day trend, gap-followthrough, Breakout headroom
+            # MORNING Factor: Pre-market trend, range compression, room to run
             recent_range = df["High"].tail(5) - df["Low"].tail(5)
             prior_range = df["High"].tail(20) - df["Low"].tail(20)
             is_contracted = recent_range.mean() < prior_range.mean() * 0.75
@@ -370,20 +384,20 @@ def run_screener():
         reasons = []
         if MODE == "BTST":
             if is_bullish:
-                reasons.append(f"BTST Bullish: Holding near day-high & above VWAP | RSI {round(rsi_val)}")
-                reasons.append(f"Institutional volume surge: {vr:.1f}x average volume")
+                reasons.append(f"BTST Momentum: Holding near Day-High & above VWAP | RSI {round(rsi_val)}")
+                reasons.append(f"Institutional volume surge: {vr:.1f}x volume")
             else:
-                reasons.append(f"BTST Bearish: Closing near day-low & below VWAP | RSI {round(rsi_val)}")
+                reasons.append(f"BTST Breakdown: Closing near Day-Low & below VWAP | RSI {round(rsi_val)}")
                 reasons.append(f"Institutional selling pressure: {vr:.1f}x volume")
         else:
             if is_bullish:
-                reasons.append(f"Morning Momentum: Strong multi-day trend above EMA20 | RSI {round(rsi_val)}")
-                reasons.append("Breakout continuation profile ahead of the bell")
+                reasons.append(f"Morning Continuation: Established upward trend above EMA20 | RSI {round(rsi_val)}")
+                reasons.append("Breakout momentum profile ahead of the opening bell")
             else:
-                reasons.append(f"Morning Breakdown: Structure weak under key EMAs | RSI {round(rsi_val)}")
-                reasons.append("Downside follow-through setup on opening")
+                reasons.append(f"Morning Breakdown: Price below EMA20 and key support | RSI {round(rsi_val)}")
+                reasons.append("Downside continuation setup on opening")
 
-        setup_name = f"{MODE} Bullish Carry" if is_bullish else f"{MODE} Bearish Breakdown"
+        setup_name = f"{MODE} Bullish Setup" if is_bullish else f"{MODE} Bearish Setup"
 
         return {
             "symbol": sym,
@@ -436,7 +450,8 @@ def run_screener():
             "above_ema50": round((above_50 / max(1, stocks_scanned)) * 100),
             "breadth_tone": breadth_tone,
             "global_tone": "POSITIVE (Firm open likely)" if nifty_spot > 24800 else "NEUTRAL",
-            "best_rated": best_rated
+            "best_rated": best_rated,
+            "vix_alert": vix_alert
         },
         "global_cues": global_cues,
         "index_view": {
@@ -471,7 +486,7 @@ def run_screener():
     }
 
     send_alert(payload)
-    logging.info(f"Dispatched specialized {MODE} report with 5 Bullish, 5 Bearish & 3 Indices!")
+    logging.info(f"Dispatched {MODE} report with 4 Indices and exactly 5 Bullish & 5 Bearish stocks!")
     return payload
 
 
