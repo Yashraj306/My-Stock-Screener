@@ -10,6 +10,7 @@ def render_html_report(data):
     summary = data.get("summary", {})
     global_cues = data.get("global_cues", [])
     index_view = data.get("index_view", {})
+    index_trades = data.get("index_trades", [])
     sectors = data.get("sectors", [])
     setups = data.get("setups", {})
     track_record = data.get("track_record", {})
@@ -38,6 +39,16 @@ def render_html_report(data):
             <span style="color: #e74c3c;">Dragging:</span> {dragging_str} (index points)
         </div>
         """
+
+    idx_trades_html = ""
+    if index_trades:
+        idx_trades_html = """
+        <div style="margin-top: 18px; border-left: 4px solid #10ac84; padding-left: 10px;">
+            <div style="font-size: 15px; font-weight: bold; color: #10ac84; margin-bottom: 8px;">🏛️ NIFTY, BANKNIFTY & SENSEX Trade Suggestions</div>
+        """
+        for it in index_trades:
+            idx_trades_html += build_stock_card(it)
+        idx_trades_html += "</div>"
 
     sec_rows = ""
     for s in sectors:
@@ -84,9 +95,15 @@ def render_html_report(data):
     <body style="font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, Helvetica, Arial, sans-serif; background: #f4f6f8; margin: 0; padding: 12px; color: #2f3542;">
         <div style="max-width: 680px; margin: 0 auto; background: #ffffff; padding: 20px; border-radius: 8px; border: 1px solid #e1e8ed;">
             
-            <div style="border-bottom: 2px solid #2c3e50; padding-bottom: 8px; margin-bottom: 14px;">
-                <h2 style="margin: 0; color: #2c3e50;">{title}</h2>
-                <div style="font-size: 13px; color: #7f8c8d;">{today_str}</div>
+            <div style="border-bottom: 2px solid #2c3e50; padding-bottom: 12px; margin-bottom: 14px; display: flex; align-items: center; justify-content: space-between;">
+                <div>
+                    <h2 style="margin: 0; color: #2c3e50;">{title}</h2>
+                    <div style="font-size: 13px; color: #7f8c8d;">{today_str}</div>
+                </div>
+                <!-- 3D Brand Logo incorporated directly into email -->
+                <div style="text-align: right;">
+                    <img src="https://i.ibb.co/6ndVfRj/DALL-E-2024-04-20.png" alt="Screener Logo" style="width: 58px; height: 58px; border-radius: 8px; border: 1px solid #ddd;" />
+                </div>
             </div>
 
             <!-- Summary Box -->
@@ -121,7 +138,10 @@ def render_html_report(data):
                 </table>
             </div>
 
-            <!-- Setups -->
+            <!-- Index option Trades -->
+            {idx_trades_html}
+
+            <!-- Stock Setups -->
             {pre_bull}
             {pre_bear}
             {cont_bull}
@@ -145,7 +165,7 @@ def render_html_report(data):
             </div>
 
             <div style="margin-top: 16px; font-size: 10px; color: #95a5a6; line-height: 1.4;">
-                BTST plan: buy only if the stock still holds strength around 3:00 to 3:20 PM. Check US futures and news before holding overnight, keep a stop-loss, and plan to exit in the first hour next morning. Options lose value overnight.<br>
+                BTST plan: buy only if the stock/index still holds strength around 3:00 to 3:20 PM. Check US futures and news before holding overnight, keep a stop-loss, and plan to exit in the first hour next morning. Options lose value overnight.<br>
                 Grades count independent confirmations (trend, level, volume, options, sector, relative strength). They are not probabilities. Ideas only, not advice.
             </div>
 
