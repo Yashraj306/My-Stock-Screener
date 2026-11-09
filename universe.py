@@ -1,38 +1,37 @@
-import gzip, json
-import requests
-from config import *
+"""
+Core Indices & Constituent Stocks Universe for High-Speed F&O Screening.
+Includes:
+- Indices: NIFTY, BANKNIFTY, SENSEX
+- All unique constituents belonging to Nifty 50, Bank Nifty, and Sensex baskets.
+"""
 
-_raw = None
+INDEX_MAP = {
+    "NIFTY": "NSE_INDEX|Nifty 50",
+    "BANKNIFTY": "NSE_INDEX|Nifty Bank",
+    "SENSEX": "BSE_INDEX|SENSEX"
+}
 
-def raw():
-    global _raw
-    if _raw is None:
-        try:
-            r = requests.get("https://assets.upstox.com/market-quote/instruments/exchange/NSE.json.gz", timeout=90)
-            _raw = json.loads(gzip.decompress(r.content))
-        except Exception as e:
-            print("instrument file failed:", e)
-            _raw = []
-    return _raw
+# Unique high-liquidity F&O constituents across Nifty 50, Bank Nifty, and Sensex
+STOCKS_UNIVERSE = [
+    # Heavyweights & Common across Nifty 50 & Sensex
+    "RELIANCE", "TCS", "HDFCBANK", "ICICIBANK", "INFY", "BHARTIARTL", "SBIN",
+    "ITC", "HINDUNILVR", "LT", "BAJFINANCE", "HCLTECH", "MARUTI", "SUNPHARMA",
+    "ADANIENT", "KOTAKBANK", "TITAN", "TATAMOTORS", "NTPC", "AXISBANK",
+    "POWERGRID", "ADANIPORTS", "ULTRACEMCO", "BAJAJFINSV", "WIPRO", "M&M",
+    "JSWSTEEL", "TATASTEEL", "TECHM", "NESTLEIND",
+    
+    # Remaining Nifty 50 stocks
+    "COALINDIA", "GRASIM", "BPCL", "EICHERMOT", "CIPLA", "DRREDDY",
+    "BRITANNIA", "APOLLOHOSP", "DIVISLAB", "HINDALCO", "SHRIRAMFIN",
+    "TRENT", "BEL", "HEROMOTOCO", "ONGC", "LTIM", "ASIANPAINT",
+    
+    # Remaining Bank Nifty stocks
+    "INDUSINDBK", "BANKBARODA", "PNB", "CANBK", "FEDERALBNK", "IDFCFIRSTB", "AUBANK"
+]
 
 def eq_keys():
-    return {x["trading_symbol"]: x["instrument_key"] for x in raw()
-            if x.get("segment") == "NSE_EQ" and x.get("instrument_type") == "EQ"}
-
-def fo_stocks():
-    """All stocks that have F&O contracts. Falls back to a fixed list if the file is unusable."""
-    eq = eq_keys()
-    under = {x.get("underlying_symbol") for x in raw()
-             if x.get("segment") == "NSE_FO" and x.get("instrument_type") in ("CE", "PE")}
-    out = sorted(s for s in under if s in eq)
-    if len(out) >= 100:
-        return out, f"Universe: {len(out)} F&O stocks (auto, from Upstox)"
-    return FALLBACK_STOCKS, f"Universe: fallback list of {len(FALLBACK_STOCKS)} stocks (auto-list unavailable)"
-
-def lot_sizes():
-    out = {}
-    for x in raw():
-        if x.get("segment") == "NSE_FO" and x.get("instrument_type") in ("CE", "PE"):
-            u, ls = x.get("underlying_symbol"), x.get("lot_size")
-            if u and ls and u not in out: out[u] = int(ls)
-    return out
+    """Returns mapping for legacy modules if required."""
+    mapping = {k: v for k, v in INDEX_MAP.items()}
+    for s in STOCKS_UNIVERSE:
+        mapping[s] = f"NSE_EQ|{s}"
+    return mapping
