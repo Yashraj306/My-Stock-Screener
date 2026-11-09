@@ -1,49 +1,31 @@
-name: Pre-Market Screener
+name: Market Screener Automation
 
 on:
   schedule:
-    - cron: "7 1 * * 1-5"   # 06:37 AM IST, Mon-Fri (main run)
-    - cron: "7 2 * * 1-5"   # 07:37 AM IST, Mon-Fri (backup if main was skipped or failed)
+    # Monday to Friday at 10:30 UTC (4:00 PM IST - Market Close Scan)
+    - cron: '30 10 * * 1-5'
   workflow_dispatch:
 
-permissions:
-  contents: write
-
-concurrency:
-  group: screener-log
-  cancel-in-progress: false
-
 jobs:
-  run:
+  run-screener:
     runs-on: ubuntu-latest
+
     steps:
-      - uses: actions/checkout@v4
+      - name: Checkout Repository
+        uses: actions/checkout@v4
 
-      - name: Today's date (IST)
-        id: d
-        run: echo "day=$(TZ=Asia/Kolkata date +%F)" >> "$GITHUB_OUTPUT"
-
-      - name: Check if today's report was already sent
-        id: sent
-        uses: actions/cache@v4
+      - name: Set up Python
+        uses: actions/setup-python@v5
         with:
-          path: .sent
-          key: sent-${{ steps.d.outputs.day }}
+          python-version: '3.11'
+          cache: 'pip'
 
-      - uses: actions/setup-python@v5
-        if: steps.sent.outputs.cache-hit != 'true' || github.event_name == 'workflow_dispatch'
-        with:
-          python-version: "3.11"
-
-      - name: Install
-        if: steps.sent.outputs.cache-hit != 'true' || github.event_name == 'workflow_dispatch'
-        run: pip install -r requirements.txt
-
-      - name: Run screener
-        if: steps.sent.outputs.cache-hit != 'true' || github.event_name == 'workflow_dispatch'
+      - name: Install Dependencies
         run: |
-          python screener.py
-          mkdir -p .sent && touch .sent/ok
+          python -m pip install --upgrade pip
+          pip install -r requirements.txt
+
+      - name: Run Screener Engine
         env:
           EMAIL_USER: ${{ secrets.EMAIL_USER }}
           EMAIL_PASS: ${{ secrets.EMAIL_PASS }}
@@ -51,14 +33,14 @@ jobs:
           UPSTOX_TOKEN: ${{ secrets.UPSTOX_TOKEN }}
           TELEGRAM_TOKEN: ${{ secrets.TELEGRAM_TOKEN }}
           TELEGRAM_CHAT_ID: ${{ secrets.TELEGRAM_CHAT_ID }}
-          CAPITAL: ${{ secrets.CAPITAL }}
-          RISK_PCT: ${{ secrets.RISK_PCT }}
-          MODE: MORNING
-
-      - name: Save signal log
-        if: steps.sent.outputs.cache-hit != 'true' || github.event_name == 'workflow_dispatch'
+          MODE: "SWING"
         run: |
-          git config user.name "screener-bot"
-          git config user.email "screener-bot@users.noreply.github.com"
-          git add signals_log.csv || true
-          git diff --cached --quiet || (git commit -m "Update signal log" && git pull --rebase && git push) || true
+          python screener.py
+
+      - name: Commit Tracker Updates
+        run: |
+          git config --local user.email "action@github.com"
+          git config --local user.name "GitHub Action"
+          git add trades_tracker.json || true
+          git commit -m "Auto-update trades tracker [skip ci]" || true
+          git push || true
