@@ -18,7 +18,6 @@ on:
         options:
           - MORNING
           - BTST
-          - SWING
 
 jobs:
   run-screener:
@@ -42,11 +41,9 @@ jobs:
       - name: Determine Screener Mode
         id: set-mode
         run: |
-          # If triggered manually via workflow_dispatch, use user input
           if [ "${{ github.event_name }}" = "workflow_dispatch" ]; then
             echo "SELECTED_MODE=${{ github.event.inputs.scan_mode }}" >> $GITHUB_ENV
           else
-            # For scheduled cron: 03:30 UTC is Morning, 08:30 UTC is BTST
             CURRENT_HOUR=$(date -u +%H)
             if [ "$CURRENT_HOUR" -lt "6" ]; then
               echo "SELECTED_MODE=MORNING" >> $GITHUB_ENV
