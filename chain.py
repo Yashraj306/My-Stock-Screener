@@ -1,57 +1,104 @@
 import numpy as np
 import pandas as pd
-from config import *
+from datetime import datetime
 
-def buildup(price_chg, oi_chg_pct):
-    if abs(oi_chg_pct) < 1: return "Neutral"
-    if price_chg >= 0 and oi_chg_pct > 0: return "Long Buildup"
-    if price_chg < 0 and oi_chg_pct > 0: return "Short Buildup"
-    if price_chg >= 0 and oi_chg_pct < 0: return "Short Covering"
-    return "Long Unwinding"
 
-def _pick(sub, col, full):
-    base = sub if (len(sub) and sub[col].max() > 0) else full
-    return float(base.loc[base[col].idxmax(), "strike"])
+def calculate_pcr(df):
+    """Calculates Put-Call Ratio based on Open Interest and Traded Volume."""
+    if df is None or df.empty:
+        return 0.0, 0.0
+    tot_ce_oi = df["ce_oi"].sum()
+    tot_pe_oi = df["pe_oi"].sum()
+    tot_ce_vol = df["ce_vol"].sum()
+    tot_pe_vol = df["pe_vol"].sum()
 
-def analyze_chain(df, exp, src, price_chg, direction):
-    df = df.sort_values("strike").reset_index(drop=True)
-    sp = df["spot"].dropna()
-    if sp.empty or df["ce_oi"].sum() == 0: return None
-    spot = float(sp.iloc[0])
-    pcr = df["pe_oi"].sum() / max(df["ce_oi"].sum(), 1)
-    sup = _pick(df[df["strike"] <= spot], "pe_oi", df)     # put wall at or below spot
-    res = _pick(df[df["strike"] >= spot], "ce_oi", df)     # call wall at or above spot
-    ce_chg, pe_chg = (df["ce_oi"] - df["ce_poi"]).sum(), (df["pe_oi"] - df["pe_poi"]).sum()
-    tot, ptot = df["ce_oi"].sum() + df["pe_oi"].sum(), df["ce_poi"].sum() + df["pe_poi"].sum()
-    oi_pct = (tot / ptot - 1) * 100 if ptot else 0
-    k = df["strike"].values
-    pain = [(df["ce_oi"].values * np.maximum(kk - k, 0)).sum() + (df["pe_oi"].values * np.maximum(k - kk, 0)).sum() for kk in k]
-    atm_i = int(np.argmin(np.abs(k - spot)))
-    iv = float(np.mean([x for x in (df.iloc[atm_i]["ce_iv"], df.iloc[atm_i]["pe_iv"]) if x > 0] or [0]))
-    if pcr >= 1.1 and pe_chg > ce_chg: bias = "BULLISH"
-    elif pcr <= 0.9 and ce_chg > pe_chg: bias = "BEARISH"
-    else: bias = "NEUTRAL"
-    dte = (dt.date.fromisoformat(exp) - ist_now().date()).days
+    oi_pcr = round(tot_pe_oi / tot_ce_oi, 2) if tot_ce_oi > 0 else 0.0
+    vol_pcr = round(tot_pe_vol / tot_ce_vol, 2) if tot_ce_vol > 0 else 0.0
+    return oi_pcr, vol_pcr
 
-    p = "ce" if direction == "BULLISH" else "pe"
-    win = df.iloc[max(0, atm_i - 1): atm_i + 4]
-    omax = win[f"{p}_oi"].max()
-    scored = []
-    for _, row in win.iterrows():
-        ltp, oi, poi, vol = row[f"{p}_ltp"], row[f"{p}_oi"], row[f"{p}_poi"], row[f"{p}_vol"]
-        if ltp <= 0 or oi <= 0 or oi < 0.3 * omax: continue
-        oi_up = (oi / poi - 1) * 100 if poi else 0
-        delta, theta, ivs = row[f"{p}_delta"], row[f"{p}_theta"], row[f"{p}_iv"]
-        decay = abs(theta) / ltp * 100 if ltp else 0
-        iv_ok = (8 <= ivs <= 100) if ivs else True
-        sc = np.log1p(vol) + np.log1p(oi) + (3 if oi_up > 5 else 0)
-        if delta: sc += 4 - abs(abs(delta) - 0.5) * 8
-        sc -= decay * (1.0 if MODE == "BTST" else 0.5)
-        if not iv_ok: sc -= 5
-        scored.append((sc, dict(strike=float(row["strike"]), side=p.upper(), ltp=float(ltp), oi=float(oi), oi_up=float(oi_up),
-                       vol=float(vol), iv=float(ivs), iv_ok=iv_ok, delta=float(delta), theta=float(theta),
-                       gamma=float(row[f"{p}_gamma"]), vega=float(row[f"{p}_vega"]), decay=float(decay))))
-    best = max(scored, key=lambda x: x[0])[1] if scored else None
-    return dict(src=src, expiry=exp, dte=dte, spot=spot, pcr=float(pcr), support=sup, resistance=res,
-                max_pain=float(k[int(np.argmin(pain))]), atm=float(k[atm_i]), iv=iv, bias=bias,
-                buildup=buildup(price_chg, oi_pct), oi_chg_pct=float(oi_pct), best=best)
+
+def max_pain(df):
+    """Calculates strike price where option writers experience minimum cumulative loss."""
+    if df is None or df.empty or "strike" not in df.columns:
+        return None
+    strikes = df["strike"].values
+    loss_list = []
+    for s in strikes:
+        ce_loss = np.maximum(0, s - df["strike"].values) * df["ce_oi"].values
+        pe_loss = np.maximum(0, df["strike"].values - s) * df["pe_oi"].values
+        loss_list.append(ce_loss.sum() + pe_loss.sum())
+    return strikes[int(np.argmin(loss_list))] if loss_list else None
+
+
+def identify_buildup(row):
+    """Identifies long/short buildup or unwinding based on price and OI change."""
+    def _buildup(price_chg, oi_chg):
+        if price_chg > 0 and oi_chg > 0:
+            return "Long Buildup"
+        if price_chg < 0 and oi_chg > 0:
+            return "Short Buildup"
+        if price_chg < 0 and oi_chg < 0:
+            return "Long Unwinding"
+        if price_chg > 0 and oi_chg < 0:
+            return "Short Covering"
+        return "Neutral"
+
+    ce_chg_price = row.get("ce_ltp", 0) - row.get("ce_prev_ltp", row.get("ce_ltp", 0))
+    ce_chg_oi = row.get("ce_oi", 0) - row.get("ce_poi", 0)
+    pe_chg_price = row.get("pe_ltp", 0) - row.get("pe_prev_ltp", row.get("pe_ltp", 0))
+    pe_chg_oi = row.get("pe_oi", 0) - row.get("pe_poi", 0)
+
+    return _buildup(ce_chg_price, ce_chg_oi), _buildup(pe_chg_price, pe_chg_oi)
+
+
+def analyze_chain(df, spot_price=None):
+    """
+    Complete interpretation of the Option Chain:
+    - PCR (OI & Vol)
+    - Key Resistance (highest Call OI) & Support (highest Put OI)
+    - ATM Strike & Max Pain
+    """
+    if df is None or df.empty:
+        return None
+
+    spot = spot_price if spot_price else (df["spot"].iloc[0] if "spot" in df.columns else None)
+    if spot is None or spot <= 0:
+        return None
+
+    # Sort strikes
+    df = df.sort_values(by="strike").reset_index(drop=True)
+
+    # ATM Strike selection
+    atm_idx = (df["strike"] - spot).abs().idxmin()
+    atm_strike = df.loc[atm_idx, "strike"]
+
+    # Support / Resistance via Open Interest walls
+    res_row = df.loc[df["ce_oi"].idxmax()]
+    sup_row = df.loc[df["pe_oi"].idxmax()]
+
+    oi_pcr, vol_pcr = calculate_pcr(df)
+    mp = max_pain(df)
+
+    # Market sentiment flag based on PCR
+    sentiment = "NEUTRAL"
+    if oi_pcr >= 1.25:
+        sentiment = "STRONG_BULLISH"
+    elif oi_pcr >= 1.0:
+        sentiment = "MILD_BULLISH"
+    elif oi_pcr <= 0.70:
+        sentiment = "STRONG_BEARISH"
+    elif oi_pcr <= 0.85:
+        sentiment = "MILD_BEARISH"
+
+    return {
+        "spot": spot,
+        "atm_strike": atm_strike,
+        "max_pain": mp,
+        "resistance_strike": res_row["strike"],
+        "support_strike": sup_row["strike"],
+        "max_ce_oi": int(res_row["ce_oi"]),
+        "max_pe_oi": int(sup_row["pe_oi"]),
+        "oi_pcr": oi_pcr,
+        "vol_pcr": vol_pcr,
+        "sentiment": sentiment
+    }
