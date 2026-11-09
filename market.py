@@ -15,12 +15,12 @@ GLOBAL_TICKERS = {
 }
 
 SECTOR_MAP = {
-    "RELIANCE": "ENERGY", "ONGC": "ENERGY", "BPCL": "ENERGY", "IOC": "ENERGY",
-    "HDFCBANK": "BANK", "ICICIBANK": "BANK", "SBIN": "BANK", "KOTAKBANK": "BANK", "AXISBANK": "BANK", "BANKBARODA": "BANK", "PNB": "BANK",
+    "RELIANCE": "ENERGY", "ONGC": "ENERGY", "BPCL": "ENERGY",
+    "HDFCBANK": "BANK", "ICICIBANK": "BANK", "SBIN": "BANK", "KOTAKBANK": "BANK", "AXISBANK": "BANK", "BANKBARODA": "BANK", "PNB": "BANK", "CANBK": "BANK", "FEDERALBNK": "BANK", "IDFCFIRSTB": "BANK", "AUBANK": "BANK",
     "TCS": "IT", "INFY": "IT", "HCLTECH": "IT", "WIPRO": "IT", "TECHM": "IT", "LTIM": "IT",
     "SUNPHARMA": "PHARMA", "CIPLA": "PHARMA", "DRREDDY": "PHARMA", "DIVISLAB": "PHARMA",
-    "TATASTEEL": "METAL", "JSWSTEEL": "METAL", "HINDALCO": "METAL", "VEDL": "METAL",
-    "MARUTI": "AUTO", "TATAMOTORS": "AUTO", "M&M": "AUTO", "EICHERMOT": "AUTO", "HEROMOTOCO": "AUTO",
+    "TATASTEEL": "METAL", "JSWSTEEL": "METAL", "HINDALCO": "METAL",
+    "MARUTI": "AUTO", "M&M": "AUTO", "EICHERMOT": "AUTO", "HEROMOTOCO": "AUTO",
     "ITC": "FMCG", "HINDUNILVR": "FMCG", "NESTLEIND": "FMCG", "BRITANNIA": "FMCG",
     "LT": "INFRA", "POWERGRID": "INFRA", "NTPC": "INFRA",
     "BHARTIARTL": "TELECOM"
@@ -37,15 +37,10 @@ INDEX_WEIGHTS_BNF = {
 
 
 def fetch_global_cues():
-    """Fetches world indices moves for Pre-market cues."""
     cues = []
     try:
-        data = yf.download(" ".join(GLOBAL_TICKERS.values()), period="5d", interval="1d", progress=False)
-        if isinstance(data.columns, pd.MultiIndex):
-            close = data["Close"]
-        else:
-            close = data
-
+        data = yf.download(" ".join(GLOBAL_TICKERS.values()), period="5d", interval="1d", progress=False, ignore_tz=True)
+        close = data["Close"] if isinstance(data.columns, pd.MultiIndex) else data
         for name, sym in GLOBAL_TICKERS.items():
             if sym in close.columns:
                 s = close[sym].dropna()
@@ -63,7 +58,6 @@ def fetch_global_cues():
 
 
 def compute_sector_strength(stock_candles):
-    """Calculates sector average move and Read (Strong / Mixed / Weak)."""
     sector_moves = {}
     for sym, df in stock_candles.items():
         sec = SECTOR_MAP.get(sym, "OTHER")
@@ -91,14 +85,13 @@ def compute_sector_strength(stock_candles):
 
 
 def compute_point_contributors(stock_candles, nifty_spot, bnf_spot):
-    """Computes approx lifting vs dragging points on Nifty and Bank Nifty."""
     def _get_contributors(weight_map, base_spot):
         lifting, dragging = [], []
         for sym, weight in weight_map.items():
             df = stock_candles.get(sym)
             if df is not None and len(df) >= 2:
-                pct = ((df["Close"].iloc[-1] / df["Close"].iloc[-2]) - 1)
-                pts = round(pct * (weight / 100.0) * base_spot)
+                pct_val = ((df["Close"].iloc[-1] / df["Close"].iloc[-2]) - 1)
+                pts = round(pct_val * (weight / 100.0) * base_spot)
                 if pts > 0:
                     lifting.append((sym, pts))
                 elif pts < 0:
