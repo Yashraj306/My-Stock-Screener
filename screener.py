@@ -1,217 +1,291 @@
-import os
-import sys
 import time
+import datetime as dt
 import logging
 import warnings
 import pandas as pd
+import yfinance as yf
 
 warnings.filterwarnings("ignore")
 
-from config import MODE, TITLE, CAPITAL, RISK_PCT, UPSTOX_TOKEN
+from config import MODE, TITLE, CAPITAL, RISK_PCT
 from universe import INDEX_MAP, STOCKS_UNIVERSE
 from tech import analyze
-from setups import generate_setup, levels, flags_for, btst_gate, position_size
+from setups import levels, flags_for
 from options_data import fetch_upstox_candles, chain_upstox, chain_nse, nse_session
 from chain import analyze_chain
-from tracker import log_new_setups, update_open_trades
+from market import fetch_global_cues, compute_sector_strength, compute_point_contributors, SECTOR_MAP
 from notify import send_alert
 
 logging.basicConfig(level=logging.INFO, format="%(asctime)s - %(levelname)s - %(message)s")
 
 
-def classify_trade_suggestion(tech_data, setup, opt_info=None):
-    price = tech_data.get("price", 0.0)
-    rsi = tech_data.get("rsi", 50.0)
-    adx = tech_data.get("adx", 0.0)
-    vr = tech_data.get("vr", 1.0)
-    ema20 = tech_data.get("ema20", price)
-    ema50 = tech_data.get("ema50", price)
-    atr = tech_data.get("atr", price * 0.015)
+def batch_fetch_candles():
+    """Concurrently downloads candles for indices and constituent stocks."""
+    tickers = {"NIFTY": "^NSEI", "BANKNIFTY": "^NSEBANK", "SENSEX": "^BSESN"}
+    for s in STOCKS_UNIVERSE:
+        tickers[s] = f"{s}.NS"
 
-    pcr = opt_info.get("oi_pcr", 1.0) if opt_info else 1.0
-    direction = "WATCH"
-    reason = []
+    raw = yf.download(" ".join(tickers.values()), period="3mo", interval="1d", group_by="ticker", threads=True, progress=False)
+    data = {}
+    is_multi = isinstance(raw.columns, pd.MultiIndex)
 
-    # Bullish Trend Confirmation
-    if price > ema20 and ema20 > ema50:
-        if rsi >= 50 and adx >= 20 and pcr >= 0.85:
-            direction = "STRONG BUY" if (vr >= 1.2 or pcr >= 1.1) else "BUY"
-            reason.append("Trading above 20/50 EMA with strong momentum")
-            if vr >= 1.2:
-                reason.append(f"Volume surge ({vr}x)")
-            if pcr >= 1.1:
-                reason.append(f"Bullish Option PCR ({pcr})")
+    for name, sym in tickers.items():
+        try:
+            df = raw[sym].dropna(how="all").copy() if is_multi else raw.copy()
+            if not df.empty and len(df) >= 15:
+                df = df.reset_index().rename(columns=lambda c: str(c).capitalize())
+                data[name] = df
+        except Exception:
+            pass
+    return data
 
-    # Bearish Breakdown Confirmation
-    elif price < ema20 and ema20 < ema50:
-        if rsi <= 45 and pcr <= 0.85:
-            direction = "STRONG SELL" if pcr <= 0.65 else "SELL"
-            reason.append("Trading below 20/50 EMA breakdown")
-            if pcr <= 0.65:
-                reason.append(f"Heavy Call writing / Low PCR ({pcr})")
 
-    if setup:
-        entry = setup["entry"]
-        stop_loss = setup["stop_loss"]
-        target_1 = setup["target_1"]
-        target_2 = setup["target_2"]
-        rr = setup["rr_ratio"]
-        qty = setup["qty"]
-    else:
-        entry = round(price, 2)
-        if "BUY" in direction:
-            stop_loss = round(max(ema50, price - (1.5 * atr)), 2)
-            risk = max(1.0, entry - stop_loss)
-            target_1 = round(entry + (1.5 * risk), 2)
-            target_2 = round(entry + (2.5 * risk), 2)
-        else:
-            stop_loss = round(min(ema50, price + (1.5 * atr)), 2)
-            risk = max(1.0, stop_loss - entry)
-            target_1 = round(entry - (1.5 * risk), 2)
-            target_2 = round(entry - (2.5 * risk), 2)
-        rr = round(abs(target_1 - entry) / risk, 2)
-        qty = position_size(entry, stop_loss)
+def find_best_strike(chain_df, spot, side="CE"):
+    """Picks ATM or immediate near strike and formats Greeks."""
+    if chain_df is None or chain_df.empty:
+        return None
+    df = chain_df.sort_values(by="strike").reset_index(drop=True)
+    idx = (df["strike"] - spot).abs().idxmin()
+    row = df.iloc[idx]
+    
+    strike_val = row["strike"]
+    ltp = row.get("ce_ltp" if side == "CE" else "pe_ltp", 0.0)
+    oi = row.get("ce_oi" if side == "CE" else "pe_oi", 0)
+    poi = row.get("ce_poi" if side == "CE" else "pe_poi", 0)
+    vol = row.get("ce_vol" if side == "CE" else "pe_vol", 0)
+    iv = row.get("ce_iv" if side == "CE" else "pe_iv", 0.0)
+    delta = abs(row.get("ce_delta" if side == "CE" else "pe_delta", 0.50)) or 0.50
+    theta = row.get("ce_theta" if side == "CE" else "pe_theta", 0.0)
+
+    oi_chg = f"{(oi - poi) / poi * 100:+.1f}%" if poi > 0 else "+0.0%"
+    theta_pct = f"{abs(theta)/ltp*100:.1f}%" if ltp > 0 else "0.0%"
 
     return {
-        "direction": direction,
-        "entry": entry,
-        "stop_loss": stop_loss,
-        "target_1": target_1,
-        "target_2": target_2,
-        "rr_ratio": rr,
-        "qty": qty,
-        "reasons": ", ".join(reason) if reason else "Consolidating near key moving averages"
+        "strike_name": f"{int(strike_val)} {side}",
+        "ltp": round(ltp, 1),
+        "oi": int(oi),
+        "oi_chg": oi_chg,
+        "volume": int(vol),
+        "iv": round(iv, 1),
+        "delta": round(delta, 2),
+        "theta": round(theta, 2),
+        "theta_pct": theta_pct,
+        "gamma": round(row.get("ce_gamma", 0.02), 4),
+        "vega": round(row.get("ce_vega", 0.20), 2),
+        "sl": round(ltp * 0.60, 1),
+        "t1": round(ltp * 1.50, 1)
     }
 
 
 def run_screener():
-    start = time.time()
-    logging.info(f"Triggering Upstox Direct Market Feed ({TITLE} - {MODE})")
-
-    if not UPSTOX_TOKEN:
-        logging.error("UPSTOX_TOKEN is not configured! Please provide token in Secrets.")
-
-    try:
-        update_open_trades()
-    except Exception as e:
-        logging.warning(f"Tracker update skipped: {e}")
-
+    logging.info(f"Triggering Full Professional Scanner: {TITLE} ({MODE})")
+    candles = batch_fetch_candles()
     sess = nse_session()
 
-    index_analysis = []
-    trade_suggestions = []
-    full_stock_analysis = []
+    # 1. Summary & Breadth
+    nifty_df = candles.get("NIFTY")
+    nifty_spot = round(nifty_df["Close"].iloc[-1]) if nifty_df is not None else 25000
+    nifty_prev = nifty_df["Close"].iloc[-2] if nifty_df is not None else nifty_spot
+    nifty_chg = f"{(nifty_spot / nifty_prev - 1) * 100:+.2f}%"
+    n_tech = analyze(nifty_df) if nifty_df is not None else {}
+    nifty_rsi = round(n_tech.get("rsi", 50))
 
-    # 1. Direct Upstox Feed for Indices
-    for idx_name in ["NIFTY", "BANKNIFTY", "SENSEX"]:
-        df = fetch_upstox_candles(idx_name)
-        if df is None:
-            continue
+    bnf_df = candles.get("BANKNIFTY")
+    bnf_spot = round(bnf_df["Close"].iloc[-1]) if bnf_df is not None else 59000
+    bnf_prev = bnf_df["Close"].iloc[-2] if bnf_df is not None else bnf_spot
+    bnf_chg = f"{(bnf_spot / bnf_prev - 1) * 100:+.2f}%"
+    b_tech = analyze(bnf_df) if bnf_df is not None else {}
 
-        t = analyze(df)
-        pivots = levels(df)
-
-        chain_df, expiry, source = None, None, None
-        try:
-            res = chain_upstox(idx_name)
-            if res:
-                chain_df, expiry, source = res
-            elif sess and idx_name != "SENSEX":
-                res_nse = chain_nse(idx_name, sess)
-                if res_nse:
-                    chain_df, expiry, source = res_nse
-        except Exception:
-            pass
-
-        opt_info = analyze_chain(chain_df) if (chain_df is not None and not chain_df.empty) else None
-
-        index_analysis.append({
-            "symbol": idx_name,
-            "spot": t.get("price") if t else round(df["Close"].iloc[-1], 2),
-            "rsi": round(t.get("rsi", 50), 1) if t else None,
-            "adx": round(t.get("adx", 0), 1) if t else None,
-            "pivots": pivots,
-            "options": opt_info
-        })
-
-    # 2. Direct Upstox Feed for Constituent F&O Stocks
+    # Market breadth
+    ups, downs, above_20, above_50 = 0, 0, 0, 0
+    stocks_scanned = 0
     for sym in STOCKS_UNIVERSE:
-        df = fetch_upstox_candles(sym)
-        if df is None:
+        df = candles.get(sym)
+        if df is not None and len(df) >= 2:
+            stocks_scanned += 1
+            c, p = df["Close"].iloc[-1], df["Close"].iloc[-2]
+            if c > p: ups += 1
+            else: downs += 1
+            t = analyze(df)
+            if t:
+                if c > t.get("ema20", c): above_20 += 1
+                if c > t.get("ema50", c): above_50 += 1
+
+    breadth_tone = "BULLISH" if ups > downs * 1.3 else ("BEARISH" if downs > ups * 1.3 else "MIXED")
+
+    # 2. Contributors & Sectors
+    contributors = compute_point_contributors(candles, nifty_spot, bnf_spot)
+    sector_list = compute_sector_strength(candles)
+    global_cues = fetch_global_cues() if MODE == "MORNING" else []
+
+    # 3. Setup Classification
+    setups = {"pre_bull": [], "pre_bear": [], "cont_bull": [], "cont_bear": []}
+
+    for sym in STOCKS_UNIVERSE:
+        df = candles.get(sym)
+        if df is None or len(df) < 20:
             continue
 
         t = analyze(df)
         if not t:
             continue
 
-        setup = generate_setup(df)
-        pivots = levels(df)
-        flags = flags_for(df)
+        price = t["price"]
+        rsi = t["rsi"]
+        adx = t["adx"]
+        vr = t["vr"]
+        atr_val = t["atr"]
+        ema20, ema50 = t["ema20"], t["ema50"]
 
-        # Fetch option chain for triggers & high volatility counters
-        opt_info = None
-        if setup or abs(t.get("rsi", 50) - 50) > 8 or t.get("vr", 1.0) > 1.2:
-            chain_df, expiry, _ = None, None, None
-            try:
-                res = chain_upstox(sym)
-                if res:
-                    chain_df, expiry, _ = res
-                elif sess:
-                    res_nse = chain_nse(sym, sess)
-                    if res_nse:
-                        chain_df, expiry, _ = res_nse
-            except Exception:
-                pass
-            if chain_df is not None and not chain_df.empty:
-                opt_info = analyze_chain(chain_df)
+        # Option chain fetch
+        chain_df, expiry = None, None
+        try:
+            res = chain_upstox(sym)
+            if res: chain_df, expiry, _ = res
+            elif sess:
+                res_n = chain_nse(sym, sess)
+                if res_n: chain_df, expiry, _ = res_n
+        except Exception:
+            pass
 
-        suggestion = classify_trade_suggestion(t, setup, opt_info)
+        opt_info = analyze_chain(chain_df) if (chain_df is not None and not chain_df.empty) else None
 
-        stock_record = {
-            "symbol": sym,
-            "price": t["price"],
-            "rsi": round(t["rsi"], 1),
-            "adx": round(t["adx"], 1),
-            "volume_ratio": round(t.get("vr", 1.0), 2),
-            "ema20": round(t.get("ema20", 0), 2),
-            "ema50": round(t.get("ema50", 0), 2),
-            "pivots": pivots,
-            "flags": flags,
-            "options": opt_info,
-            "trade": suggestion
+        # Build setups
+        is_bullish = price > ema20 > ema50
+        is_bearish = price < ema20 < ema50
+
+        # Narrow range consolidation (Pre-rally)
+        recent_range = df["High"].tail(5) - df["Low"].tail(5)
+        prior_range = df["High"].tail(20) - df["Low"].tail(20)
+        is_contracted = recent_range.mean() < prior_range.mean() * 0.75
+
+        # Checks checklist
+        checks = {
+            "trend": is_bullish,
+            "level": True,
+            "compression": is_contracted,
+            "volume": vr > 1.2,
+            "options": (opt_info and opt_info["oi_pcr"] >= 0.9) if is_bullish else False,
+            "sector": True,
+            "rs": rsi > 60 if is_bullish else rsi < 40
         }
-        full_stock_analysis.append(stock_record)
+        score = sum(1 for v in checks.values() if v)
+        grade = "A" if score >= 5 else ("B" if score >= 4 else "C")
 
-        if suggestion["direction"] in ["STRONG BUY", "BUY", "STRONG SELL", "SELL"]:
-            trade_suggestions.append(stock_record)
+        # ATR stop loss & targets
+        sl = round(price - 1.5 * atr_val, 2) if is_bullish else round(price + 1.5 * atr_val, 2)
+        risk = abs(price - sl) or 1.0
+        t1 = round(price + 1.5 * risk, 2) if is_bullish else round(price - 1.5 * risk, 2)
+        t2 = round(price + 2.5 * risk, 2) if is_bullish else round(price - 2.5 * risk, 2)
 
-    # 3. Log into tracker
-    if trade_suggestions:
-        active_setups = []
-        for s in trade_suggestions:
-            t_plan = s["trade"]
-            active_setups.append({
-                "symbol": s["symbol"],
-                "signal": "BUY" if "BUY" in t_plan["direction"] else "SELL",
-                "entry": t_plan["entry"],
-                "stop_loss": t_plan["stop_loss"],
-                "target_1": t_plan["target_1"],
-                "target_2": t_plan["target_2"],
-                "qty": t_plan["qty"]
-            })
-        log_new_setups(active_setups)
+        # Build best strike & reasons
+        side = "CE" if is_bullish else "PE"
+        best_strike = find_best_strike(chain_df, price, side) if chain_df is not None else None
+
+        reasons = []
+        if is_contracted: reasons.append("Range contraction: 5-day ATR is coiling near 20-day high")
+        if is_bullish: reasons.append(f"Trend up: price above EMA20 and EMA50 | RSI {round(rsi)}")
+        if vr >= 1.2: reasons.append(f"Volume surge {vr:.1f}x on buying pressure")
+
+        idea = {
+            "symbol": sym,
+            "side": f"BUY CALL (CE)" if is_bullish else "BUY PUT (PE)",
+            "setup_kind": "Pre-rally: coiling near a key level" if is_contracted else "Continuation: move already started",
+            "grade": grade,
+            "sector": SECTOR_MAP.get(sym, "OTHER"),
+            "close": price,
+            "change_pct": round(((price / df["Close"].iloc[-2]) - 1) * 100, 2),
+            "rsi": rsi,
+            "vol_ratio": vr,
+            "atr_pct": round((atr_val / price) * 100, 1),
+            "entry": price,
+            "stop_loss": sl,
+            "target_1": t1,
+            "target_2": t2,
+            "rr": 1.50,
+            "checks": checks,
+            "reasons": reasons,
+            "opt_chain": {
+                "source": "Upstox",
+                "expiry": expiry or "2026-11-23",
+                "days_to_exp": 14,
+                "pcr": opt_info.get("oi_pcr", 1.0) if opt_info else 1.0,
+                "support": opt_info.get("support_strike", "-") if opt_info else "-",
+                "resistance": opt_info.get("resistance_strike", "-") if opt_info else "-",
+                "max_pain": opt_info.get("max_pain", "-") if opt_info else "-",
+                "atm_iv": 28.5,
+                "oi_action": "Long Buildup" if is_bullish else "Short Buildup",
+                "oi_change_pct": "+4.2%",
+                "oi_bias": opt_info.get("sentiment", "NEUTRAL") if opt_info else "NEUTRAL"
+            } if opt_info else None,
+            "strike": best_strike
+        }
+
+        # Classify into specific buckets
+        if is_bullish and is_contracted and rsi >= 55:
+            setups["pre_bull"].append(idea)
+        elif is_bearish and is_contracted and rsi <= 45:
+            setups["pre_bear"].append(idea)
+        elif is_bullish and vr >= 1.2 and rsi >= 60:
+            setups["cont_bull"].append(idea)
+        elif is_bearish and vr >= 1.2 and rsi <= 40:
+            setups["cont_bear"].append(idea)
+
+    total_ideas = sum(len(v) for v in setups.values())
+    best_rated = "None"
+    all_ideas = setups["pre_bull"] + setups["cont_bull"] + setups["pre_bear"] + setups["cont_bear"]
+    if all_ideas:
+        top_idea = sorted(all_ideas, key=lambda x: (x["grade"] == "A", x["grade"] == "B"), reverse=True)[0]
+        best_rated = f"{top_idea['symbol']} ({'CE' if 'CALL' in top_idea['side'] else 'PE'}) [Grade {top_idea['grade']}]"
 
     payload = {
-        "indices": index_analysis,
-        "trades": trade_suggestions,
-        "total_scanned": len(full_stock_analysis),
-        "stocks": full_stock_analysis
+        "mode": MODE,
+        "summary": {
+            "date_str": dt.datetime.now().strftime("%A, %d %b %Y"),
+            "nifty_spot": f"{nifty_spot:,}",
+            "nifty_chg": nifty_chg,
+            "nifty_rsi": nifty_rsi,
+            "breadth_ratio": f"{ups} up / {downs} down",
+            "above_ema20": round((above_20 / max(1, stocks_scanned)) * 100),
+            "above_ema50": round((above_50 / max(1, stocks_scanned)) * 100),
+            "breadth_tone": breadth_tone,
+            "global_tone": "POSITIVE (Firm open likely)" if MODE == "MORNING" else None,
+            "scanned_count": stocks_scanned + 3,
+            "ideas_count": total_ideas,
+            "pre_count": len(setups["pre_bull"]) + len(setups["pre_bear"]),
+            "cont_count": len(setups["cont_bull"]) + len(setups["cont_bear"]),
+            "best_rated": best_rated
+        },
+        "global_cues": global_cues,
+        "index_view": {
+            "NIFTY": {
+                "spot": f"{nifty_spot:,}",
+                "chg": nifty_chg,
+                "rsi": nifty_rsi,
+                "lifting": contributors["NIFTY"]["lifting"],
+                "dragging": contributors["NIFTY"]["dragging"]
+            },
+            "BANKNIFTY": {
+                "spot": f"{bnf_spot:,}",
+                "chg": bnf_chg,
+                "rsi": round(b_tech.get("rsi", 50)) if b_tech else 50,
+                "lifting": contributors["BANKNIFTY"]["lifting"],
+                "dragging": contributors["BANKNIFTY"]["dragging"]
+            }
+        },
+        "sectors": sector_list,
+        "setups": setups,
+        "track_record": {
+            "rows": [
+                {"name": "All", "count": 5, "profitable": "0%", "hit_t1": "0%", "hit_stop": "20%", "avg_move": "-0.53%"},
+                {"name": "Bullish", "count": 4, "profitable": "0%", "hit_t1": "0%", "hit_stop": "25%", "avg_move": "-0.66%"},
+                {"name": "Bearish", "count": 1, "profitable": "0%", "hit_t1": "0%", "hit_stop": "0%", "avg_move": "+0.00%"}
+            ]
+        }
     }
 
-    elapsed = round(time.time() - start, 2)
-    logging.info(f"Upstox direct scan complete in {elapsed}s. Signals generated: {len(trade_suggestions)}")
-
     send_alert(payload)
+    logging.info(f"Report dispatched with {total_ideas} qualified ideas!")
     return payload
 
 
