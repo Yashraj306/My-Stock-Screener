@@ -8,10 +8,9 @@ import yfinance as yf
 warnings.filterwarnings("ignore")
 
 from config import MODE, TITLE, CAPITAL, RISK_PCT
-from universe import INDEX_MAP, STOCKS_UNIVERSE
+from universe import STOCKS_UNIVERSE
 from tech import analyze
-from setups import levels, flags_for
-from options_data import fetch_upstox_candles, chain_upstox, chain_nse, nse_session
+from options_data import chain_upstox, chain_nse, nse_session
 from chain import analyze_chain
 from market import fetch_global_cues, compute_sector_strength, compute_point_contributors, SECTOR_MAP
 from notify import send_alert
@@ -20,28 +19,41 @@ logging.basicConfig(level=logging.INFO, format="%(asctime)s - %(levelname)s - %(
 
 
 def batch_fetch_candles():
-    """Concurrently downloads candles for indices and constituent stocks."""
+    """Concurrently downloads candles for indices and constituent stocks safely."""
     tickers = {"NIFTY": "^NSEI", "BANKNIFTY": "^NSEBANK", "SENSEX": "^BSESN"}
     for s in STOCKS_UNIVERSE:
         tickers[s] = f"{s}.NS"
 
-    raw = yf.download(" ".join(tickers.values()), period="3mo", interval="1d", group_by="ticker", threads=True, progress=False)
+    try:
+        raw = yf.download(
+            " ".join(tickers.values()),
+            period="3mo",
+            interval="1d",
+            group_by="ticker",
+            threads=True,
+            progress=False,
+            ignore_tz=True
+        )
+    except Exception as e:
+        logging.error(f"Download error: {e}")
+        return {}
+
     data = {}
     is_multi = isinstance(raw.columns, pd.MultiIndex)
 
     for name, sym in tickers.items():
         try:
             df = raw[sym].dropna(how="all").copy() if is_multi else raw.copy()
-            if not df.empty and len(df) >= 15:
+            if not df.empty and len(df) >= 10:
                 df = df.reset_index().rename(columns=lambda c: str(c).capitalize())
-                data[name] = df
+                if "Close" in df.columns:
+                    data[name] = df
         except Exception:
-            pass
+            continue
     return data
 
 
 def find_best_strike(chain_df, spot, side="CE"):
-    """Picks ATM or immediate near strike and formats Greeks."""
     if chain_df is None or chain_df.empty:
         return None
     df = chain_df.sort_values(by="strike").reset_index(drop=True)
@@ -96,7 +108,6 @@ def run_screener():
     bnf_chg = f"{(bnf_spot / bnf_prev - 1) * 100:+.2f}%"
     b_tech = analyze(bnf_df) if bnf_df is not None else {}
 
-    # Market breadth
     ups, downs, above_20, above_50 = 0, 0, 0, 0
     stocks_scanned = 0
     for sym in STOCKS_UNIVERSE:
@@ -123,7 +134,7 @@ def run_screener():
 
     for sym in STOCKS_UNIVERSE:
         df = candles.get(sym)
-        if df is None or len(df) < 20:
+        if df is None or len(df) < 15:
             continue
 
         t = analyze(df)
@@ -131,13 +142,11 @@ def run_screener():
             continue
 
         price = t["price"]
-        rsi = t["rsi"]
-        adx = t["adx"]
+        rsi_val = t["rsi"]
         vr = t["vr"]
         atr_val = t["atr"]
         ema20, ema50 = t["ema20"], t["ema50"]
 
-        # Option chain fetch
         chain_df, expiry = None, None
         try:
             res = chain_upstox(sym)
@@ -150,52 +159,47 @@ def run_screener():
 
         opt_info = analyze_chain(chain_df) if (chain_df is not None and not chain_df.empty) else None
 
-        # Build setups
-        is_bullish = price > ema20 > ema50
-        is_bearish = price < ema20 < ema50
+        is_bullish = price > ema20 and ema20 > ema50
+        is_bearish = price < ema20 and ema20 < ema50
 
-        # Narrow range consolidation (Pre-rally)
         recent_range = df["High"].tail(5) - df["Low"].tail(5)
         prior_range = df["High"].tail(20) - df["Low"].tail(20)
         is_contracted = recent_range.mean() < prior_range.mean() * 0.75
 
-        # Checks checklist
         checks = {
             "trend": is_bullish,
             "level": True,
             "compression": is_contracted,
-            "volume": vr > 1.2,
-            "options": (opt_info and opt_info["oi_pcr"] >= 0.9) if is_bullish else False,
+            "volume": vr >= 1.1,
+            "options": (opt_info and opt_info["oi_pcr"] >= 0.85) if is_bullish else False,
             "sector": True,
-            "rs": rsi > 60 if is_bullish else rsi < 40
+            "rs": rsi_val >= 55 if is_bullish else rsi_val <= 45
         }
         score = sum(1 for v in checks.values() if v)
         grade = "A" if score >= 5 else ("B" if score >= 4 else "C")
 
-        # ATR stop loss & targets
         sl = round(price - 1.5 * atr_val, 2) if is_bullish else round(price + 1.5 * atr_val, 2)
         risk = abs(price - sl) or 1.0
         t1 = round(price + 1.5 * risk, 2) if is_bullish else round(price - 1.5 * risk, 2)
         t2 = round(price + 2.5 * risk, 2) if is_bullish else round(price - 2.5 * risk, 2)
 
-        # Build best strike & reasons
         side = "CE" if is_bullish else "PE"
         best_strike = find_best_strike(chain_df, price, side) if chain_df is not None else None
 
         reasons = []
         if is_contracted: reasons.append("Range contraction: 5-day ATR is coiling near 20-day high")
-        if is_bullish: reasons.append(f"Trend up: price above EMA20 and EMA50 | RSI {round(rsi)}")
-        if vr >= 1.2: reasons.append(f"Volume surge {vr:.1f}x on buying pressure")
+        if is_bullish: reasons.append(f"Trend up: price above EMA20 and EMA50 | RSI {round(rsi_val)}")
+        if vr >= 1.1: reasons.append(f"Volume surge {vr:.1f}x on buying pressure")
 
         idea = {
             "symbol": sym,
-            "side": f"BUY CALL (CE)" if is_bullish else "BUY PUT (PE)",
+            "side": "BUY CALL (CE)" if is_bullish else "BUY PUT (PE)",
             "setup_kind": "Pre-rally: coiling near a key level" if is_contracted else "Continuation: move already started",
             "grade": grade,
             "sector": SECTOR_MAP.get(sym, "OTHER"),
             "close": price,
             "change_pct": round(((price / df["Close"].iloc[-2]) - 1) * 100, 2),
-            "rsi": rsi,
+            "rsi": rsi_val,
             "vol_ratio": vr,
             "atr_pct": round((atr_val / price) * 100, 1),
             "entry": price,
@@ -221,14 +225,13 @@ def run_screener():
             "strike": best_strike
         }
 
-        # Classify into specific buckets
-        if is_bullish and is_contracted and rsi >= 55:
+        if is_bullish and is_contracted and rsi_val >= 50:
             setups["pre_bull"].append(idea)
-        elif is_bearish and is_contracted and rsi <= 45:
+        elif is_bearish and is_contracted and rsi_val <= 50:
             setups["pre_bear"].append(idea)
-        elif is_bullish and vr >= 1.2 and rsi >= 60:
+        elif is_bullish and vr >= 1.0 and rsi_val >= 55:
             setups["cont_bull"].append(idea)
-        elif is_bearish and vr >= 1.2 and rsi <= 40:
+        elif is_bearish and vr >= 1.0 and rsi_val <= 45:
             setups["cont_bear"].append(idea)
 
     total_ideas = sum(len(v) for v in setups.values())
@@ -285,7 +288,7 @@ def run_screener():
     }
 
     send_alert(payload)
-    logging.info(f"Report dispatched with {total_ideas} qualified ideas!")
+    logging.info(f"Screening complete! {total_ideas} qualified setups dispatched.")
     return payload
 
 
