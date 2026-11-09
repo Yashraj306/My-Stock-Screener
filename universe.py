@@ -1,8 +1,6 @@
 """
 Core Indices & Constituent Stocks Universe for High-Speed F&O Screening.
-Includes:
-- Indices: NIFTY, BANKNIFTY, SENSEX
-- All unique constituents belonging to Nifty 50, Bank Nifty, and Sensex baskets.
+TATAMOTORS has been excluded to prevent Yahoo Finance 404 download errors.
 """
 
 INDEX_MAP = {
@@ -11,26 +9,24 @@ INDEX_MAP = {
     "SENSEX": "BSE_INDEX|SENSEX"
 }
 
-# Unique high-liquidity F&O constituents across Nifty 50, Bank Nifty, and Sensex
 STOCKS_UNIVERSE = [
-    # Heavyweights & Common across Nifty 50 & Sensex
+    # Nifty 50 & Sensex Common Heavyweights
     "RELIANCE", "TCS", "HDFCBANK", "ICICIBANK", "INFY", "BHARTIARTL", "SBIN",
     "ITC", "HINDUNILVR", "LT", "BAJFINANCE", "HCLTECH", "MARUTI", "SUNPHARMA",
-    "ADANIENT", "KOTAKBANK", "TITAN", "TATAMOTORS", "NTPC", "AXISBANK",
+    "ADANIENT", "KOTAKBANK", "TITAN", "NTPC", "AXISBANK",
     "POWERGRID", "ADANIPORTS", "ULTRACEMCO", "BAJAJFINSV", "WIPRO", "M&M",
     "JSWSTEEL", "TATASTEEL", "TECHM", "NESTLEIND",
     
-    # Remaining Nifty 50 stocks
+    # Remaining Nifty 50
     "COALINDIA", "GRASIM", "BPCL", "EICHERMOT", "CIPLA", "DRREDDY",
     "BRITANNIA", "APOLLOHOSP", "DIVISLAB", "HINDALCO", "SHRIRAMFIN",
     "TRENT", "BEL", "HEROMOTOCO", "ONGC", "LTIM", "ASIANPAINT",
     
-    # Remaining Bank Nifty stocks
+    # Bank Nifty Constituents
     "INDUSINDBK", "BANKBARODA", "PNB", "CANBK", "FEDERALBNK", "IDFCFIRSTB", "AUBANK"
 ]
 
 def eq_keys():
-    """Returns mapping for legacy modules if required."""
     mapping = {k: v for k, v in INDEX_MAP.items()}
     for s in STOCKS_UNIVERSE:
         mapping[s] = f"NSE_EQ|{s}"
