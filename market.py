@@ -8,6 +8,11 @@ SECTOR_MAP = {
     "AXISBANK": "BANK", "INDUSINDBK": "BANK", "BANKBARODA": "BANK", "PNB": "BANK",
     "CANBK": "BANK", "FEDERALBNK": "BANK", "IDFCFIRSTB": "BANK", "AUBANK": "BANK",
     
+    # Financial Services (FinNifty Core)
+    "BAJFINANCE": "FINANCE", "BAJAJFINSV": "FINANCE", "SHRIRAMFIN": "FINANCE",
+    "CHOLAFIN": "FINANCE", "MUTHOOTFIN": "FINANCE", "PFC": "FINANCE", "RECLTD": "FINANCE",
+    "HDFCLIFE": "FINANCE", "SBILIFE": "FINANCE", "ICICIPRULI": "FINANCE", "ICICIGI": "FINANCE",
+    
     # IT
     "TCS": "IT", "INFY": "IT", "HCLTECH": "IT", "WIPRO": "IT", "TECHM": "IT",
     
@@ -16,7 +21,7 @@ SECTOR_MAP = {
     "APOLLOHOSP": "PHARMA",
     
     # Auto
-    "MARUTI": "AUTO", "M&M": "AUTO", "BAJAJ-AUTO": "AUTO", "EICHERMOT": "AUTO", "HEROMOTOCO": "AUTO",
+    "MARUTI": "AUTO", "M&M": "AUTO", "EICHERMOT": "AUTO", "HEROMOTOCO": "AUTO",
     
     # Energy & Oil
     "RELIANCE": "ENERGY", "NTPC": "ENERGY", "POWERGRID": "ENERGY", "BPCL": "ENERGY", "ONGC": "ENERGY", "COALINDIA": "ENERGY",
@@ -27,18 +32,14 @@ SECTOR_MAP = {
     # FMCG
     "ITC": "FMCG", "HINDUNILVR": "FMCG", "NESTLEIND": "FMCG", "BRITANNIA": "FMCG",
     
-    # Financials & Others
-    "LT": "INFRA", "BHARTIARTL": "TELECOM", "BAJFINANCE": "FINANCE", "BAJAJFINSV": "FINANCE",
-    "SHRIRAMFIN": "FINANCE", "ADANIENT": "OTHER", "ADANIPORTS": "OTHER", "ULTRACEMCO": "OTHER",
-    "GRASIM": "OTHER", "TITAN": "OTHER", "TRENT": "OTHER", "BEL": "OTHER", "ASIANPAINT": "OTHER"
+    # Infra & Others
+    "LT": "INFRA", "BHARTIARTL": "TELECOM", "ADANIENT": "OTHER", "ADANIPORTS": "OTHER",
+    "ULTRACEMCO": "OTHER", "GRASIM": "OTHER", "TITAN": "OTHER", "TRENT": "OTHER",
+    "BEL": "OTHER", "ASIANPAINT": "OTHER"
 }
 
 
 def fetch_global_cues():
-    """
-    Fetches real-time global indicators including GIFT Nifty (IN=F) 
-    and India VIX (^INDIAVIX).
-    """
     cues_tickers = {
         "GIFT Nifty": "IN=F",
         "Nasdaq": "^IXIC",
