@@ -1,65 +1,191 @@
-
 import datetime as dt
 from html import escape
 
+NAVY = "#101D35"
+BLUE = "#2563EB"
+GREEN = "#059669"
+RED = "#DC2626"
+GOLD = "#D69E36"
+MUTED = "#64748B"
+BORDER = "#E5EAF2"
 
-def safe(value, default="—"):
-    if value is None:
-        return default
 
+def esc(value, default="—"):
+    if value is None or value == "":
+        value = default
     return escape(str(value))
+
+
+def num(value, decimals=2):
+    try:
+        return f"{float(value):,.{decimals}f}"
+    except (TypeError, ValueError):
+        return "—"
 
 
 def money(value):
     try:
         return f"₹{float(value):,.2f}"
     except (TypeError, ValueError):
-        return "Unavailable"
+        return "—"
 
 
-def render_global_cues(cues):
-    if not cues:
-        return "<p>No global market data available.</p>"
+def pill(text, color=BLUE):
+    return (
+        f'<span style="display:inline-block;padding:5px 10px;'
+        f'border-radius:20px;background:{color}15;color:{color};'
+        f'font-size:10px;font-weight:800;">{esc(text)}</span>'
+    )
 
-    rows = ""
 
-    for cue in cues:
-        name = safe(cue.get("name"))
-        value = safe(cue.get("val"))
-        change = safe(cue.get("chg"))
-
-        rows += f"""
-        <tr>
-            <td>{name}</td>
-            <td>{value}</td>
-            <td>{change}</td>
-        </tr>
-        """
-
+def section(title, subtitle, accent=BLUE):
     return f"""
-    <h3>Global Market Cues</h3>
-    <table>
-        <tr><th>Name</th><th>Value</th><th>Change</th></tr>
-        {rows}
+    <table width="100%" cellpadding="0" cellspacing="0"
+           style="margin:24px 0 10px;">
+      <tr>
+        <td width="5" style="background:{accent};"></td>
+        <td style="padding:5px 11px;">
+          <div style="font-size:16px;font-weight:800;color:{NAVY};">
+            {esc(title)}
+          </div>
+          <div style="font-size:10px;color:{MUTED};margin-top:3px;">
+            {esc(subtitle)}
+          </div>
+        </td>
+      </tr>
     </table>
     """
 
 
-def render_intraday_card(item):
+def metric(label, value, color=BLUE):
     return f"""
-    <div class="card">
-        <h3>{safe(item.get("symbol"))}
-            — {safe(item.get("action"))}</h3>
-        <p><b>Entry:</b> {money(item.get("entry"))}</p>
-        <p><b>Stop Loss:</b> {money(item.get("stop_loss"))}</p>
-        <p><b>Target 1:</b> {money(item.get("target_1"))}</p>
-        <p><b>Target 2:</b> {money(item.get("target_2"))}</p>
-        <p><b>RSI:</b> {safe(item.get("rsi"))}</p>
-        <p><b>Volume Ratio:</b> {safe(item.get("volume_ratio"))}</p>
-        <p><b>VWAP:</b> {money(item.get("vwap"))}</p>
-        <p><b>Leverage:</b> Not assumed</p>
-        <p><b>Quantity:</b> Not calculated — capital undefined</p>
-        <p class="note">Signal only. No automatic order.</p>
+    <td width="25%" style="padding:5px;">
+      <div style="border:1px solid {BORDER};border-top:3px solid {color};
+                  border-radius:8px;padding:11px;background:#FFFFFF;">
+        <div style="font-size:9px;color:{MUTED};font-weight:800;">
+          {esc(label)}
+        </div>
+        <div style="font-size:18px;color:{NAVY};font-weight:900;
+                    margin-top:6px;">
+          {esc(value)}
+        </div>
+      </div>
+    </td>
+    """
+
+
+def render_global_cues(cues):
+    if not cues:
+        return ""
+    rows = []
+    for start in range(0, len(cues), 3):
+        cells = ""
+        for cue in cues[start:start + 3]:
+            change = cue.get("chg")
+            color = GREEN if str(change).startswith("+") else (
+                RED if str(change).startswith("-") else MUTED
+            )
+            cells += f"""
+            <td width="33%" style="padding:9px;border:1px solid {BORDER};">
+              <div style="font-size:10px;color:{MUTED};">
+                {esc(cue.get("name"))}
+              </div>
+              <div style="font-size:14px;font-weight:800;color:{NAVY};">
+                {esc(cue.get("val"))}
+              </div>
+              <div style="font-size:10px;color:{color};font-weight:700;">
+                {esc(change)}
+              </div>
+            </td>
+            """
+        missing = 3 - len(cues[start:start + 3])
+        cells += '<td width="33%"></td>' * missing
+        rows.append(f"<tr>{cells}</tr>")
+    return (
+        section("GLOBAL MARKET MONITOR", "External market indicators")
+        + '<table width="100%" cellpadding="0" cellspacing="0">'
+        + "".join(rows) + "</table>"
+    )
+
+
+def render_sectors(sectors):
+    if not sectors:
+        return '<p style="color:#64748B;font-size:11px;">Sector data unavailable.</p>'
+    rows = ""
+    for item in sectors:
+        read = str(item.get("read", "Mixed"))
+        color = GREEN if read.lower() == "strong" else (
+            RED if read.lower() == "weak" else GOLD
+        )
+        rows += f"""
+        <tr>
+          <td style="padding:8px;border-bottom:1px solid {BORDER};">
+            {esc(item.get("name"))}</td>
+          <td align="right" style="padding:8px;border-bottom:1px solid {BORDER};">
+            {esc(item.get("avg_move"))}</td>
+          <td align="center" style="padding:8px;border-bottom:1px solid {BORDER};">
+            {esc(item.get("up_down"))}</td>
+          <td align="right" style="padding:8px;border-bottom:1px solid {BORDER};
+                                  color:{color};font-weight:800;">
+            {esc(read)}</td>
+        </tr>
+        """
+    return f"""
+    <table width="100%" cellpadding="0" cellspacing="0"
+           style="font-size:11px;border-collapse:collapse;">
+      <tr style="background:#F1F5F9;color:{MUTED};">
+        <th align="left" style="padding:8px;">SECTOR</th>
+        <th align="right" style="padding:8px;">CHANGE</th>
+        <th align="center" style="padding:8px;">ADV/DEC</th>
+        <th align="right" style="padding:8px;">READ</th>
+      </tr>{rows}
+    </table>
+    """
+
+
+def render_intraday_card(item, bullish=True):
+    accent = GREEN if bullish else RED
+    side = "BULLISH LONG" if bullish else "BEARISH SHORT"
+    return f"""
+    <div style="background:#FFFFFF;border:1px solid {BORDER};
+                border-left:4px solid {accent};border-radius:9px;
+                padding:13px;margin-bottom:10px;">
+      <table width="100%" cellpadding="0" cellspacing="0">
+        <tr>
+          <td>
+            <div style="font-size:17px;font-weight:900;color:{NAVY};">
+              {esc(item.get("symbol"))}
+            </div>
+            <div style="font-size:10px;color:{MUTED};">
+              {esc(item.get("sector", "Equity"))}
+            </div>
+          </td>
+          <td align="right">{pill(side, accent)}</td>
+        </tr>
+      </table>
+      <table width="100%" cellpadding="0" cellspacing="4"
+             style="margin-top:10px;">
+        <tr>
+          <td style="background:#F8FAFC;padding:8px;">
+            <small>ENTRY</small><br><b>{money(item.get("entry"))}</b>
+          </td>
+          <td style="background:#FEF2F2;padding:8px;">
+            <small style="color:{RED};">STOP LOSS</small><br>
+            <b style="color:{RED};">{money(item.get("stop_loss"))}</b>
+          </td>
+          <td style="background:#ECFDF5;padding:8px;">
+            <small style="color:{GREEN};">TARGET 1</small><br>
+            <b style="color:{GREEN};">{money(item.get("target_1"))}</b>
+          </td>
+        </tr>
+      </table>
+      <div style="font-size:10px;color:{MUTED};line-height:1.9;margin-top:8px;">
+        Target 2: <b>{money(item.get("target_2"))}</b> &nbsp;|&nbsp;
+        RSI: <b>{esc(item.get("rsi"))}</b> &nbsp;|&nbsp;
+        Volume: <b>{esc(item.get("volume_ratio"))}</b><br>
+        VWAP: <b>{money(item.get("vwap"))}</b> &nbsp;|&nbsp;
+        Quantity: <b>Not calculated</b>
+      </div>
     </div>
     """
 
@@ -67,116 +193,85 @@ def render_intraday_card(item):
 def render_option_card(item):
     plan = item.get("option_plan") or {}
     strategy = plan.get("strategy", "Unavailable")
-
-    details = ""
+    is_bull = "BULL" in strategy or str(item.get("side", "")).startswith("CALL")
+    accent = GREEN if is_bull else RED
 
     if strategy == "OPTION_BUYING":
-        details = f"""
-        <p><b>Option Type:</b> {safe(plan.get("option_type"))}</p>
-        <p><b>Strike:</b> {safe(plan.get("strike"))}</p>
-        <p><b>Expiry:</b> {safe(plan.get("expiry"))}</p>
-        <p><b>Premium:</b> {money(plan.get("entry_premium"))}</p>
-        <p><b>IV:</b> {safe(plan.get("iv"))}</p>
-        <p><b>Delta:</b> {safe(plan.get("delta"))}</p>
-        <p><b>Theta:</b> {safe(plan.get("theta"))}</p>
-        <p><b>Maximum Loss per Unit:</b>
-            {money(plan.get("maximum_loss_per_unit"))}</p>
-        """
-
+        rows = [
+            ("Option", plan.get("option_type")),
+            ("Strike", plan.get("strike")),
+            ("Expiry", plan.get("expiry")),
+            ("Entry premium", money(plan.get("entry_premium"))),
+            ("IV", plan.get("iv")),
+            ("Delta", plan.get("delta")),
+            ("Theta", plan.get("theta")),
+            ("Maximum loss / unit", money(plan.get("maximum_loss_per_unit")))
+        ]
     elif strategy in ("BULL_CALL_SPREAD", "BEAR_PUT_SPREAD"):
-        buy_leg = plan.get("buy_leg") or {}
-        sell_leg = plan.get("sell_leg") or {}
-
-        details = f"""
-        <p><b>Buy Strike:</b> {safe(buy_leg.get("strike"))}</p>
-        <p><b>Sell Strike:</b> {safe(sell_leg.get("strike"))}</p>
-        <p><b>Expiry:</b> {safe(plan.get("expiry"))}</p>
-        <p><b>Net Debit:</b>
-            {money(plan.get("net_debit_per_unit"))}</p>
-        <p><b>Maximum Loss per Unit:</b>
-            {money(plan.get("maximum_loss_per_unit"))}</p>
-        <p><b>Maximum Profit per Unit:</b>
-            {money(plan.get("maximum_profit_per_unit"))}</p>
-        <p><b>Breakeven:</b>
-            {money(plan.get("breakeven"))}</p>
-        """
-
+        buy = plan.get("buy_leg") or {}
+        sell = plan.get("sell_leg") or {}
+        rows = [
+            ("Buy strike", buy.get("strike")),
+            ("Sell strike", sell.get("strike")),
+            ("Expiry", plan.get("expiry")),
+            ("Net debit / unit", money(plan.get("net_debit_per_unit"))),
+            ("Maximum loss / unit", money(plan.get("maximum_loss_per_unit"))),
+            ("Maximum profit / unit", money(plan.get("maximum_profit_per_unit"))),
+            ("Breakeven", money(plan.get("breakeven")))
+        ]
     else:
-        details = "<p>Option strategy details unavailable.</p>"
+        rows = [("Details", "Option strategy data unavailable")]
+
+    detail_rows = "".join(
+        f'<tr><td style="padding:6px;color:{MUTED};border-bottom:1px solid {BORDER};">{esc(k)}</td>'
+        f'<td align="right" style="padding:6px;font-weight:700;border-bottom:1px solid {BORDER};">{esc(v)}</td></tr>'
+        for k, v in rows
+    )
 
     return f"""
-    <div class="card">
-        <h3>{safe(item.get("symbol"))} — {safe(item.get("side"))}</h3>
-        <p><b>Strategy:</b> {safe(strategy)}</p>
-        <p><b>Underlying Price:</b> {money(item.get("close"))}</p>
-        {details}
-        <p><b>Quantity:</b> Not calculated — capital undefined</p>
-        <p><b>Execution:</b> Signal only</p>
-        <p class="note">
-            Review live quotes, expiry and contract lot size
-            before considering any trade.
-        </p>
+    <div style="background:#FFFFFF;border:1px solid {BORDER};
+                border-left:4px solid {accent};border-radius:9px;
+                padding:13px;margin-bottom:10px;">
+      <table width="100%" cellpadding="0" cellspacing="0">
+        <tr>
+          <td>
+            <div style="font-size:17px;font-weight:900;color:{NAVY};">
+              {esc(item.get("symbol"))}
+            </div>
+            <div style="font-size:10px;color:{MUTED};">
+              Underlying: {money(item.get("close"))}
+            </div>
+          </td>
+          <td align="right">{pill(strategy.replace("_", " "), accent)}</td>
+        </tr>
+      </table>
+      <table width="100%" cellpadding="0" cellspacing="0"
+             style="font-size:11px;margin-top:10px;border-collapse:collapse;">
+        {detail_rows}
+      </table>
+      <div style="margin-top:10px;padding:9px;background:#F8FAFC;
+                  border-radius:5px;font-size:10px;color:{MUTED};">
+        Quantity / lots not calculated — capital undefined.<br>
+        Signal only. Verify live quotes, expiry and lot size.
+      </div>
     </div>
     """
 
 
-def render_section(title, items, renderer):
-    if not items:
-        content = '<p class="empty">No valid signals matched the filters.</p>'
-    else:
-        content = "".join(renderer(item) for item in items)
-
-    return f"""
-    <section>
-        <h2>{title}</h2>
-        {content}
-    </section>
-    """
-
-
-def render_sector_table(sectors):
-    if not sectors:
-        return "<p>Sector data unavailable.</p>"
-
-    rows = ""
-
-    for sector in sectors:
-        rows += f"""
-        <tr>
-            <td>{safe(sector.get("name"))}</td>
-            <td>{safe(sector.get("avg_move"))}</td>
-            <td>{safe(sector.get("up_down"))}</td>
-            <td>{safe(sector.get("read"))}</td>
-        </tr>
-        """
-
-    return f"""
-    <table>
-        <tr>
-            <th>Sector</th>
-            <th>Average Change</th>
-            <th>Advances / Declines</th>
-            <th>Market Read</th>
-        </tr>
-        {rows}
-    </table>
-    """
+def render_signal_section(title, subtitle, items, renderer):
+    content = (
+        "".join(renderer(x) for x in items[:5])
+        if items else
+        '<div style="padding:13px;background:#FFFFFF;border:1px solid '
+        + BORDER + ';border-radius:8px;color:' + MUTED
+        + ';font-size:11px;">No valid signals passed the filters.</div>'
+    )
+    return section(title, subtitle) + content
 
 
 def render_html_report(data):
-    """
-    Generate a conservative signal-only HTML email report.
-
-    Supports:
-        Intraday equity bullish/bearish
-        BTST stock option bullish/bearish
-        Option buying and debit spreads
-
-    No automatic order instructions.
-    """
-
+    """Create professional HTML email report for the screener."""
     data = data or {}
-
     summary = data.get("summary") or {}
     setups = data.get("setups") or {}
 
@@ -185,247 +280,168 @@ def render_html_report(data):
 
     if not intraday_bull and not intraday_bear:
         equity = data.get("equity_intraday") or []
-
         intraday_bull = [
             x for x in equity
             if str(x.get("action", "")).startswith("BUY")
         ]
-
         intraday_bear = [
             x for x in equity
             if str(x.get("action", "")).startswith("SELL")
         ]
 
-    option_bull = (
-        data.get("options_bullish")
-        or setups.get("bullish")
-        or []
-    )
+    option_bull = data.get("options_bullish") or setups.get("bullish") or []
+    option_bear = data.get("options_bearish") or setups.get("bearish") or []
 
-    option_bear = (
-        data.get("options_bearish")
-        or setups.get("bearish")
-        or []
-    )
+    total = len(intraday_bull) + len(intraday_bear) + len(option_bull) + len(option_bear)
 
-    mode = safe(data.get("mode"), "INTRADAY + BTST")
-
-    timestamp = dt.datetime.now(
+    now = dt.datetime.now(
         dt.timezone(dt.timedelta(hours=5, minutes=30))
-    ).strftime("%d %b %Y, %I:%M %p IST")
+    )
+    timestamp = now.strftime("%d %b %Y | %I:%M %p IST")
 
-    total = (
-        len(intraday_bull)
-        + len(intraday_bear)
-        + len(option_bull)
-        + len(option_bear)
+    regime = str(summary.get("breadth_tone", "UNKNOWN")).upper()
+    regime_color = GREEN if regime == "BULLISH" else (
+        RED if regime == "BEARISH" else GOLD
     )
 
-    global_html = render_global_cues(
-        data.get("global_cues") or []
-    )
-
-    sector_html = render_sector_table(
-        data.get("sectors") or []
-    )
-
-    intraday_status = safe(
-        data.get("intraday_status"),
-        "Not available"
-    )
-
-    option_status = safe(
-        data.get("option_strategy"),
-        "Live option data required"
-    )
-
-    html = f"""
+    return f"""
     <!DOCTYPE html>
     <html>
     <head>
-    <meta charset="UTF-8">
-    <meta name="viewport" content="width=device-width">
-    <style>
-        body {{
-            font-family: Arial, sans-serif;
-            background: #f1f5f9;
-            color: #1e293b;
-            margin: 0;
-            padding: 12px;
-        }}
-
-        .container {{
-            max-width: 720px;
-            margin: auto;
-            background: white;
-            padding: 18px;
-            border-radius: 10px;
-        }}
-
-        .header {{
-            background: #0f172a;
-            color: white;
-            padding: 18px;
-            border-radius: 8px;
-        }}
-
-        .header h1 {{
-            font-size: 21px;
-            margin: 5px 0;
-        }}
-
-        .summary {{
-            background: #f8fafc;
-            padding: 12px;
-            margin-top: 14px;
-            border: 1px solid #e2e8f0;
-            border-radius: 8px;
-            line-height: 1.8;
-        }}
-
-        section {{
-            margin-top: 24px;
-        }}
-
-        section h2 {{
-            font-size: 17px;
-            border-bottom: 2px solid #cbd5e1;
-            padding-bottom: 8px;
-        }}
-
-        .card {{
-            border: 1px solid #cbd5e1;
-            border-radius: 8px;
-            padding: 12px;
-            margin: 10px 0;
-            background: #ffffff;
-            line-height: 1.55;
-        }}
-
-        .card h3 {{
-            margin-top: 0;
-            color: #0f172a;
-        }}
-
-        .note {{
-            color: #92400e;
-            background: #fffbeb;
-            padding: 8px;
-            border-radius: 5px;
-        }}
-
-        .empty {{
-            color: #64748b;
-            padding: 10px;
-        }}
-
-        table {{
-            width: 100%;
-            border-collapse: collapse;
-            margin-top: 10px;
-            font-size: 12px;
-        }}
-
-        th, td {{
-            border: 1px solid #cbd5e1;
-            padding: 7px;
-            text-align: left;
-        }}
-
-        th {{
-            background: #f1f5f9;
-        }}
-
-        .footer {{
-            border-top: 1px solid #cbd5e1;
-            margin-top: 25px;
-            padding-top: 12px;
-            font-size: 12px;
-            color: #64748b;
-            line-height: 1.7;
-        }}
-    </style>
+      <meta charset="UTF-8">
+      <meta name="viewport" content="width=device-width,initial-scale=1">
     </head>
+    <body style="margin:0;padding:0;background:#F3F6FB;
+                 font-family:Arial,Helvetica,sans-serif;color:{NAVY};">
+      <table width="100%" cellpadding="0" cellspacing="0"
+             style="background:#F3F6FB;padding:16px 5px;">
+        <tr><td align="center">
+          <table width="100%" cellpadding="0" cellspacing="0"
+                 style="max-width:720px;background:#FFFFFF;
+                        border:1px solid {BORDER};border-radius:12px;
+                        overflow:hidden;">
 
-    <body>
-    <div class="container">
+            <tr><td style="background:{NAVY};padding:24px;color:#FFFFFF;">
+              <div style="color:#7DD3FC;font-size:10px;font-weight:800;
+                          letter-spacing:2px;">
+                QUANTITATIVE RESEARCH • MARKET INTELLIGENCE
+              </div>
+              <div style="font-size:24px;font-weight:900;margin-top:9px;">
+                MARKET STRATEGY REPORT
+              </div>
+              <div style="color:#CBD5E1;font-size:12px;margin-top:6px;">
+                INTRADAY EQUITY &amp; BTST STOCK OPTIONS
+              </div>
+              <div style="border-top:1px solid #334155;margin-top:16px;
+                          padding-top:11px;color:#CBD5E1;font-size:10px;">
+                {timestamp} &nbsp;|&nbsp;
+                DATA: {esc(summary.get("data_source", "UPSTOX"))}
+              </div>
+            </td></tr>
 
-        <div class="header">
-            <div>UPSTOX MARKET SCREENER</div>
-            <h1>{mode} Trading Signals</h1>
-            <div>{timestamp}</div>
-        </div>
+            <tr><td style="padding:17px 16px 5px;">
+              <div style="font-size:10px;color:{MUTED};font-weight:800;
+                          letter-spacing:1px;">
+                EXECUTIVE MARKET SNAPSHOT
+              </div>
+              <table width="100%" cellpadding="0" cellspacing="0"
+                     style="margin-top:8px;">
+                <tr>
+                  {metric("VALID SIGNALS", total, BLUE)}
+                  {metric("INTRADAY", len(intraday_bull)+len(intraday_bear), GOLD)}
+                  {metric("OPTIONS", len(option_bull)+len(option_bear), GREEN)}
+                  {metric("REGIME", regime, regime_color)}
+                </tr>
+              </table>
+              <div style="margin-top:9px;padding:12px;background:#F8FAFC;
+                          border:1px solid {BORDER};border-radius:8px;
+                          font-size:11px;line-height:1.9;">
+                <b>NIFTY:</b> {esc(summary.get("nifty_spot"))}
+                ({esc(summary.get("nifty_chg"))}) &nbsp;|
+                <b>BANK NIFTY:</b> {esc(summary.get("bnf_spot"))}
+                ({esc(summary.get("bnf_chg"))})<br>
+                <b>FIN NIFTY:</b> {esc(summary.get("fin_spot"))}
+                ({esc(summary.get("fin_chg"))}) &nbsp;|
+                <b>BREADTH:</b> {esc(summary.get("breadth_ratio"))}<br>
+                <b>ABOVE EMA20:</b> {esc(summary.get("above_ema20"))}% &nbsp;|
+                <b>ABOVE EMA50:</b> {esc(summary.get("above_ema50"))}%
+              </div>
+              <div style="margin-top:9px;padding:11px;background:#FFFBEB;
+                          border:1px solid #FDE68A;border-radius:7px;
+                          color:#92400E;font-size:10px;line-height:1.8;">
+                <b>CONSERVATIVE RISK PROTOCOL</b><br>
+                Capital: NOT DEFINED &nbsp;|&nbsp; Quantity: NOT CALCULATED<br>
+                Execution: SIGNAL ONLY &nbsp;|&nbsp; Automatic orders: DISABLED
+              </div>
+            </td></tr>
 
-        <div class="summary">
-            <h3>Market Summary</h3>
-            <p><b>Data Source:</b>
-                {safe(summary.get("data_source"))}</p>
-            <p><b>Nifty:</b>
-                {safe(summary.get("nifty_spot"))}
-                ({safe(summary.get("nifty_chg"))})</p>
-            <p><b>Bank Nifty:</b>
-                {safe(summary.get("bnf_spot"))}
-                ({safe(summary.get("bnf_chg"))})</p>
-            <p><b>Market Breadth:</b>
-                {safe(summary.get("breadth_ratio"))}</p>
-            <p><b>Market Regime:</b>
-                {safe(summary.get("breadth_tone"))}</p>
-            <p><b>Total Valid Signals:</b> {total}</p>
-            <p><b>Capital:</b> NOT DEFINED</p>
-            <p><b>Quantity:</b> NOT CALCULATED</p>
-        </div>
+            <tr><td style="padding:0 16px 5px;">
+              {render_global_cues(data.get("global_cues") or [])}
+            </td></tr>
 
-        {global_html}
+            <tr><td style="padding:0 16px 5px;">
+              {section("SECTOR ROTATION", "Sector strength and participation", GOLD)}
+              {render_sectors(data.get("sectors") or [])}
+            </td></tr>
 
-        <section>
-            <h2>Sector Overview</h2>
-            {sector_html}
-        </section>
+            <tr><td style="padding:0 16px 5px;">
+              {section("INTRADAY EQUITY", "Five-minute candles • VWAP • Momentum", BLUE)}
+              {render_signal_section("BULLISH EQUITY SETUPS",
+                                     "Long candidates | Maximum 5",
+                                     intraday_bull,
+                                     lambda x: render_intraday_card(x, True))}
+              {render_signal_section("BEARISH EQUITY SETUPS",
+                                     "Short candidates | Maximum 5",
+                                     intraday_bear,
+                                     lambda x: render_intraday_card(x, False))}
+            </td></tr>
 
-        {render_section(
-            "Intraday Equity — Bullish BUY",
-            intraday_bull,
-            render_intraday_card
-        )}
+            <tr><td style="padding:0 16px 5px;">
+              {section("BTST STOCK OPTIONS",
+                       "Option buying or defined-risk debit spreads", GOLD)}
+              {render_signal_section("BULLISH OPTIONS",
+                                     "CE Buying / Bull Call Spread | Maximum 5",
+                                     option_bull, render_option_card)}
+              {render_signal_section("BEARISH OPTIONS",
+                                     "PE Buying / Bear Put Spread | Maximum 5",
+                                     option_bear, render_option_card)}
+            </td></tr>
 
-        {render_section(
-            "Intraday Equity — Bearish SELL",
-            intraday_bear,
-            render_intraday_card
-        )}
+            <tr><td style="padding:13px 16px;">
+              <div style="background:#F8FAFC;border:1px solid {BORDER};
+                          border-radius:8px;padding:12px;font-size:10px;
+                          line-height:1.9;">
+                <b>DATA &amp; EXECUTION STATUS</b><br>
+                Intraday: {esc(data.get("intraday_status"))}<br>
+                Options: {esc(data.get("option_strategy"))}<br>
+                Automatic orders: Disabled<br>
+                Capital configuration: Not defined
+              </div>
+            </td></tr>
 
-        {render_section(
-            "BTST Stock Options — Bullish",
-            option_bull,
-            render_option_card
-        )}
+            <tr><td style="background:{NAVY};padding:18px;color:#CBD5E1;">
+              <div style="font-size:11px;color:#FFFFFF;font-weight:800;
+                          letter-spacing:1px;">
+                RISK &amp; EXECUTION PROTOCOL
+              </div>
+              <div style="font-size:10px;line-height:1.9;margin-top:9px;">
+                01 — Research and signal generation only; no orders are placed.<br>
+                02 — Capital is undefined; quantity and lots are not calculated.<br>
+                03 — No fixed leverage is assumed. Verify broker margin independently.<br>
+                04 — Verify option premium, liquidity, expiry and lot size.<br>
+                05 — Per-unit maximum loss is not total contract loss.<br>
+                06 — Signals do not guarantee returns. Apply independent risk checks.
+              </div>
+              <div style="border-top:1px solid #334155;margin-top:13px;
+                          padding-top:10px;color:#94A3B8;font-size:9px;">
+                AUTOMATED MARKET RESEARCH DESK<br>
+                Generated {timestamp}
+              </div>
+            </td></tr>
 
-        {render_section(
-            "BTST Stock Options — Bearish",
-            option_bear,
-            render_option_card
-        )}
-
-        <section>
-            <h2>Data Status</h2>
-            <p><b>Intraday:</b> {intraday_status}</p>
-            <p><b>Options:</b> {option_status}</p>
-        </section>
-
-        <div class="footer">
-            <b>Risk and Execution Notice</b><br>
-            1. This report contains signals only. No orders are placed.<br>
-            2. Capital is not configured. Quantity and lot count are not calculated.<br>
-            3. No fixed leverage is assumed. Check actual broker margin separately.<br>
-            4. Option premiums and Greeks require live quote verification.<br>
-            5. Maximum loss figures are per unit, not total contract loss.<br>
-            6. Signals are not guaranteed profitable. Verify prices, liquidity,
-            expiry and risk before making any trading decision.
-        </div>
-
-    </div>
+          </table>
+        </td></tr>
+      </table>
     </body>
     </html>
     """
-
-    return html
