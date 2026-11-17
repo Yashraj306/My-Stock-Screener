@@ -12,8 +12,11 @@ No synthetic market values are generated.
 
 import logging
 import math
+import datetime as dt
+from urllib.parse import quote
 
 import pandas as pd
+import requests
 import yfinance as yf
 
 
@@ -103,7 +106,6 @@ SECTOR_MAP = {
 
 
 GLOBAL_CUE_TICKERS = {
-    "GIFT Nifty": "IN=F",
     "Nasdaq": "^IXIC",
     "Dow Jones": "^DJI",
     "S&P 500": "^GSPC",
@@ -197,6 +199,76 @@ def fetch_global_cues():
         })
 
     return results
+
+
+def fetch_upstox_index_summary(token, index_map):
+    """Fetch NIFTY-family index LTP and previous close from Upstox.
+
+    Returns only verified values. Missing index mappings, API responses or
+    previous closes remain unavailable; this function never substitutes values.
+    """
+    if not token or not isinstance(index_map, dict):
+        return {}
+
+    headers = {"Accept": "application/json", "Authorization": f"Bearer {token}"}
+    today = dt.datetime.now(dt.timezone(dt.timedelta(hours=5, minutes=30))).date()
+    start = today - dt.timedelta(days=10)
+    output = {}
+    aliases = {
+        "NIFTY": ("nifty_spot", "nifty_chg"),
+        "BANKNIFTY": ("bnf_spot", "bnf_chg"),
+        "FINNIFTY": ("fin_spot", "fin_chg"),
+    }
+
+    for alias, (spot_field, change_field) in aliases.items():
+        instrument_key = index_map.get(alias)
+        if not instrument_key:
+            continue
+        try:
+            q = requests.get(
+                "https://api.upstox.com/v2/market-quote/ltp",
+                headers=headers,
+                params={"instrument_key": instrument_key},
+                timeout=12,
+            )
+            q.raise_for_status()
+            qdata = q.json().get("data") or {}
+            quote_row = qdata.get(instrument_key)
+            if quote_row is None and len(qdata) == 1:
+                quote_row = next(iter(qdata.values()))
+            ltp = _finite_float((quote_row or {}).get("last_price"))
+            if ltp is None or ltp <= 0:
+                continue
+
+            encoded = quote(instrument_key, safe="")
+            url = (f"https://api.upstox.com/v3/historical-candle/{encoded}/days/1/"
+                   f"{today.isoformat()}/{start.isoformat()}")
+            hist = requests.get(url, headers=headers, timeout=12)
+            hist.raise_for_status()
+            candles = hist.json().get("data", {}).get("candles", [])
+            previous_close = None
+            if candles:
+                # Upstox candle order is newest first; select the latest candle
+                # strictly before today so today's partial candle is not baseline.
+                parsed = []
+                for candle in candles:
+                    if not isinstance(candle, (list, tuple)) or len(candle) < 5:
+                        continue
+                    try:
+                        stamp = pd.Timestamp(candle[0])
+                        close = _finite_float(candle[4])
+                        if close and stamp.date() < today:
+                            parsed.append((stamp, close))
+                    except Exception:
+                        continue
+                if parsed:
+                    previous_close = sorted(parsed, key=lambda x: x[0])[-1][1]
+            output[spot_field] = f"{ltp:,.2f}"
+            if previous_close and previous_close > 0:
+                output[change_field] = f"{((ltp / previous_close) - 1) * 100:+.2f}%"
+        except Exception as exc:
+            logger.warning("Upstox %s index snapshot unavailable: %s", alias, exc)
+    return output
 
 
 def compute_sector_strength(candles):
