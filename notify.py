@@ -1,215 +1,194 @@
+"""
+Email delivery for My Stock Screener.
 
+Expected report interface:
+    report.render_html_report(payload) -> HTML string
+
+Required environment variables:
+    EMAIL_USER
+    EMAIL_PASS
+    EMAIL_TO
+
+This module sends reports only. It never places or modifies orders.
+"""
+
+import logging
 import os
 import smtplib
-import logging
-import datetime as dt
-
 from email.mime.multipart import MIMEMultipart
 from email.mime.text import MIMEText
+from typing import Any
 
 from report import render_html_report
 
 
-EMAIL_USER = os.getenv("EMAIL_USER", "").strip()
-EMAIL_PASS = os.getenv("EMAIL_PASS", "").strip()
-EMAIL_TO = os.getenv("EMAIL_TO", EMAIL_USER).strip()
+logger = logging.getLogger(__name__)
 
-IST = dt.timezone(dt.timedelta(hours=5, minutes=30))
-
-
-def current_ist():
-    return dt.datetime.now(IST)
+SMTP_HOST = os.getenv("SMTP_HOST", "smtp.gmail.com")
+SMTP_PORT = int(os.getenv("SMTP_PORT", "465"))
+SMTP_TIMEOUT = int(os.getenv("SMTP_TIMEOUT", "30"))
 
 
-def get_recipients():
+def _as_list(value: Any) -> list:
+    """Return a list only when the payload field is actually a list/tuple."""
+    if isinstance(value, list):
+        return value
+    if isinstance(value, tuple):
+        return list(value)
+    return []
+
+
+def _recipient_list(raw: str) -> list:
+    """Support one or more comma/semicolon separated recipients."""
+    if not raw:
+        return []
     return [
         address.strip()
-        for address in EMAIL_TO.split(",")
+        for address in raw.replace(";", ",").split(",")
         if address.strip()
     ]
 
 
-def get_scan_label(payload):
-    """
-    Determine report label using configured mode.
-    """
+def _mode_label(payload: dict) -> str:
+    """Choose a clear email subject from the actual scan mode."""
+    mode = str(payload.get("mode", "SWING")).strip().upper()
 
-    mode = str(payload.get("mode", "")).upper()
+    if mode in {"MORNING", "INTRADAY"}:
+        return "MORNING INTRADAY EQUITY SCAN"
+    if mode == "BTST":
+        return "BTST STOCK OPTIONS SCAN"
+    if mode == "SWING":
+        return "SWING + INTRADAY + BTST SCAN"
 
+    # Backward compatibility for older payloads.
     if "MORNING" in mode or "INTRADAY" in mode:
-        return "MORNING INTRADAY SCAN"
-
+        return "MORNING INTRADAY EQUITY SCAN"
     if "BTST" in mode:
-        return "BTST & STOCK OPTIONS SCAN"
-
-    # Fallback based on Indian market session time.
-    current_time = current_ist().time()
-
-    if current_time < dt.time(12, 0):
-        return "MORNING INTRADAY SCAN"
-
-    return "BTST & STOCK OPTIONS SCAN"
+        return "BTST STOCK OPTIONS SCAN"
+    return "STOCK MARKET SCREENER REPORT"
 
 
-def count_signals(payload):
-    """
-    Count actual signals without inventing setup counts.
-    """
+def _signal_counts(payload: dict) -> dict:
+    """Count signal lists without assuming that all fields are present."""
+    intraday_bull = _as_list(payload.get("intraday_bullish"))
+    intraday_bear = _as_list(payload.get("intraday_bearish"))
+    options_bull = _as_list(payload.get("options_bullish"))
 
-    intraday_bull = payload.get("intraday_bullish") or []
-    intraday_bear = payload.get("intraday_bearish") or []
+    options_bear = _as_list(payload.get("options_bearish"))
 
-    equity = payload.get("equity_intraday") or []
+    # Compatibility with payloads that only populate `setups`.
+    setups = payload.get("setups")
+    if isinstance(setups, dict):
+        if not options_bull:
+            options_bull = _as_list(setups.get("bullish"))
+        if not options_bear:
+            options_bear = _as_list(setups.get("bearish"))
 
-    if not intraday_bull and not intraday_bear and equity:
-        intraday_bull = [
-            item for item in equity
-            if str(item.get("action", "")).startswith("BUY")
-        ]
-
-        intraday_bear = [
-            item for item in equity
-            if str(item.get("action", "")).startswith("SELL")
-        ]
-
-    setups = payload.get("setups") or {}
-
-    option_bull = (
-        payload.get("options_bullish")
-        or setups.get("bullish")
-        or []
-    )
-
-    option_bear = (
-        payload.get("options_bearish")
-        or setups.get("bearish")
-        or []
-    )
+    # Compatibility with older payloads that only have equity_intraday.
+    if not intraday_bull and not intraday_bear:
+        equity = _as_list(payload.get("equity_intraday"))
+        for item in equity:
+            if not isinstance(item, dict):
+                continue
+            action = str(item.get("action", "")).upper()
+            if "BUY" in action or "LONG" in action:
+                intraday_bull.append(item)
+            elif "SELL" in action or "SHORT" in action:
+                intraday_bear.append(item)
 
     return {
         "intraday_bullish": len(intraday_bull),
         "intraday_bearish": len(intraday_bear),
-        "options_bullish": len(option_bull),
-        "options_bearish": len(option_bear)
+        "options_bullish": len(options_bull),
+        "options_bearish": len(options_bear),
+        "total": (
+            len(intraday_bull) + len(intraday_bear)
+            + len(options_bull) + len(options_bear)
+        ),
     }
 
 
-def make_subject(payload):
-    now = current_ist()
-    label = get_scan_label(payload)
-    counts = count_signals(payload)
-
-    total = sum(counts.values())
+def _build_subject(payload: dict, counts: dict) -> str:
+    label = _mode_label(payload)
+    date_text = str(payload.get("scan_date", "")).strip()
+    if not date_text:
+        date_text = "Latest"
 
     return (
-        f"[{label}] "
-        f"{total} Valid Signals | "
-        f"{now.strftime('%d %b %Y')}"
+        f"{label} | {date_text} | "
+        f"{counts['total']} Signals"
     )
 
 
-def send_alert(payload):
+def send_alert(payload: dict) -> bool:
     """
-    Send professional HTML screener report by Gmail SMTP.
+    Render and email the screener report.
 
-    No trading orders are placed by this module.
+    Returns True when SMTP accepts the message; otherwise raises an
+    exception so GitHub Actions can show the delivery failure.
     """
-
-    payload = payload or {}
-
     if not isinstance(payload, dict):
-        logging.error("Email payload must be a dictionary.")
-        return False
+        raise TypeError("send_alert expects a dictionary payload")
 
-    if not EMAIL_USER or not EMAIL_PASS:
-        logging.error(
-            "Email credentials missing. "
-            "Check EMAIL_USER and EMAIL_PASS GitHub Secrets."
-        )
-        return False
+    email_user = os.getenv("EMAIL_USER", "").strip()
+    email_pass = os.getenv("EMAIL_PASS", "").strip()
+    recipients = _recipient_list(os.getenv("EMAIL_TO", ""))
 
-    recipients = get_recipients()
-
+    missing = []
+    if not email_user:
+        missing.append("EMAIL_USER")
+    if not email_pass:
+        missing.append("EMAIL_PASS")
     if not recipients:
-        logging.error(
-            "EMAIL_TO is empty. No email recipient configured."
-        )
-        return False
+        missing.append("EMAIL_TO")
 
-    try:
-        html_body = render_html_report(payload)
-
-        if not html_body:
-            logging.error("HTML report generation returned empty content.")
-            return False
-
-        subject = make_subject(payload)
-
-        message = MIMEMultipart("alternative")
-
-        message["Subject"] = subject
-        message["From"] = f"Market Research Desk <{EMAIL_USER}>"
-        message["To"] = ", ".join(recipients)
-
-        plain_text = (
-            "Market Screener Report\n\n"
-            "Please open this email in an HTML-compatible email client.\n"
-            "This report contains trading research signals only.\n"
-            "No automatic orders are placed."
+    if missing:
+        raise RuntimeError(
+            "Email configuration missing: " + ", ".join(missing)
         )
 
-        message.attach(
-            MIMEText(plain_text, "plain", "utf-8")
-        )
+    html = render_html_report(payload)
+    if not isinstance(html, str) or not html.strip():
+        raise ValueError("render_html_report returned empty or invalid HTML")
 
-        message.attach(
-            MIMEText(html_body, "html", "utf-8")
-        )
+    counts = _signal_counts(payload)
+    subject = _build_subject(payload, counts)
 
-        with smtplib.SMTP_SSL(
-            "smtp.gmail.com",
-            465,
-            timeout=30
-        ) as server:
+    message = MIMEMultipart("alternative")
+    message["Subject"] = subject
+    message["From"] = email_user
+    message["To"] = ", ".join(recipients)
 
-            server.login(
-                EMAIL_USER,
-                EMAIL_PASS
-            )
+    mode = str(payload.get("mode", "UNKNOWN")).upper()
+    plain_text = (
+        "My Stock Screener Report\n"
+        f"Mode: {mode}\n"
+        f"Intraday bullish: {counts['intraday_bullish']}\n"
+        f"Intraday bearish: {counts['intraday_bearish']}\n"
+        f"Options bullish: {counts['options_bullish']}\n"
+        f"Options bearish: {counts['options_bearish']}\n"
+        f"Total signals: {counts['total']}\n\n"
+        "Execution: SIGNAL_ONLY\n"
+        "Automatic order placement: DISABLED\n"
+        "Please review the attached HTML report content in your email client."
+    )
 
-            server.sendmail(
-                EMAIL_USER,
-                recipients,
-                message.as_string()
-            )
+    message.attach(MIMEText(plain_text, "plain", "utf-8"))
+    message.attach(MIMEText(html, "html", "utf-8"))
 
-        logging.info(
-            "EMAIL SENT SUCCESSFULLY | Subject: %s | Recipients: %s",
-            subject,
-            len(recipients)
-        )
+    logger.info(
+        "Sending %s email to %d recipient(s); signals=%d",
+        mode, len(recipients), counts["total"],
+    )
 
-        logging.info(
-            "Signal counts: %s",
-            count_signals(payload)
-        )
+    # Gmail App Password is expected in EMAIL_PASS when using Gmail.
+    with smtplib.SMTP_SSL(
+        SMTP_HOST,
+        SMTP_PORT,
+        timeout=SMTP_TIMEOUT,
+    ) as server:
+        server.login(email_user, email_pass)
+        server.sendmail(email_user, recipients, message.as_string())
 
-        return True
-
-    except smtplib.SMTPAuthenticationError:
-        logging.exception(
-            "Gmail authentication failed. "
-            "Check EMAIL_USER and Gmail App Password."
-        )
-
-    except smtplib.SMTPException:
-        logging.exception(
-            "Gmail SMTP delivery failed."
-        )
-
-    except Exception:
-        logging.exception(
-            "Report generation or email delivery failed."
-        )
-
-    return False
+    logger.info("Email report accepted by SMTP server.")
+    return True
