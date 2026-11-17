@@ -1,74 +1,94 @@
+
 name: Market Screener Automation
 
 on:
   schedule:
-    # 1. Pre-Market Scan: 9:00 AM IST (03:30 UTC) Mon-Fri
-    - cron: '30 3 * * 1-5'
-    
-    # 2. BTST Scan: 2:00 PM IST (08:30 UTC) Mon-Fri
-    - cron: '30 8 * * 1-5'
+    # 9:00 AM IST = 03:30 UTC
+    - cron: "30 3 * * 1-5"
+
+    # 2:00 PM IST = 08:30 UTC
+    - cron: "30 8 * * 1-5"
 
   workflow_dispatch:
     inputs:
-      scan_mode:
-        description: 'Choose Screener Mode'
+      mode:
+        description: "Select screener mode"
         required: true
-        default: 'BTST'
         type: choice
         options:
           - MORNING
           - BTST
+        default: MORNING
+
+permissions:
+  contents: read
+
+concurrency:
+  group: market-screener
+  cancel-in-progress: false
 
 jobs:
   run-screener:
     runs-on: ubuntu-latest
+    timeout-minutes: 20
+
+    env:
+      EMAIL_USER: ${{ secrets.EMAIL_USER }}
+      EMAIL_PASS: ${{ secrets.EMAIL_PASS }}
+      EMAIL_TO: ${{ secrets.EMAIL_TO }}
+      UPSTOX_TOKEN: ${{ secrets.UPSTOX_TOKEN }}
+
+      MODE: ${{ github.event_name == 'schedule' && (github.event.schedule == '30 3 * * 1-5' && 'MORNING' || 'BTST') || inputs.mode || 'MORNING' }}
+
+      PYTHONUNBUFFERED: "1"
 
     steps:
       - name: Checkout Repository
         uses: actions/checkout@v4
 
-      - name: Set up Python
+      - name: Setup Python
         uses: actions/setup-python@v5
         with:
-          python-version: '3.11'
-          cache: 'pip'
+          python-version: "3.11"
+          cache: "pip"
+          cache-dependency-path: requirements.txt
 
       - name: Install Dependencies
         run: |
           python -m pip install --upgrade pip
           pip install -r requirements.txt
 
-      - name: Determine Screener Mode
-        id: set-mode
+      - name: Validate Required Secrets
         run: |
-          if [ "${{ github.event_name }}" = "workflow_dispatch" ]; then
-            echo "SELECTED_MODE=${{ github.event.inputs.scan_mode }}" >> $GITHUB_ENV
-          else
-            CURRENT_HOUR=$(date -u +%H)
-            if [ "$CURRENT_HOUR" -lt "6" ]; then
-              echo "SELECTED_MODE=MORNING" >> $GITHUB_ENV
-            else
-              echo "SELECTED_MODE=BTST" >> $GITHUB_ENV
-            fi
-          fi
+          python - <<'PY'
+          import os
+          required = [
+              "EMAIL_USER",
+              "EMAIL_PASS",
+              "EMAIL_TO",
+              "UPSTOX_TOKEN"
+          ]
+          missing = [
+              key for key in required
+              if not os.getenv(key, "").strip()
+          ]
+          if missing:
+              raise SystemExit(
+                  "Missing GitHub Secrets: " + ", ".join(missing)
+              )
+          print("Required secrets are configured.")
+          print("Screener mode:", os.getenv("MODE"))
+          PY
 
       - name: Run Screener Engine
-        env:
-          EMAIL_USER: ${{ secrets.EMAIL_USER }}
-          EMAIL_PASS: ${{ secrets.EMAIL_PASS }}
-          EMAIL_TO: ${{ secrets.EMAIL_TO }}
-          UPSTOX_TOKEN: ${{ secrets.UPSTOX_TOKEN }}
-          TELEGRAM_TOKEN: ${{ secrets.TELEGRAM_TOKEN }}
-          TELEGRAM_CHAT_ID: ${{ secrets.TELEGRAM_CHAT_ID }}
-          MODE: ${{ env.SELECTED_MODE }}
         run: |
-          echo "Executing scan in MODE: $MODE"
           python screener.py
 
-      - name: Commit Tracker Updates
+      - name: Workflow Summary
+        if: always()
         run: |
-          git config --local user.email "action@github.com"
-          git config --local user.name "GitHub Action"
-          git add trades_tracker.json || true
-          git commit -m "Auto-update trades tracker [skip ci]" || true
-          git push || true
+          echo "## Market Screener Run" >> $GITHUB_STEP_SUMMARY
+          echo "- Mode: $MODE" >> $GITHUB_STEP_SUMMARY
+          echo "- Scheduled timezone: IST (UTC+5:30)" >> $GITHUB_STEP_SUMMARY
+          echo "- Execution: Signals only" >> $GITHUB_STEP_SUMMARY
+          echo "- Automatic orders: Disabled" >> $GITHUB_STEP_SUMMARY
