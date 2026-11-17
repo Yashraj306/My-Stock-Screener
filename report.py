@@ -1,166 +1,431 @@
+
 import datetime as dt
-from cards import build_stock_card, build_equity_intraday_table
+from html import escape
 
 
-def render_html_report(data):
-    mode = data.get("mode", "BTST")
-    title = f"{mode} Institutional Quant & Hedging Desk"
-    today_str = dt.datetime.now().strftime("%A, %d %b %Y | %I:%M %p IST")
+def safe(value, default="—"):
+    if value is None:
+        return default
 
-    summary = data.get("summary", {})
-    global_cues = data.get("global_cues", [])
-    index_view = data.get("index_view", {})
-    index_trades = data.get("index_trades", [])
-    sectors = data.get("sectors", [])
-    setups = data.get("setups", {})
-    equity_intraday = data.get("equity_intraday", [])
-    track_record = data.get("track_record", {})
+    return escape(str(value))
 
-    cues_th = "".join([f'<th style="padding: 6px; border: 1px solid #e2e8f0; font-size: 10.5px; color:#475569;">{c["name"]}</th>' for c in global_cues])
-    cues_td = "".join([f'<td style="padding: 6px; border: 1px solid #e2e8f0; font-size: 11px; text-align: center;"><b>{c["val"]}</b><br><span style="color: {"#16a34a" if "+" in c["chg"] else "#dc2626"}; font-weight:bold;">{c["chg"]}</span></td>' for c in global_cues])
-    cues_html = f"""
-    <div style="margin-bottom: 18px;">
-        <h4 style="margin: 0 0 6px 0; color: #0f172a; font-size: 13px; text-transform: uppercase; letter-spacing: 0.5px;">🌍 Global Macro & GIFT Nifty</h4>
-        <table style="width: 100%; border-collapse: collapse; background: #fff;">
-            <tr style="background: #f8fafc;">{cues_th}</tr>
-            <tr>{cues_td}</tr>
-        </table>
-    </div>
-    """ if global_cues else ""
 
-    idx_blocks = ""
-    for idx_name, info in index_view.items():
-        lifting_str = ", ".join([f"{x[0]} (+{x[1]})" for x in info.get("lifting", [])])
-        dragging_str = ", ".join([f"{x[0]} ({x[1]})" for x in info.get("dragging", [])])
-        idx_blocks += f"""
-        <div style="font-size: 12px; margin-bottom: 6px; padding: 6px 10px; background: #f8fafc; border-radius: 6px; border: 1px solid #e2e8f0;">
-            <b>{idx_name} {info.get('spot', '')} ({info.get('chg', '')}) | RSI {info.get('rsi', '')}</b><br>
-            <span style="color: #16a34a; font-weight:bold;">▲ Lifting:</span> {lifting_str} pts &nbsp;|&nbsp;
-            <span style="color: #dc2626; font-weight:bold;">▼ Dragging:</span> {dragging_str} pts
-        </div>
-        """
+def money(value):
+    try:
+        return f"₹{float(value):,.2f}"
+    except (TypeError, ValueError):
+        return "Unavailable"
 
-    idx_trades_html = ""
-    if index_trades:
-        idx_trades_html = """
-        <div style="margin-top: 22px;">
-            <div style="font-size: 15px; font-weight: 800; color: #0f172a; margin-bottom: 4px;">🏛️ Index Options & Spread Hedging (NIFTY • BANKNIFTY • FINNIFTY • SENSEX)</div>
-            <div style="font-size: 11px; color: #64748b; margin-bottom: 10px;">Direct index option strategies with built-in OTM hedge legs to protect against overnight Theta/Vega decay.</div>
-        """
-        for it in index_trades:
-            idx_trades_html += build_stock_card(it)
-        idx_trades_html += "</div>"
 
-    sec_rows = ""
-    for s in sectors:
-        col = "#16a34a" if s.get("read") == "Strong" else ("#dc2626" if s.get("read") == "Weak" else "#64748b")
-        sec_rows += f"""
+def render_global_cues(cues):
+    if not cues:
+        return "<p>No global market data available.</p>"
+
+    rows = ""
+
+    for cue in cues:
+        name = safe(cue.get("name"))
+        value = safe(cue.get("val"))
+        change = safe(cue.get("chg"))
+
+        rows += f"""
         <tr>
-            <td style="padding: 5px 8px; border: 1px solid #e2e8f0; font-weight: bold;">{s['name']}</td>
-            <td style="padding: 5px 8px; border: 1px solid #e2e8f0; text-align: center;">{s['avg_move']}</td>
-            <td style="padding: 5px 8px; border: 1px solid #e2e8f0; text-align: center;">{s['up_down']}</td>
-            <td style="padding: 5px 8px; border: 1px solid #e2e8f0; text-align: center; color: {col}; font-weight: bold;">{s['read']}</td>
+            <td>{name}</td>
+            <td>{value}</td>
+            <td>{change}</td>
         </tr>
         """
 
-    def render_section(heading, sub_desc, cards_list):
-        content = "".join([build_stock_card(c) for c in cards_list]) if cards_list else '<div style="font-size: 12px; color: #888;">No setups matched criteria.</div>'
-        return f"""
-        <div style="margin-top: 22px;">
-            <div style="font-size: 15px; font-weight: 800; color: #0f172a;">{heading}</div>
-            <div style="font-size: 11px; color: #64748b; margin-bottom: 10px;">{sub_desc}</div>
-            {content}
-        </div>
-        """
+    return f"""
+    <h3>Global Market Cues</h3>
+    <table>
+        <tr><th>Name</th><th>Value</th><th>Change</th></tr>
+        {rows}
+    </table>
+    """
 
-    bull_cards = render_section("🟢 Top 5 Bullish Stock Options (with Pre-Built Bull Call Spreads)", "High relative strength F&O stocks with ready-to-execute hedged option legs.", setups.get("bullish", []))
-    bear_cards = render_section("🔴 Top 5 Bearish Stock Options (with Pre-Built Bear Put Spreads)", "Institutional breakdown F&O stocks with hedged downside put spreads.", setups.get("bearish", []))
 
-    eq_section_html = f"""
-    <div style="margin-top: 24px;">
-        <div style="font-size: 15px; font-weight: 800; color: #0f172a;">⚡ Intraday Equity Cash Signals (5x MIS Leverage)</div>
-        <div style="font-size: 11px; color: #64748b; margin-bottom: 8px;">High-momentum cash stocks from Nifty 50, BankNifty, FinNifty & Sensex universe with 5x leveraged quantity sizing.</div>
-        {build_equity_intraday_table(equity_intraday)}
+def render_intraday_card(item):
+    return f"""
+    <div class="card">
+        <h3>{safe(item.get("symbol"))}
+            — {safe(item.get("action"))}</h3>
+        <p><b>Entry:</b> {money(item.get("entry"))}</p>
+        <p><b>Stop Loss:</b> {money(item.get("stop_loss"))}</p>
+        <p><b>Target 1:</b> {money(item.get("target_1"))}</p>
+        <p><b>Target 2:</b> {money(item.get("target_2"))}</p>
+        <p><b>RSI:</b> {safe(item.get("rsi"))}</p>
+        <p><b>Volume Ratio:</b> {safe(item.get("volume_ratio"))}</p>
+        <p><b>VWAP:</b> {money(item.get("vwap"))}</p>
+        <p><b>Leverage:</b> Not assumed</p>
+        <p><b>Quantity:</b> Not calculated — capital undefined</p>
+        <p class="note">Signal only. No automatic order.</p>
     </div>
     """
 
-    vix_alert_box = ""
-    if summary.get("vix_alert"):
-        vix_alert_box = f"""
-        <div style="background: #fffbeb; border-left: 4px solid #f59e0b; padding: 9px 12px; margin-bottom: 14px; font-size: 12px; color: #92400e;">
-            <b>⚡ Volatility Regime:</b> {summary.get("vix_alert")}
-        </div>
+
+def render_option_card(item):
+    plan = item.get("option_plan") or {}
+    strategy = plan.get("strategy", "Unavailable")
+
+    details = ""
+
+    if strategy == "OPTION_BUYING":
+        details = f"""
+        <p><b>Option Type:</b> {safe(plan.get("option_type"))}</p>
+        <p><b>Strike:</b> {safe(plan.get("strike"))}</p>
+        <p><b>Expiry:</b> {safe(plan.get("expiry"))}</p>
+        <p><b>Premium:</b> {money(plan.get("entry_premium"))}</p>
+        <p><b>IV:</b> {safe(plan.get("iv"))}</p>
+        <p><b>Delta:</b> {safe(plan.get("delta"))}</p>
+        <p><b>Theta:</b> {safe(plan.get("theta"))}</p>
+        <p><b>Maximum Loss per Unit:</b>
+            {money(plan.get("maximum_loss_per_unit"))}</p>
+        """
+
+    elif strategy in ("BULL_CALL_SPREAD", "BEAR_PUT_SPREAD"):
+        buy_leg = plan.get("buy_leg") or {}
+        sell_leg = plan.get("sell_leg") or {}
+
+        details = f"""
+        <p><b>Buy Strike:</b> {safe(buy_leg.get("strike"))}</p>
+        <p><b>Sell Strike:</b> {safe(sell_leg.get("strike"))}</p>
+        <p><b>Expiry:</b> {safe(plan.get("expiry"))}</p>
+        <p><b>Net Debit:</b>
+            {money(plan.get("net_debit_per_unit"))}</p>
+        <p><b>Maximum Loss per Unit:</b>
+            {money(plan.get("maximum_loss_per_unit"))}</p>
+        <p><b>Maximum Profit per Unit:</b>
+            {money(plan.get("maximum_profit_per_unit"))}</p>
+        <p><b>Breakeven:</b>
+            {money(plan.get("breakeven"))}</p>
+        """
+
+    else:
+        details = "<p>Option strategy details unavailable.</p>"
+
+    return f"""
+    <div class="card">
+        <h3>{safe(item.get("symbol"))} — {safe(item.get("side"))}</h3>
+        <p><b>Strategy:</b> {safe(strategy)}</p>
+        <p><b>Underlying Price:</b> {money(item.get("close"))}</p>
+        {details}
+        <p><b>Quantity:</b> Not calculated — capital undefined</p>
+        <p><b>Execution:</b> Signal only</p>
+        <p class="note">
+            Review live quotes, expiry and contract lot size
+            before considering any trade.
+        </p>
+    </div>
+    """
+
+
+def render_section(title, items, renderer):
+    if not items:
+        content = '<p class="empty">No valid signals matched the filters.</p>'
+    else:
+        content = "".join(renderer(item) for item in items)
+
+    return f"""
+    <section>
+        <h2>{title}</h2>
+        {content}
+    </section>
+    """
+
+
+def render_sector_table(sectors):
+    if not sectors:
+        return "<p>Sector data unavailable.</p>"
+
+    rows = ""
+
+    for sector in sectors:
+        rows += f"""
+        <tr>
+            <td>{safe(sector.get("name"))}</td>
+            <td>{safe(sector.get("avg_move"))}</td>
+            <td>{safe(sector.get("up_down"))}</td>
+            <td>{safe(sector.get("read"))}</td>
+        </tr>
         """
 
     return f"""
+    <table>
+        <tr>
+            <th>Sector</th>
+            <th>Average Change</th>
+            <th>Advances / Declines</th>
+            <th>Market Read</th>
+        </tr>
+        {rows}
+    </table>
+    """
+
+
+def render_html_report(data):
+    """
+    Generate a conservative signal-only HTML email report.
+
+    Supports:
+        Intraday equity bullish/bearish
+        BTST stock option bullish/bearish
+        Option buying and debit spreads
+
+    No automatic order instructions.
+    """
+
+    data = data or {}
+
+    summary = data.get("summary") or {}
+    setups = data.get("setups") or {}
+
+    intraday_bull = data.get("intraday_bullish") or []
+    intraday_bear = data.get("intraday_bearish") or []
+
+    if not intraday_bull and not intraday_bear:
+        equity = data.get("equity_intraday") or []
+
+        intraday_bull = [
+            x for x in equity
+            if str(x.get("action", "")).startswith("BUY")
+        ]
+
+        intraday_bear = [
+            x for x in equity
+            if str(x.get("action", "")).startswith("SELL")
+        ]
+
+    option_bull = (
+        data.get("options_bullish")
+        or setups.get("bullish")
+        or []
+    )
+
+    option_bear = (
+        data.get("options_bearish")
+        or setups.get("bearish")
+        or []
+    )
+
+    mode = safe(data.get("mode"), "INTRADAY + BTST")
+
+    timestamp = dt.datetime.now(
+        dt.timezone(dt.timedelta(hours=5, minutes=30))
+    ).strftime("%d %b %Y, %I:%M %p IST")
+
+    total = (
+        len(intraday_bull)
+        + len(intraday_bear)
+        + len(option_bull)
+        + len(option_bear)
+    )
+
+    global_html = render_global_cues(
+        data.get("global_cues") or []
+    )
+
+    sector_html = render_sector_table(
+        data.get("sectors") or []
+    )
+
+    intraday_status = safe(
+        data.get("intraday_status"),
+        "Not available"
+    )
+
+    option_status = safe(
+        data.get("option_strategy"),
+        "Live option data required"
+    )
+
+    html = f"""
+    <!DOCTYPE html>
     <html>
-    <body style="font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, Helvetica, Arial, sans-serif; background: #f1f5f9; margin: 0; padding: 12px; color: #1e293b;">
-        <div style="max-width: 720px; margin: 0 auto; background: #ffffff; padding: 20px; border-radius: 10px; border: 1px solid #cbd5e1; box-shadow: 0 4px 12px rgba(0,0,0,0.05);">
-            
-            <!-- Institutional Dark Header -->
-            <div style="background: linear-gradient(135deg, #0f172a 0%, #1e293b 100%); color: #ffffff; padding: 16px 18px; border-radius: 8px; margin-bottom: 16px; display: flex; align-items: center; justify-content: space-between;">
-                <div>
-                    <div style="font-size: 10px; color: #38bdf8; font-weight: 700; letter-spacing: 1.2px; text-transform: uppercase;">LIVE UPSTOX FEED • OPTIONS HEDGING & 5X EQUITY DESK</div>
-                    <h2 style="margin: 4px 0 2px 0; color: #ffffff; font-size: 19px;">{title}</h2>
-                    <div style="font-size: 11.5px; color: #94a3b8;">{today_str} | Feed: <b>{summary.get('data_source', 'Upstox Live API')}</b></div>
-                </div>
-                <div style="background: #020617; border: 1.5px solid #10b981; border-radius: 8px; padding: 6px 12px; text-align: center;">
-                    <div style="font-size: 16px;">🐂 📊 🐻</div>
-                    <div style="color: #10b981; font-weight: 900; font-size: 9.5px; letter-spacing: 1px;">QUANT PRO</div>
-                </div>
-            </div>
+    <head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width">
+    <style>
+        body {{
+            font-family: Arial, sans-serif;
+            background: #f1f5f9;
+            color: #1e293b;
+            margin: 0;
+            padding: 12px;
+        }}
 
-            {vix_alert_box}
+        .container {{
+            max-width: 720px;
+            margin: auto;
+            background: white;
+            padding: 18px;
+            border-radius: 10px;
+        }}
 
-            <!-- Executive Summary -->
-            <div style="background: #f8fafc; border: 1px solid #e2e8f0; border-left: 4px solid #2563eb; border-radius: 6px; padding: 12px 14px; margin-bottom: 16px; font-size: 12.5px; line-height: 1.6;">
-                <div style="font-weight: 800; font-size: 13.5px; color: #0f172a; margin-bottom: 4px;">📌 Market Pulse & Desk Summary</div>
-                <div><b>Nifty 50:</b> {summary.get('nifty_spot')} ({summary.get('nifty_chg')}) | <b>BankNifty:</b> {summary.get('bnf_spot')} ({summary.get('bnf_chg')}) | <b>FinNifty:</b> {summary.get('fin_spot')} ({summary.get('fin_chg')})</div>
-                <div><b>Market Breadth:</b> {summary.get('breadth_ratio')} | {summary.get('above_ema20')}% > EMA20 | {summary.get('above_ema50')}% > EMA50 | Regime: <b>{summary.get('breadth_tone')}</b></div>
-                <div><b>Actionable Ideas:</b> {summary.get('ideas_count', 24)} Total Setups (4 Index Spreads + 10 Stock Option Spreads + 10 Intraday 5x Equity Trades)</div>
-                <div><b>Top Conviction Pick:</b> <span style="color:#059669; font-weight:bold;">{summary.get('best_rated', 'None')}</span></div>
-            </div>
+        .header {{
+            background: #0f172a;
+            color: white;
+            padding: 18px;
+            border-radius: 8px;
+        }}
 
-            {cues_html}
+        .header h1 {{
+            font-size: 21px;
+            margin: 5px 0;
+        }}
 
-            <!-- Index Movers -->
-            <div style="margin-bottom: 18px;">
-                <h4 style="margin: 0 0 6px 0; color: #0f172a; font-size: 13px; text-transform: uppercase;">📊 Heavyweight Point Contributors</h4>
-                {idx_blocks}
-            </div>
+        .summary {{
+            background: #f8fafc;
+            padding: 12px;
+            margin-top: 14px;
+            border: 1px solid #e2e8f0;
+            border-radius: 8px;
+            line-height: 1.8;
+        }}
 
-            <!-- Sector Matrix -->
-            <div style="margin-bottom: 18px;">
-                <h4 style="margin: 0 0 6px 0; color: #0f172a; font-size: 13px; text-transform: uppercase;">🧭 Sector Rotation Matrix</h4>
-                <table style="width: 100%; border-collapse: collapse; font-size: 11px;">
-                    <tr style="background: #f1f5f9; font-weight: bold; color: #334155;">
-                        <td style="padding: 6px 8px; border: 1px solid #cbd5e1;">Sector</td>
-                        <td style="padding: 6px 8px; border: 1px solid #cbd5e1; text-align: center;">Avg Change</td>
-                        <td style="padding: 6px 8px; border: 1px solid #cbd5e1; text-align: center;">Adv/Dec</td>
-                        <td style="padding: 6px 8px; border: 1px solid #cbd5e1; text-align: center;">Institutional Read</td>
-                    </tr>
-                    {sec_rows}
-                </table>
-            </div>
+        section {{
+            margin-top: 24px;
+        }}
 
-            <!-- 5x Intraday Equity Section -->
-            {eq_section_html}
+        section h2 {{
+            font-size: 17px;
+            border-bottom: 2px solid #cbd5e1;
+            padding-bottom: 8px;
+        }}
 
-            <!-- 4 Indices Options & Hedging -->
-            {idx_trades_html}
+        .card {{
+            border: 1px solid #cbd5e1;
+            border-radius: 8px;
+            padding: 12px;
+            margin: 10px 0;
+            background: #ffffff;
+            line-height: 1.55;
+        }}
 
-            <!-- Top 5 Bullish & Top 5 Bearish Stock Options with Hedging -->
-            {bull_cards}
-            {bear_cards}
+        .card h3 {{
+            margin-top: 0;
+            color: #0f172a;
+        }}
 
-            <div style="margin-top: 20px; padding-top: 12px; border-top: 1px solid #e2e8f0; font-size: 10.5px; color: #64748b; line-height: 1.5;">
-                <b>Execution Protocol:</b><br>
-                1. <b>Option Hedging:</b> Always execute both BUY and SELL legs simultaneously (Basket Order) to lock in low margin and protect against overnight Theta/IV crush.<br>
-                2. <b>5x Equity Intraday:</b> Execute in MIS/Intraday product after 9:25 AM opening range settle; square off mandatory before 3:15 PM.<br>
-                3. Data powered by live Upstox V2 market quotes & quantitative BSM Greek engine.
-            </div>
+        .note {{
+            color: #92400e;
+            background: #fffbeb;
+            padding: 8px;
+            border-radius: 5px;
+        }}
 
+        .empty {{
+            color: #64748b;
+            padding: 10px;
+        }}
+
+        table {{
+            width: 100%;
+            border-collapse: collapse;
+            margin-top: 10px;
+            font-size: 12px;
+        }}
+
+        th, td {{
+            border: 1px solid #cbd5e1;
+            padding: 7px;
+            text-align: left;
+        }}
+
+        th {{
+            background: #f1f5f9;
+        }}
+
+        .footer {{
+            border-top: 1px solid #cbd5e1;
+            margin-top: 25px;
+            padding-top: 12px;
+            font-size: 12px;
+            color: #64748b;
+            line-height: 1.7;
+        }}
+    </style>
+    </head>
+
+    <body>
+    <div class="container">
+
+        <div class="header">
+            <div>UPSTOX MARKET SCREENER</div>
+            <h1>{mode} Trading Signals</h1>
+            <div>{timestamp}</div>
         </div>
+
+        <div class="summary">
+            <h3>Market Summary</h3>
+            <p><b>Data Source:</b>
+                {safe(summary.get("data_source"))}</p>
+            <p><b>Nifty:</b>
+                {safe(summary.get("nifty_spot"))}
+                ({safe(summary.get("nifty_chg"))})</p>
+            <p><b>Bank Nifty:</b>
+                {safe(summary.get("bnf_spot"))}
+                ({safe(summary.get("bnf_chg"))})</p>
+            <p><b>Market Breadth:</b>
+                {safe(summary.get("breadth_ratio"))}</p>
+            <p><b>Market Regime:</b>
+                {safe(summary.get("breadth_tone"))}</p>
+            <p><b>Total Valid Signals:</b> {total}</p>
+            <p><b>Capital:</b> NOT DEFINED</p>
+            <p><b>Quantity:</b> NOT CALCULATED</p>
+        </div>
+
+        {global_html}
+
+        <section>
+            <h2>Sector Overview</h2>
+            {sector_html}
+        </section>
+
+        {render_section(
+            "Intraday Equity — Bullish BUY",
+            intraday_bull,
+            render_intraday_card
+        )}
+
+        {render_section(
+            "Intraday Equity — Bearish SELL",
+            intraday_bear,
+            render_intraday_card
+        )}
+
+        {render_section(
+            "BTST Stock Options — Bullish",
+            option_bull,
+            render_option_card
+        )}
+
+        {render_section(
+            "BTST Stock Options — Bearish",
+            option_bear,
+            render_option_card
+        )}
+
+        <section>
+            <h2>Data Status</h2>
+            <p><b>Intraday:</b> {intraday_status}</p>
+            <p><b>Options:</b> {option_status}</p>
+        </section>
+
+        <div class="footer">
+            <b>Risk and Execution Notice</b><br>
+            1. This report contains signals only. No orders are placed.<br>
+            2. Capital is not configured. Quantity and lot count are not calculated.<br>
+            3. No fixed leverage is assumed. Check actual broker margin separately.<br>
+            4. Option premiums and Greeks require live quote verification.<br>
+            5. Maximum loss figures are per unit, not total contract loss.<br>
+            6. Signals are not guaranteed profitable. Verify prices, liquidity,
+            expiry and risk before making any trading decision.
+        </div>
+
+    </div>
     </body>
     </html>
     """
+
+    return html
