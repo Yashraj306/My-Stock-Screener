@@ -6,6 +6,7 @@ import numpy as np
 import pandas as pd
 import requests
 
+
 # ==============================
 # API / NOTIFICATION SETTINGS
 # ==============================
@@ -17,6 +18,7 @@ EMAIL_TO = os.environ.get("EMAIL_TO", EMAIL_USER)
 UPSTOX_TOKEN = os.environ.get("UPSTOX_TOKEN", "")
 TELEGRAM_TOKEN = os.environ.get("TELEGRAM_TOKEN", "")
 TELEGRAM_CHAT_ID = os.environ.get("TELEGRAM_CHAT_ID", "")
+
 
 # ==============================
 # SCREENER MODE
@@ -38,6 +40,7 @@ INDICES = {
     "BANKNIFTY": "^NSEBANK"
 }
 
+
 # ==============================
 # STOCK LIMITS
 # ==============================
@@ -45,32 +48,44 @@ INDICES = {
 CHAIN_LIMITS = {"PRE": 8, "POST": 6}
 SHOW_LIMITS = {"PRE": 5, "POST": 4}
 
+
 # ==============================
-# RISK MANAGEMENT
+# CONSERVATIVE RISK MANAGEMENT
 # ==============================
 
-CAPITAL = float(os.environ.get("CAPITAL") or 100000)
-RISK_PCT = float(os.environ.get("RISK_PCT") or 1)
+capital_raw = os.environ.get("CAPITAL", "").strip()
+
+CAPITAL = float(capital_raw) if capital_raw else None
+CAPITAL_CONFIGURED = CAPITAL is not None
+
+RISK_PCT = float(os.environ.get("RISK_PCT", "0.5"))
 
 MAX_ALLOCATION_PCT = float(
-    os.environ.get("MAX_ALLOCATION_PCT") or 20
+    os.environ.get("MAX_ALLOCATION_PCT", "10")
 )
 
 MAX_DAILY_LOSS_PCT = float(
-    os.environ.get("MAX_DAILY_LOSS_PCT") or 2
+    os.environ.get("MAX_DAILY_LOSS_PCT", "1")
 )
 
-if CAPITAL <= 0:
-    raise ValueError("CAPITAL must be positive")
+if CAPITAL is not None and (
+    not np.isfinite(CAPITAL) or CAPITAL <= 0
+):
+    raise ValueError("CAPITAL must be a valid positive number")
 
-if not (0 < RISK_PCT <= 5):
+if not np.isfinite(RISK_PCT) or not (0 < RISK_PCT <= 5):
     raise ValueError("RISK_PCT must be between 0 and 5")
 
-if not (0 < MAX_ALLOCATION_PCT <= 100):
+if not np.isfinite(MAX_ALLOCATION_PCT) or not (
+    0 < MAX_ALLOCATION_PCT <= 100
+):
     raise ValueError("Invalid allocation limit")
 
-if not (0 < MAX_DAILY_LOSS_PCT <= 10):
+if not np.isfinite(MAX_DAILY_LOSS_PCT) or not (
+    0 < MAX_DAILY_LOSS_PCT <= 10
+):
     raise ValueError("Invalid daily loss limit")
+
 
 # ==============================
 # SWING TRADING SETTINGS
@@ -102,6 +117,7 @@ SWING = {
     "MAX_ATR_PERCENT": 8,
 }
 
+
 # ==============================
 # STOCK UNIVERSE
 # ==============================
@@ -126,6 +142,7 @@ FALLBACK_STOCKS = [
     "PFC", "RECLTD", "BHEL", "INDIGO",
     "SIEMENS", "ABB"
 ]
+
 
 # ==============================
 # SECTOR CLASSIFICATION
@@ -193,6 +210,7 @@ SECTOR_OF = {
     for stock in stocks
 }
 
+
 # ==============================
 # TIME SETTINGS
 # ==============================
@@ -200,7 +218,9 @@ SECTOR_OF = {
 def ist_now():
     return (
         dt.datetime.now(dt.timezone.utc)
-        .astimezone(dt.timezone(dt.timedelta(hours=5, minutes=30)))
+        .astimezone(
+            dt.timezone(dt.timedelta(hours=5, minutes=30))
+        )
         .replace(tzinfo=None)
     )
 
