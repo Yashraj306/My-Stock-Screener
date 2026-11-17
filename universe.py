@@ -1,60 +1,224 @@
 """
-Complete Universe with Upstox ISIN Instrument Keys & Official F&O Lot Sizes.
-Covers Nifty 50, Bank Nifty, Sensex, and FinNifty constituents.
+NSE equity and stock-F&O universe for My Stock Screener.
+
+Instrument identifiers and F&O lot sizes are loaded from Upstox's official
+daily BOD instrument master. They are never guessed or hardcoded.
+
+Exports retained for compatibility:
+- STOCKS_UNIVERSE: curated NSE equity watchlist
+- ISIN_MAP: symbol -> ISIN
+- INDEX_MAP: index alias -> Upstox instrument_key
+- LOT_SIZES: F&O underlying symbol -> current lot size
+- eq_keys(): equity symbol -> Upstox instrument_key
+
+If the instrument master cannot be downloaded, maps remain empty and
+the screener should skip instruments requiring unavailable identifiers.
 """
 
-INDEX_MAP = {
-    "NIFTY": "NSE_INDEX|Nifty 50",
-    "BANKNIFTY": "NSE_INDEX|Nifty Bank",
-    "FINNIFTY": "NSE_INDEX|Nifty Fin Service",
-    "SENSEX": "BSE_INDEX|SENSEX"
-}
+import gzip
+import json
+import logging
+import os
+from datetime import datetime, timezone
 
-# ISIN mapping required by Upstox V2 API for real-time equity quotes & historical candles
-ISIN_MAP = {
-    "RELIANCE": "INE002A01018", "TCS": "INE467B01029", "HDFCBANK": "INE040A01034",
-    "ICICIBANK": "INE090A01021", "INFY": "INE009A01021", "BHARTIARTL": "INE397D01024",
-    "SBIN": "INE062A01020", "ITC": "INE154A01025", "HINDUNILVR": "INE030A01027",
-    "LT": "INE018A01030", "BAJFINANCE": "INE296A01024", "HCLTECH": "INE860A01027",
-    "MARUTI": "INE585B01010", "SUNPHARMA": "INE044A01036", "ADANIENT": "INE423A01024",
-    "KOTAKBANK": "INE237A01028", "TITAN": "INE280A01028", "NTPC": "INE733E01010",
-    "AXISBANK": "INE238A01034", "POWERGRID": "INE752E01010", "ADANIPORTS": "INE742F01042",
-    "ULTRACEMCO": "INE481G01011", "BAJAJFINSV": "INE918I01026", "WIPRO": "INE075A01022",
-    "M&M": "INE101A01026", "JSWSTEEL": "INE019A01038", "TATASTEEL": "INE081A01020",
-    "TECHM": "INE669C01036", "NESTLEIND": "INE239A01024", "COALINDIA": "INE522F01014",
-    "GRASIM": "INE047A01021", "BPCL": "INE029A01011", "EICHERMOT": "INE066A01021",
-    "CIPLA": "INE059A01026", "DRREDDY": "INE089A01031", "BRITANNIA": "INE216A01030",
-    "APOLLOHOSP": "INE437A01024", "DIVISLAB": "INE361B01024", "HINDALCO": "INE038A01020",
-    "SHRIRAMFIN": "INE721A01013", "TRENT": "INE849A01020", "BEL": "INE263A01024",
-    "HEROMOTOCO": "INE158A01026", "ONGC": "INE213A01029", "ASIANPAINT": "INE021A01026",
-    "INDUSINDBK": "INE095A01012", "BANKBARODA": "INE028A01039", "PNB": "INE160A01022",
-    "CANBK": "INE476A01022", "FEDERALBNK": "INE171A01029", "IDFCFIRSTB": "INE092T01019",
-    "AUBANK": "INE949L01017", "CHOLAFIN": "INE121A01024", "MUTHOOTFIN": "INE414G01012",
-    "PFC": "INE134E01011", "RECLTD": "INE020B01018", "HDFCLIFE": "INE795G01014",
-    "SBILIFE": "INE123W01016", "ICICIPRULI": "INE726G01019", "ICICIGI": "INE765G01017"
-}
+import requests
 
-STOCKS_UNIVERSE = list(ISIN_MAP.keys())
 
-# F&O Lot Sizes for accurate Hedging Max Profit / Max Loss computation
-LOT_SIZES = {
-    "NIFTY": 75, "BANKNIFTY": 30, "FINNIFTY": 65, "SENSEX": 20,
-    "RELIANCE": 250, "TCS": 175, "HDFCBANK": 550, "ICICIBANK": 700, "INFY": 400,
-    "BHARTIARTL": 475, "SBIN": 750, "ITC": 1600, "HINDUNILVR": 300, "LT": 150,
-    "BAJFINANCE": 125, "HCLTECH": 350, "MARUTI": 50, "SUNPHARMA": 350, "ADANIENT": 300,
-    "KOTAKBANK": 400, "TITAN": 175, "NTPC": 1500, "AXISBANK": 625, "POWERGRID": 1800,
-    "ADANIPORTS": 400, "ULTRACEMCO": 50, "BAJAJFINSV": 500, "WIPRO": 1500, "M&M": 175,
-    "JSWSTEEL": 675, "TATASTEEL": 5500, "TECHM": 600, "NESTLEIND": 200, "COALINDIA": 1050,
-    "GRASIM": 250, "BPCL": 1800, "EICHERMOT": 175, "CIPLA": 325, "DRREDDY": 625,
-    "BRITANNIA": 100, "APOLLOHOSP": 125, "DIVISLAB": 100, "HINDALCO": 1400, "SHRIRAMFIN": 300,
-    "TRENT": 100, "BEL": 2850, "HEROMOTOCO": 150, "ONGC": "1925", "ASIANPAINT": 200,
-    "INDUSINDBK": 500, "BANKBARODA": 2925, "PNB": 8000, "CANBK": 6750, "FEDERALBNK": 5000,
-    "IDFCFIRSTB": 7500, "AUBANK": 1000, "CHOLAFIN": 625, "MUTHOOTFIN": 275,
-    "PFC": 1300, "RECLTD": 1000, "HDFCLIFE": 1100, "SBILIFE": 375, "ICICIPRULI": 750, "ICICIGI": 250
-}
+logger = logging.getLogger(__name__)
+
+INSTRUMENT_MASTER_URL = (
+    "https://assets.upstox.com/market-quote/instruments/exchange/complete.json.gz"
+)
+REQUEST_TIMEOUT = int(os.getenv("INSTRUMENT_MASTER_TIMEOUT", "25"))
+
+# Liquid large-cap and actively followed NSE symbols. Availability in
+# Upstox's current instrument master is checked before an instrument is used.
+STOCKS_UNIVERSE = [
+    "ADANIENT", "ADANIPORTS", "APOLLOHOSP", "ASIANPAINT", "AUROPHARMA",
+    "AXISBANK", "BAJAJ-AUTO", "BAJAJFINSV", "BAJFINANCE", "BALKRISIND",
+    "BANDHANBNK", "BANKBARODA", "BEL", "BHARTIARTL", "BOSCHLTD",
+    "BPCL", "BRITANNIA", "CANBK", "CHOLAFIN", "CIPLA",
+    "COALINDIA", "COFORGE", "COLPAL", "DLF", "DIVISLAB",
+    "DRREDDY", "EICHERMOT", "FEDERALBNK", "GAIL", "GRASIM",
+    "HCLTECH", "HDFCBANK", "HDFCLIFE", "HEROMOTOCO", "HINDALCO",
+    "HINDUNILVR", "ICICIBANK", "ICICIGI", "ICICIPRULI", "IDFCFIRSTB",
+    "INDUSINDBK", "INFY", "IOC", "ITC", "JINDALSTEL",
+    "JSWSTEEL", "KOTAKBANK", "LT", "M&M", "MARUTI",
+    "MOTHERSON", "MPHASIS", "MUTHOOTFIN", "NESTLEIND", "NTPC",
+    "ONGC", "PERSISTENT", "PETRONET", "PFC", "PIDILITIND",
+    "PNB", "POWERGRID", "RECLTD", "RELIANCE", "SBILIFE",
+    "SBIN", "SHRIRAMFIN", "SIEMENS", "SUNPHARMA", "TATACONSUM",
+    "TATAMOTORS", "TATASTEEL", "TCS", "TECHM", "TITAN",
+    "TORNTPHARM", "TRENT", "TVSMOTOR", "ULTRACEMCO", "UPL",
+    "VEDL", "WIPRO", "ZYDUSLIFE",
+]
+
+# Filled only from the downloaded official master.
+ISIN_MAP = {}
+INDEX_MAP = {}
+LOT_SIZES = {}
+EQUITY_INSTRUMENT_KEYS = {}
+INSTRUMENT_MASTER_UPDATED_AT = None
+INSTRUMENT_MASTER_STATUS = "NOT_LOADED"
+
+
+def _decode_master(response):
+    """Decode Upstox's gzipped JSON, tolerating already-decoded JSON."""
+    raw = response.content
+    if not raw:
+        raise ValueError("Instrument master response was empty")
+
+    if raw[:2] == b"\x1f\x8b":
+        raw = gzip.decompress(raw)
+
+    parsed = json.loads(raw.decode("utf-8"))
+
+    # Current complete.json.gz is a JSON array. Keep envelope compatibility.
+    if isinstance(parsed, dict):
+        parsed = parsed.get("data") or parsed.get("instruments")
+
+    if not isinstance(parsed, list):
+        raise ValueError("Unexpected Upstox instrument master format")
+
+    return parsed
+
+
+def refresh_instrument_maps(force=False):
+    """
+    Download and parse the current Upstox BOD instrument master.
+
+    Returns True on success. On failure, returns False and leaves existing
+    maps untouched. No guessed ISINs or F&O lot sizes are inserted.
+    """
+    global INSTRUMENT_MASTER_UPDATED_AT, INSTRUMENT_MASTER_STATUS
+
+    try:
+        response = requests.get(
+            INSTRUMENT_MASTER_URL,
+            timeout=REQUEST_TIMEOUT,
+            headers={"Accept": "application/json"},
+        )
+        response.raise_for_status()
+        instruments = _decode_master(response)
+
+        new_isin = {}
+        new_indexes = {}
+        new_lots = {}
+        new_equity_keys = {}
+
+        for item in instruments:
+            if not isinstance(item, dict):
+                continue
+
+            segment = str(item.get("segment") or "").upper()
+            instrument_type = str(item.get("instrument_type") or "").upper()
+            symbol = str(
+                item.get("trading_symbol")
+                or item.get("underlying_symbol")
+                or ""
+            ).strip().upper()
+
+            if segment == "NSE_EQ" and instrument_type in {"EQ", "BE"}:
+                isin = str(item.get("isin") or "").strip().upper()
+                instrument_key = str(item.get("instrument_key") or "").strip()
+
+                if symbol and isin and instrument_key.startswith("NSE_EQ|"):
+                    new_isin[symbol] = isin
+                    new_equity_keys[symbol] = instrument_key
+
+            elif segment == "NSE_INDEX":
+                name = str(item.get("name") or item.get("trading_symbol") or "").upper()
+                instrument_key = str(item.get("instrument_key") or "").strip()
+                if instrument_key.startswith("NSE_INDEX|"):
+                    if "NIFTY BANK" in name or "BANK NIFTY" in name:
+                        new_indexes["BANKNIFTY"] = instrument_key
+                    elif "NIFTY FIN SERVICE" in name or "FIN NIFTY" in name:
+                        new_indexes["FINNIFTY"] = instrument_key
+                    elif "NIFTY 50" in name:
+                        new_indexes["NIFTY"] = instrument_key
+
+            elif segment == "NSE_FO" and instrument_type in {"CE", "PE", "FUT"}:
+                underlying = str(item.get("underlying_symbol") or "").strip().upper()
+                lot = item.get("lot_size")
+                try:
+                    lot = int(lot)
+                except (TypeError, ValueError):
+                    continue
+
+                if underlying and lot > 0:
+                    # Only retain a lot size when current contracts agree.
+                    previous = new_lots.get(underlying)
+                    if previous is None:
+                        new_lots[underlying] = lot
+                    elif previous != lot:
+                        # Different contract generations can temporarily
+                        # coexist. Mark ambiguous rather than guess.
+                        new_lots[underlying] = None
+
+        new_lots = {
+            symbol: lot
+            for symbol, lot in new_lots.items()
+            if isinstance(lot, int) and lot > 0
+        }
+
+        if not new_isin:
+            raise ValueError("No NSE equity ISIN records found in instrument master")
+
+        ISIN_MAP.clear()
+        ISIN_MAP.update(new_isin)
+        INDEX_MAP.clear()
+        INDEX_MAP.update(new_indexes)
+        LOT_SIZES.clear()
+        LOT_SIZES.update(new_lots)
+        EQUITY_INSTRUMENT_KEYS.clear()
+        EQUITY_INSTRUMENT_KEYS.update(new_equity_keys)
+
+        INSTRUMENT_MASTER_UPDATED_AT = datetime.now(timezone.utc).isoformat()
+        INSTRUMENT_MASTER_STATUS = "LOADED"
+        logger.info(
+            "Upstox instrument master loaded: %d NSE equities, %d stock-F&O lot sizes, %d indices",
+            len(ISIN_MAP), len(LOT_SIZES), len(INDEX_MAP),
+        )
+        return True
+
+    except Exception as exc:
+        INSTRUMENT_MASTER_STATUS = "UNAVAILABLE"
+        logger.warning("Upstox instrument master unavailable: %s", exc)
+        return False
+
 
 def eq_keys():
-    mapping = {k: v for k, v in INDEX_MAP.items()}
-    for sym, isin in ISIN_MAP.items():
-        mapping[sym] = f"NSE_EQ|{isin}"
-    return mapping
+    """Return a copy of NSE equity symbol -> Upstox instrument_key mapping."""
+    return dict(EQUITY_INSTRUMENT_KEYS)
+
+
+def get_isin(symbol):
+    """Return the current official ISIN, or None if unavailable."""
+    return ISIN_MAP.get(str(symbol).strip().upper())
+
+
+def get_lot_size(symbol):
+    """Return current official stock-option lot size, or None if unavailable."""
+    return LOT_SIZES.get(str(symbol).strip().upper())
+
+
+def is_fno_stock(symbol):
+    """True only when a current stock-F&O lot size is available."""
+    return get_lot_size(symbol) is not None
+
+
+def get_universe_status():
+    """Return diagnostic metadata about the instrument master."""
+    return {
+        "status": INSTRUMENT_MASTER_STATUS,
+        "updated_at": INSTRUMENT_MASTER_UPDATED_AT,
+        "equity_symbols_loaded": len(ISIN_MAP),
+        "fno_symbols_loaded": len(LOT_SIZES),
+        "indices_loaded": len(INDEX_MAP),
+        "watchlist_symbols": len(STOCKS_UNIVERSE),
+    }
+
+
+# Load once at module import so existing screener imports receive populated
+# maps. If the network is unavailable, the screener safely sees empty maps.
+refresh_instrument_maps()
