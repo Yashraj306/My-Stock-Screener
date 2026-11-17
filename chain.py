@@ -3,24 +3,18 @@ import numpy as np
 import pandas as pd
 
 
-def _number(value, default=np.nan):
-    """Safely convert values to numeric."""
+def _num(value):
     try:
-        result = float(value)
-        return result if np.isfinite(result) else default
+        value = float(value)
+        return value if np.isfinite(value) else None
     except (TypeError, ValueError):
-        return default
+        return None
 
 
 def analyze_chain(df):
-    """
-    Analyze option-chain OI, PCR, Max Pain, support,
-    resistance and ATM IV.
+    """Analyze option-chain OI without inventing missing values."""
 
-    Missing or invalid data is not replaced with fake values.
-    """
-
-    if df is None or not isinstance(df, pd.DataFrame) or df.empty:
+    if not isinstance(df, pd.DataFrame) or df.empty:
         return None
 
     required = ["strike", "ce_oi", "pe_oi"]
@@ -30,18 +24,11 @@ def analyze_chain(df):
 
     data = df.copy()
 
-    # Convert required columns safely.
     for col in required:
         data[col] = pd.to_numeric(data[col], errors="coerce")
 
-    data = data.dropna(subset=["strike"])
+    data = data.dropna(subset=required)
     data = data[data["strike"] > 0].copy()
-
-    if data.empty:
-        return None
-
-    # Missing OI is treated as unavailable, not as real zero OI.
-    data = data.dropna(subset=["ce_oi", "pe_oi"])
 
     if data.empty:
         return None
@@ -51,40 +38,24 @@ def analyze_chain(df):
 
     data = data.sort_values("strike").reset_index(drop=True)
 
-    if data.empty:
-        return None
+    strikes = data["strike"].to_numpy(dtype=float)
+    ce_oi = data["ce_oi"].to_numpy(dtype=float)
+    pe_oi = data["pe_oi"].to_numpy(dtype=float)
 
-    # Spot price.
-    spot = None
-
-    if "spot" in data.columns:
-        spot_values = pd.to_numeric(data["spot"], errors="coerce")
-        valid_spot = spot_values[spot_values > 0]
-
-        if not valid_spot.empty:
-            spot = float(valid_spot.iloc[-1])
-
-    # Total open interest.
-    total_ce_oi = float(data["ce_oi"].sum())
-    total_pe_oi = float(data["pe_oi"].sum())
+    total_ce = float(ce_oi.sum())
+    total_pe = float(pe_oi.sum())
 
     oi_pcr = (
-        round(total_pe_oi / total_ce_oi, 2)
-        if total_ce_oi > 0
-        else None
+        round(total_pe / total_ce, 2)
+        if total_ce > 0 else None
     )
 
-    # Intraday change in OI.
+    # Intraday change in OI is calculated only when previous OI exists.
     intraday_pcr = None
     ce_change = None
     pe_change = None
 
-    previous_columns_available = (
-        "ce_poi" in data.columns
-        and "pe_poi" in data.columns
-    )
-
-    if previous_columns_available:
+    if {"ce_poi", "pe_poi"}.issubset(data.columns):
         data["ce_poi"] = pd.to_numeric(
             data["ce_poi"], errors="coerce"
         )
@@ -92,7 +63,7 @@ def analyze_chain(df):
             data["pe_poi"], errors="coerce"
         )
 
-        if data["ce_poi"].notna().all() and data["pe_poi"].notna().all():
+        if data[["ce_poi", "pe_poi"]].notna().all().all():
             ce_change = float(
                 (data["ce_oi"] - data["ce_poi"]).sum()
             )
@@ -101,80 +72,81 @@ def analyze_chain(df):
             )
 
             if ce_change > 0:
-                intraday_pcr = round(pe_change / ce_change, 2)
+                intraday_pcr = round(
+                    pe_change / ce_change, 2
+                )
 
-    # Max Pain:
-    # Call writer loss = max(settlement - strike, 0) * Call OI
-    # Put writer loss  = max(strike - settlement, 0) * Put OI
-    strikes = data["strike"].to_numpy(dtype=float)
-    ce_oi = data["ce_oi"].to_numpy(dtype=float)
-    pe_oi = data["pe_oi"].to_numpy(dtype=float)
-
+    # Max Pain: minimum combined option-writer payout.
     max_pain = None
 
-    if len(strikes) > 0 and (ce_oi.sum() + pe_oi.sum()) > 0:
-        total_writer_loss = []
+    if total_ce + total_pe > 0:
+        losses = []
 
         for settlement in strikes:
-            call_loss = np.maximum(
-                settlement - strikes, 0
-            ) * ce_oi
+            call_loss = (
+                np.maximum(settlement - strikes, 0) * ce_oi
+            )
+            put_loss = (
+                np.maximum(strikes - settlement, 0) * pe_oi
+            )
 
-            put_loss = np.maximum(
-                strikes - settlement, 0
-            ) * pe_oi
-
-            total_writer_loss.append(
+            losses.append(
                 float(call_loss.sum() + put_loss.sum())
             )
 
-        max_pain = float(
-            strikes[int(np.argmin(total_writer_loss))]
+        max_pain = float(strikes[int(np.argmin(losses))])
+
+    resistance = None
+    support = None
+
+    if total_ce > 0:
+        resistance = float(
+            data.loc[data["ce_oi"].idxmax(), "strike"]
         )
 
-    # Highest Call OI = resistance candidate.
-    # Highest Put OI = support candidate.
-    resistance_strike = None
-    support_strike = None
+    if total_pe > 0:
+        support = float(
+            data.loc[data["pe_oi"].idxmax(), "strike"]
+        )
 
-    if total_ce_oi > 0:
-        idx = data["ce_oi"].idxmax()
-        resistance_strike = float(data.loc[idx, "strike"])
+    spot = None
 
-    if total_pe_oi > 0:
-        idx = data["pe_oi"].idxmax()
-        support_strike = float(data.loc[idx, "strike"])
+    if "spot" in data.columns:
+        spot_values = pd.to_numeric(
+            data["spot"], errors="coerce"
+        )
+        valid_spot = spot_values[spot_values > 0]
 
-    # ATM implied volatility.
+        if not valid_spot.empty:
+            spot = float(valid_spot.iloc[-1])
+
     atm_iv = None
 
     if spot is not None:
-        atm_idx = (data["strike"] - spot).abs().idxmin()
-        atm_row = data.loc[atm_idx]
+        atm_index = (data["strike"] - spot).abs().idxmin()
+        atm_row = data.loc[atm_index]
 
         iv_values = []
 
-        for col in ["ce_iv", "pe_iv"]:
-            if col in data.columns:
-                iv = _number(atm_row.get(col))
+        for column in ["ce_iv", "pe_iv"]:
+            if column in data.columns:
+                iv = _num(atm_row.get(column))
 
-                if np.isfinite(iv) and iv > 0:
+                if iv is not None and iv > 0:
                     iv_values.append(iv)
 
         if iv_values:
             atm_iv = round(
-                float(sum(iv_values) / len(iv_values)), 2
+                sum(iv_values) / len(iv_values), 2
             )
 
-    # Sentiment is only classified when both PCR readings exist.
     sentiment = "INSUFFICIENT_DATA"
-    oi_action = "Option-chain data is incomplete"
+    oi_action = "Insufficient option-chain data"
 
     if oi_pcr is not None and intraday_pcr is not None:
-
         if oi_pcr >= 1.15 and intraday_pcr >= 1.0:
             sentiment = "BULLISH"
-            oi_action = "Put OI dominance with positive OI buildup"
+            oi_action = "Put OI dominance with positive relative buildup"
 
         elif oi_pcr <= 0.80 and intraday_pcr <= 0.85:
             sentiment = "BEARISH"
@@ -190,18 +162,9 @@ def analyze_chain(df):
         "intraday_pcr": intraday_pcr,
         "ce_change_oi": ce_change,
         "pe_change_oi": pe_change,
-        "max_pain": (
-            round(max_pain, 2)
-            if max_pain is not None else None
-        ),
-        "resistance_strike": (
-            round(resistance_strike, 2)
-            if resistance_strike is not None else None
-        ),
-        "support_strike": (
-            round(support_strike, 2)
-            if support_strike is not None else None
-        ),
+        "max_pain": round(max_pain, 2) if max_pain is not None else None,
+        "resistance_strike": round(resistance, 2) if resistance is not None else None,
+        "support_strike": round(support, 2) if support is not None else None,
         "atm_iv": atm_iv,
         "sentiment": sentiment,
         "oi_action": oi_action
