@@ -32,12 +32,12 @@ from config import (
     MAX_BTST_BULLISH,
     MAX_BTST_BEARISH,
 )
-from universe import STOCKS_UNIVERSE, ISIN_MAP, LOT_SIZES
+from universe import STOCKS_UNIVERSE, ISIN_MAP, LOT_SIZES, INDEX_MAP
 from tech import clean_ohlcv, analyze
 from setups import generate_setup
 from options_data import chain_upstox
 from option_strategy import select_option_strategy
-from market import fetch_global_cues, compute_sector_strength, SECTOR_MAP
+from market import fetch_global_cues, compute_sector_strength, fetch_upstox_index_summary, SECTOR_MAP
 from notify import send_alert
 
 
@@ -483,6 +483,15 @@ def run_screener():
         option_bull, option_bear = scan_stock_options(daily_data)
 
     summary = market_summary(daily_data)
+    # Fetch index values from the authenticated Upstox feed, not guessed Yahoo symbols.
+    try:
+        index_snapshot = fetch_upstox_index_summary(TOKEN, INDEX_MAP)
+        for field in ("nifty_spot", "nifty_chg", "bnf_spot", "bnf_chg", "fin_spot", "fin_chg"):
+            if index_snapshot.get(field) is not None:
+                summary[field] = index_snapshot[field]
+    except Exception as exc:
+        logging.warning("Upstox index summary unavailable: %s", exc)
+
     summary["ideas_count"] = (
         len(intraday_bull) + len(intraday_bear)
         + len(option_bull) + len(option_bear)
