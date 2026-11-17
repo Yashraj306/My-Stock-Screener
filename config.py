@@ -1,8 +1,10 @@
 """
 Central configuration for My Stock Screener.
 
-Capital is intentionally unset unless CAPITAL is explicitly configured.
-This project generates signals only; it never places orders.
+- MODE is read from the GitHub Actions environment.
+- Capital remains unset unless CAPITAL is explicitly provided.
+- Position sizing is disabled when capital is not configured.
+- This project is signal-only and never places orders.
 """
 
 import os
@@ -13,8 +15,6 @@ from zoneinfo import ZoneInfo
 # ---------------------------------------------------------------------
 # Runtime mode
 # ---------------------------------------------------------------------
-# GitHub Actions sets MODE=MORNING at 9:00 AM IST and MODE=BTST at 2:00 PM.
-# Manual runs can select either mode through workflow_dispatch.
 MODE = os.getenv("MODE", "SWING").strip().upper()
 
 VALID_MODES = {"MORNING", "BTST", "SWING", "INTRADAY"}
@@ -39,16 +39,15 @@ def _read_positive_float(name):
 CAPITAL = _read_positive_float("CAPITAL")
 CAPITAL_CONFIGURED = CAPITAL is not None
 
-# Conservative defaults. These are risk-policy percentages, not a
-# substitute for broker margin data or a guarantee of maximum loss.
-RISK_PCT = 0.005                 # 0.5% risk budget per trade
-DAILY_LOSS_LIMIT_PCT = 0.01      # 1.0% daily loss limit
-MAX_ALLOCATION_PCT = 0.10        # 10% maximum allocation reference
+RISK_PCT = 0.005
+DAILY_LOSS_LIMIT_PCT = 0.01
 
-# Do not calculate quantity or lot size when capital is not configured.
+# Compatibility alias for modules using the older constant name.
+MAX_DAILY_LOSS_PCT = DAILY_LOSS_LIMIT_PCT
+
+MAX_ALLOCATION_PCT = 0.10
+
 ALLOW_POSITION_SIZING = CAPITAL_CONFIGURED
-
-# Signal-only mode: no order placement is implemented or permitted.
 EXECUTION_MODE = "SIGNAL_ONLY"
 AUTO_TRADING_ENABLED = False
 
@@ -61,7 +60,6 @@ MAX_INTRADAY_SELL = 5
 MAX_BTST_BULLISH = 5
 MAX_BTST_BEARISH = 5
 
-# These are maximum shortlist sizes, not guaranteed signal counts.
 MIN_RISK_REWARD = 1.5
 MIN_ADX = 18
 MIN_VOLUME_RATIO = 1.2
@@ -123,15 +121,12 @@ IST = ZoneInfo("Asia/Kolkata")
 
 
 def ist_now():
-    """Return the current timezone-aware datetime in India Standard Time."""
+    """Return current timezone-aware datetime in India Standard Time."""
     return datetime.now(IST)
 
 
 def vol_factor(volume, average_volume):
-    """
-    Return current volume divided by average volume.
-    Return None when either input is missing or invalid.
-    """
+    """Return volume / average_volume, or None for unavailable/invalid data."""
     try:
         current = float(volume)
         average = float(average_volume)
@@ -143,14 +138,12 @@ def vol_factor(volume, average_volume):
 
 
 def capital_status():
-    """Human-readable capital configuration status."""
-    if CAPITAL_CONFIGURED:
-        return "CONFIGURED"
-    return "NOT_CONFIGURED"
+    """Return a readable capital configuration status."""
+    return "CONFIGURED" if CAPITAL_CONFIGURED else "NOT_CONFIGURED"
 
 
 def sizing_status():
-    """Sizing is disabled until the user explicitly configures capital."""
+    """Do not size positions until capital is explicitly configured."""
     if not CAPITAL_CONFIGURED:
         return "CAPITAL_NOT_CONFIGURED"
     return "CAPITAL_CONFIGURED_REQUIRES_BROKER_MARGIN_CHECK"
