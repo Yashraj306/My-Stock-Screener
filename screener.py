@@ -1,639 +1,872 @@
 
 import os
+import math
 import logging
 import datetime as dt
 from concurrent.futures import ThreadPoolExecutor
+from urllib.parse import quote
 
+import requests
 import pandas as pd
-import yfinance as yf
+import numpy as np
 
 from config import (
     MODE,
     CAPITAL,
     CAPITAL_CONFIGURED,
     RISK_PCT,
-    MAX_ALLOCATION_PCT
+    MAX_ALLOCATION_PCT,
+    MAX_DAILY_LOSS_PCT,
+    ist_now
 )
 
-from universe import STOCKS_UNIVERSE
+from universe import (
+    STOCKS_UNIVERSE,
+    ISIN_MAP,
+    LOT_SIZES,
+    eq_keys
+)
+
 from tech import clean_ohlcv, analyze
 from setups import generate_setup
+from options_data import chain_upstox
+from option_strategy import select_option_strategy
+
 from market import (
     fetch_global_cues,
     compute_sector_strength,
     compute_point_contributors,
     SECTOR_MAP
 )
+
 from notify import send_alert
 
 
+# ============================================================
+# CONFIGURATION
+# ============================================================
+
 logging.basicConfig(
     level=logging.INFO,
-    format="%(asctime)s - %(levelname)s - %(message)s"
+    format="%(asctime)s %(levelname)s %(message)s"
 )
 
-UPSTOX_TOKEN = os.getenv("UPSTOX_TOKEN", "").strip()
+TOKEN = os.getenv("UPSTOX_TOKEN", "").strip()
+
+BASE_URL = "https://api.upstox.com"
+
+INTRADAY_INTERVAL = "5"
+MAX_SIGNALS_PER_SIDE = 5
+
+# Capital intentionally remains undefined.
+# No quantity or leverage is assumed.
+AUTO_EXECUTION = False
+
+IST = dt.timezone(dt.timedelta(hours=5, minutes=30))
 
 
-def fetch_yahoo_data():
-    """
-    Fetch one year of daily OHLCV data.
-    Daily data is used for Swing / BTST only.
-    """
+def now_ist():
+    return dt.datetime.now(IST)
 
-    tickers = {
-        "NIFTY": "^NSEI",
-        "BANKNIFTY": "^NSEBANK",
-        "FINNIFTY": "NIFTY_FIN_SERVICE.NS",
-        "SENSEX": "^BSESN"
+
+def headers():
+    if not TOKEN:
+        return None
+
+    return {
+        "Accept": "application/json",
+        "Authorization": f"Bearer {TOKEN}"
     }
 
-    for symbol in STOCKS_UNIVERSE:
-        tickers[symbol] = f"{symbol}.NS"
+
+def safe_float(value):
+    try:
+        value = float(value)
+        return value if math.isfinite(value) else None
+    except (TypeError, ValueError):
+        return None
+
+
+# ============================================================
+# UPSTOX DATA
+# ============================================================
+
+def fetch_upstox_candles(symbol, interval="day"):
+    """
+    Fetch daily historical candles using Upstox V3.
+    """
+
+    if not TOKEN:
+        return None
+
+    isin = ISIN_MAP.get(symbol)
+
+    if not isin:
+        return None
+
+    instrument_key = f"NSE_EQ|{isin}"
+
+    today = now_ist().date()
+    from_date = today - dt.timedelta(days=450)
+
+    url = (
+        f"{BASE_URL}/v3/historical-candle/"
+        f"{quote(instrument_key, safe='')}/"
+        f"days/1/{today.isoformat()}/{from_date.isoformat()}"
+    )
 
     try:
-        raw = yf.download(
-            list(tickers.values()),
-            period="1y",
-            interval="1d",
-            group_by="ticker",
-            auto_adjust=False,
-            threads=True,
-            progress=False,
-            timeout=30
+        response = requests.get(
+            url,
+            headers=headers(),
+            timeout=15
         )
+
+        if response.status_code != 200:
+            return None
+
+        candles = (
+            response.json()
+            .get("data", {})
+            .get("candles", [])
+        )
+
+        if not candles:
+            return None
+
+        frame = pd.DataFrame(
+            candles,
+            columns=[
+                "Date", "Open", "High", "Low",
+                "Close", "Volume", "OI"
+            ]
+        )
+
+        frame["Date"] = pd.to_datetime(
+            frame["Date"], errors="coerce"
+        )
+
+        frame = frame.sort_values("Date")
+        frame = clean_ohlcv(frame)
+
+        if len(frame) < 200:
+            return None
+
+        return frame.reset_index(drop=True)
+
     except Exception as exc:
-        logging.error("Yahoo download failed: %s", exc)
-        return {}
+        logging.warning(
+            "Daily data error %s: %s", symbol, exc
+        )
+        return None
 
+
+def fetch_intraday_candles(symbol):
+    """
+    Fetch current-session 5-minute candles from Upstox V3.
+    """
+
+    if not TOKEN:
+        return None
+
+    isin = ISIN_MAP.get(symbol)
+
+    if not isin:
+        return None
+
+    instrument_key = f"NSE_EQ|{isin}"
+
+    url = (
+        f"{BASE_URL}/v3/historical-candle/intraday/"
+        f"{quote(instrument_key, safe='')}/"
+        f"minutes/{INTRADAY_INTERVAL}"
+    )
+
+    try:
+        response = requests.get(
+            url,
+            headers=headers(),
+            timeout=12
+        )
+
+        if response.status_code != 200:
+            return None
+
+        candles = (
+            response.json()
+            .get("data", {})
+            .get("candles", [])
+        )
+
+        if not candles:
+            return None
+
+        frame = pd.DataFrame(
+            candles,
+            columns=[
+                "Date", "Open", "High", "Low",
+                "Close", "Volume", "OI"
+            ]
+        )
+
+        frame["Date"] = pd.to_datetime(
+            frame["Date"], errors="coerce"
+        )
+
+        frame = frame.sort_values("Date")
+        frame = clean_ohlcv(frame)
+
+        if len(frame) < 25:
+            return None
+
+        # Ignore candles from a different trading date.
+        today = now_ist().date()
+
+        frame = frame[
+            frame["Date"].dt.date == today
+        ]
+
+        if len(frame) < 20:
+            return None
+
+        return frame.reset_index(drop=True)
+
+    except Exception as exc:
+        logging.warning(
+            "Intraday data error %s: %s",
+            symbol,
+            exc
+        )
+        return None
+
+
+def fetch_daily_universe():
     result = {}
-    multi = isinstance(raw.columns, pd.MultiIndex)
 
-    for symbol, ticker in tickers.items():
-        try:
-            if multi:
-                if ticker not in raw.columns.get_level_values(0):
-                    continue
-                frame = raw[ticker].copy()
-            else:
-                frame = raw.copy()
+    with ThreadPoolExecutor(max_workers=8) as executor:
+        symbols = list(STOCKS_UNIVERSE)
 
-            if frame.empty:
-                continue
-
-            frame = frame.dropna(how="all")
-            frame = frame.reset_index()
-
-            rename = {}
-            for col in frame.columns:
-                name = str(col).strip().lower()
-
-                if name == "date" or name == "datetime":
-                    rename[col] = "Date"
-                elif name == "open":
-                    rename[col] = "Open"
-                elif name == "high":
-                    rename[col] = "High"
-                elif name == "low":
-                    rename[col] = "Low"
-                elif name == "close":
-                    rename[col] = "Close"
-                elif name == "volume":
-                    rename[col] = "Volume"
-
-            frame = frame.rename(columns=rename)
-
-            cleaned = clean_ohlcv(frame)
-
-            if len(cleaned) >= 200:
-                result[symbol] = cleaned
-
-        except Exception as exc:
-            logging.warning(
-                "Could not process %s: %s", symbol, exc
-            )
+        for symbol, frame in zip(
+            symbols,
+            executor.map(fetch_upstox_candles, symbols)
+        ):
+            if frame is not None:
+                result[symbol] = frame
 
     return result
 
 
-def fetch_upstox_data():
+def fetch_intraday_universe():
+    result = {}
+
+    with ThreadPoolExecutor(max_workers=8) as executor:
+        symbols = list(STOCKS_UNIVERSE)
+
+        for symbol, frame in zip(
+            symbols,
+            executor.map(fetch_intraday_candles, symbols)
+        ):
+            if frame is not None:
+                result[symbol] = frame
+
+    return result
+
+
+# ============================================================
+# INTRADAY EQUITY ENGINE
+# ============================================================
+
+def intraday_analysis(frame):
     """
-    Fetch daily historical candles from Upstox.
-    Returns an empty dictionary if token/data is unavailable.
-    """
-
-    if not UPSTOX_TOKEN:
-        return {}
-
-    try:
-        from universe import eq_keys
-        import requests
-
-        key_map = eq_keys()
-        headers = {
-            "Accept": "application/json",
-            "Authorization": f"Bearer {UPSTOX_TOKEN}"
-        }
-
-        today = dt.date.today()
-        start = today - dt.timedelta(days=420)
-
-        def fetch_one(item):
-            symbol, instrument_key = item
-
-            url = (
-                "https://api.upstox.com/v2/historical-candle/"
-                f"{requests.utils.quote(instrument_key, safe='')}"
-                f"/day/{today.isoformat()}/{start.isoformat()}"
-            )
-
-            try:
-                response = requests.get(
-                    url,
-                    headers=headers,
-                    timeout=15
-                )
-
-                if response.status_code != 200:
-                    return symbol, None
-
-                candles = (
-                    response.json()
-                    .get("data", {})
-                    .get("candles", [])
-                )
-
-                if not candles:
-                    return symbol, None
-
-                frame = pd.DataFrame(
-                    candles,
-                    columns=[
-                        "Date", "Open", "High", "Low",
-                        "Close", "Volume", "OI"
-                    ]
-                )
-
-                frame = frame.iloc[::-1].reset_index(drop=True)
-                frame = clean_ohlcv(frame)
-
-                if len(frame) < 200:
-                    return symbol, None
-
-                return symbol, frame
-
-            except Exception:
-                return symbol, None
-
-        output = {}
-
-        with ThreadPoolExecutor(max_workers=8) as executor:
-            for symbol, frame in executor.map(
-                fetch_one, key_map.items()
-            ):
-                if frame is not None:
-                    output[symbol] = frame
-
-        return output
-
-    except Exception as exc:
-        logging.warning("Upstox fetch failed: %s", exc)
-        return {}
-
-
-def batch_fetch_candles():
-    """
-    Prefer Upstox historical data.
-    Yahoo Finance is used only as a data-source fallback.
+    Intraday indicators calculated only from 5-minute candles.
     """
 
-    upstox = fetch_upstox_data()
+    if frame is None or len(frame) < 25:
+        return None
 
-    if len(upstox) >= 10:
-        logging.info(
-            "Using Upstox daily historical data: %s instruments",
-            len(upstox)
-        )
-        return upstox, "Upstox Historical Daily"
+    close = frame["Close"]
+    high = frame["High"]
+    low = frame["Low"]
+    volume = frame["Volume"]
 
-    logging.warning(
-        "Upstox data unavailable or incomplete. "
-        "Trying Yahoo Finance daily data."
+    ema9 = close.ewm(
+        span=9, adjust=False
+    ).mean()
+
+    ema20 = close.ewm(
+        span=20, adjust=False
+    ).mean()
+
+    typical = (high + low + close) / 3
+
+    cumulative_volume = volume.cumsum()
+
+    if cumulative_volume.iloc[-1] <= 0:
+        return None
+
+    vwap = (
+        (typical * volume).cumsum()
+        / cumulative_volume
     )
 
-    yahoo = fetch_yahoo_data()
+    previous_volume = volume.iloc[-21:-1]
 
-    if yahoo:
-        return yahoo, "Yahoo Finance Daily"
-
-    return {}, "NO DATA"
-
-
-def safe_change(frame):
-    if frame is None or len(frame) < 2:
+    if len(previous_volume) < 20:
         return None
 
-    previous = float(frame["Close"].iloc[-2])
-    current = float(frame["Close"].iloc[-1])
+    average_volume = previous_volume.mean()
 
-    if previous <= 0:
+    if average_volume <= 0:
         return None
 
-    return round((current / previous - 1) * 100, 2)
+    volume_ratio = (
+        volume.iloc[-1] / average_volume
+    )
 
+    tr = pd.concat(
+        [
+            high - low,
+            (high - close.shift()).abs(),
+            (low - close.shift()).abs()
+        ],
+        axis=1
+    ).max(axis=1)
 
-def safe_price(frame):
-    if frame is None or frame.empty:
+    atr_value = tr.rolling(14).mean().iloc[-1]
+
+    if pd.isna(atr_value) or atr_value <= 0:
         return None
 
-    value = float(frame["Close"].iloc[-1])
+    delta = close.diff()
 
-    if value <= 0:
+    gain = delta.clip(lower=0).rolling(14).mean()
+    loss = (-delta.clip(upper=0)).rolling(14).mean()
+
+    rs = gain / loss.replace(0, np.nan)
+
+    rsi_series = 100 - (100 / (1 + rs))
+
+    rsi_value = rsi_series.iloc[-1]
+
+    if pd.isna(rsi_value):
         return None
 
-    return round(value, 2)
+    return {
+        "price": float(close.iloc[-1]),
+        "ema9": float(ema9.iloc[-1]),
+        "ema20": float(ema20.iloc[-1]),
+        "vwap": float(vwap.iloc[-1]),
+        "rsi": float(rsi_value),
+        "atr": float(atr_value),
+        "volume_ratio": float(volume_ratio)
+    }
 
 
-def make_candidate(symbol, frame):
-    """
-    Convert a valid daily Swing setup into report format.
-    No option premium or fake option-chain data is generated.
-    """
-
-    setup = generate_setup(frame)
-
-    if not setup:
-        return None
-
-    tech = analyze(frame)
+def generate_intraday_signal(symbol, frame):
+    tech = intraday_analysis(frame)
 
     if not tech:
         return None
 
-    price = safe_price(frame)
+    price = tech["price"]
+    ema9 = tech["ema9"]
+    ema20 = tech["ema20"]
+    vwap = tech["vwap"]
+    rsi_value = tech["rsi"]
+    atr_value = tech["atr"]
+    volume_ratio = tech["volume_ratio"]
 
-    if price is None:
+    if price <= 0 or atr_value <= 0:
         return None
 
-    signal = setup["signal"]
+    if volume_ratio < 1.2:
+        return None
 
-    sector = SECTOR_MAP.get(symbol, "OTHER")
+    side = None
 
-    checks = {
-        "trend": (
-            price > tech["ema20"] > tech["ema50"] > tech["ema200"]
-            if signal == "BUY"
-            else price < tech["ema20"] < tech["ema50"] < tech["ema200"]
-        ),
-        "rsi": (
-            50 <= tech["rsi"] <= 72
-            if signal == "BUY"
-            else 28 <= tech["rsi"] <= 50
-        ),
-        "adx": tech["adx"] >= 18,
-        "volume": (
-            tech["vr"] is not None and tech["vr"] >= 1.2
-        ),
-        "capital": CAPITAL_CONFIGURED
-    }
+    if (
+        price > ema9 > ema20
+        and price > vwap
+        and 52 <= rsi_value <= 70
+    ):
+        side = "BUY"
 
-    passed = sum(bool(value) for value in checks.values())
+    elif (
+        price < ema9 < ema20
+        and price < vwap
+        and 30 <= rsi_value <= 48
+    ):
+        side = "SELL"
 
-    grade = "A" if passed >= 4 else "B"
+    if side is None:
+        return None
 
-    reasons = [
-        f"Daily trend: {signal}",
-        f"RSI: {tech['rsi']:.1f}",
-        f"ADX: {tech['adx']:.1f}",
-        f"EMA20: {tech['ema20']:.2f}",
-        f"EMA50: {tech['ema50']:.2f}",
-        f"EMA200: {tech['ema200']:.2f}",
-        f"Volume ratio: {tech['vr']}"
-    ]
+    risk = 1.5 * atr_value
 
-    if not CAPITAL_CONFIGURED:
-        reasons.append(
-            "Capital not configured. Quantity is zero."
-        )
+    if side == "BUY":
+        stop = price - risk
+        target1 = price + (1.5 * risk)
+        target2 = price + (2.5 * risk)
+        action = "BUY (LONG)"
+    else:
+        stop = price + risk
+        target1 = price - (1.5 * risk)
+        target2 = price - (2.5 * risk)
+        action = "SELL (SHORT)"
 
     return {
         "symbol": symbol,
-        "side": "BUY" if signal == "BUY" else "SELL",
-        "setup_kind": "Swing / BTST Daily Setup",
-        "grade": grade,
-        "sector": sector,
-        "close": price,
-        "change_pct": safe_change(frame),
-        "rsi": setup["rsi"],
-        "vol_ratio": setup["volume_ratio"],
-        "atr_pct": setup["atr_pct"],
-        "entry": setup["entry"],
-        "stop_loss": setup["stop_loss"],
-        "target_1": setup["target_1"],
-        "target_2": setup["target_2"],
-        "rr": setup["rr_ratio"],
-        "qty": setup["qty"],
-        "capital_needed": setup["capital_needed"],
-        "risk_amount": setup["risk_amount"],
-        "sizing_status": setup["sizing_status"],
-        "trade_execution": "SIGNAL_ONLY",
-        "checks": checks,
-        "reasons": reasons,
-        "opt_chain": None,
-        "strike": None,
-        "hedge_plan": None
+        "action": action,
+        "sector": SECTOR_MAP.get(symbol, "OTHER"),
+        "index_tag": "NSE",
+        "entry": round(price, 2),
+        "stop_loss": round(stop, 2),
+        "target_1": round(target1, 2),
+        "target_2": round(target2, 2),
+        "rsi": round(rsi_value, 1),
+        "volume_ratio": round(volume_ratio, 2),
+        "vwap": round(vwap, 2),
+        "quantity": None,
+        "leverage": "NOT ASSUMED",
+        "capital_configured": False,
+        "execution": "SIGNAL_ONLY"
     }
 
 
-def run_screener():
-    logging.info("Starting conservative %s screener", MODE)
-
-    candles, data_source = batch_fetch_candles()
-
-    if not candles:
-        logging.error("No valid market data. No signals generated.")
-
-        payload = {
-            "mode": MODE,
-            "summary": {
-                "data_source": data_source,
-                "ideas_count": 0,
-                "best_rated": "None",
-                "breadth_tone": "UNKNOWN",
-                "breadth_ratio": "Unavailable",
-                "above_ema20": 0,
-                "above_ema50": 0,
-                "nifty_spot": "Unavailable",
-                "nifty_chg": "Unavailable",
-                "nifty_rsi": "Unavailable",
-                "bnf_spot": "Unavailable",
-                "bnf_chg": "Unavailable",
-                "fin_spot": "Unavailable",
-                "fin_chg": "Unavailable",
-                "vix_alert": "No valid market data"
-            },
-            "global_cues": [],
-            "index_view": {},
-            "index_trades": [],
-            "sectors": [],
-            "setups": {
-                "bullish": [],
-                "bearish": []
-            },
-            "equity_intraday": [],
-            "execution": "SIGNAL_ONLY"
-        }
-
-        send_alert(payload)
-        return payload
-
-    # Market index summary
-    nifty = candles.get("NIFTY")
-    bank = candles.get("BANKNIFTY")
-    fin = candles.get("FINNIFTY")
-
-    nifty_price = safe_price(nifty)
-    bank_price = safe_price(bank)
-    fin_price = safe_price(fin)
-
-    nifty_tech = analyze(nifty) if nifty is not None else {}
-    bank_tech = analyze(bank) if bank is not None else {}
-
-    # Breadth
-    advances = 0
-    declines = 0
-    above20 = 0
-    above50 = 0
-    scanned = 0
-
-    for symbol in STOCKS_UNIVERSE:
-        frame = candles.get(symbol)
-
-        if frame is None or len(frame) < 200:
-            continue
-
-        scanned += 1
-
-        change = safe_change(frame)
-
-        if change is not None and change > 0:
-            advances += 1
-        elif change is not None and change < 0:
-            declines += 1
-
-        tech = analyze(frame)
-
-        if tech:
-            price = tech["price"]
-
-            if price > tech["ema20"]:
-                above20 += 1
-
-            if price > tech["ema50"]:
-                above50 += 1
-
-    if advances > declines * 1.25:
-        breadth = "BULLISH"
-    elif declines > advances * 1.25:
-        breadth = "BEARISH"
-    else:
-        breadth = "MIXED"
-
-    # Stock setup scan
+def scan_intraday(intraday_data):
     bullish = []
     bearish = []
 
-    for symbol in STOCKS_UNIVERSE:
-        frame = candles.get(symbol)
+    for symbol, frame in intraday_data.items():
+        try:
+            signal = generate_intraday_signal(
+                symbol, frame
+            )
 
-        if frame is None or len(frame) < 200:
+            if not signal:
+                continue
+
+            if signal["action"] == "BUY (LONG)":
+                bullish.append(signal)
+            else:
+                bearish.append(signal)
+
+        except Exception as exc:
+            logging.warning(
+                "Intraday scan error %s: %s",
+                symbol,
+                exc
+            )
+
+    bullish.sort(
+        key=lambda x: (
+            x["volume_ratio"],
+            x["rsi"]
+        ),
+        reverse=True
+    )
+
+    bearish.sort(
+        key=lambda x: (
+            x["volume_ratio"],
+            -x["rsi"]
+        ),
+        reverse=True
+    )
+
+    return (
+        bullish[:MAX_SIGNALS_PER_SIDE],
+        bearish[:MAX_SIGNALS_PER_SIDE]
+    )
+
+
+# ============================================================
+# BTST STOCK OPTION ENGINE
+# ============================================================
+
+def make_option_candidate(symbol, frame, setup):
+    """
+    Select real option strategy using live Upstox option data.
+    """
+
+    if not setup:
+        return None
+
+    try:
+        chain_result = chain_upstox(symbol)
+
+        if not chain_result:
+            return None
+
+        option_plan = select_option_strategy(
+            chain_result,
+            setup["signal"]
+        )
+
+        if not option_plan:
+            return None
+
+        tech = analyze(frame)
+
+        if not tech:
+            return None
+
+        price = float(setup["entry"])
+
+        signal = setup["signal"]
+
+        side = (
+            "CALL BUY / SPREAD"
+            if signal == "BUY"
+            else "PUT BUY / SPREAD"
+        )
+
+        strategy_name = option_plan.get(
+            "strategy", "UNKNOWN"
+        )
+
+        reasons = [
+            f"Daily signal: {signal}",
+            f"RSI: {setup['rsi']}",
+            f"ADX: {setup['adx']}",
+            f"Volume ratio: {setup['volume_ratio']}",
+            f"Option strategy: {strategy_name}",
+            f"Expiry: {option_plan.get('expiry')}",
+            f"Capital configured: {CAPITAL_CONFIGURED}",
+            "Quantity not calculated because capital is undefined",
+            "Signal only. No order placement."
+        ]
+
+        if strategy_name == "OPTION_BUYING":
+            entry = option_plan["entry_premium"]
+            max_loss = option_plan["maximum_loss_per_unit"]
+            target1 = entry * 1.5
+            target2 = entry * 2.0
+        else:
+            entry = option_plan["net_debit_per_unit"]
+            max_loss = option_plan["maximum_loss_per_unit"]
+            target1 = entry + (
+                option_plan["maximum_profit_per_unit"] * 0.5
+            )
+            target2 = (
+                entry + option_plan["maximum_profit_per_unit"]
+            )
+
+        if entry <= 0 or max_loss <= 0:
+            return None
+
+        return {
+            "symbol": symbol,
+            "side": side,
+            "setup_kind": "BTST STOCK OPTIONS",
+            "grade": "A",
+            "sector": SECTOR_MAP.get(symbol, "OTHER"),
+            "close": round(price, 2),
+            "change_pct": 0.0,
+            "rsi": setup["rsi"],
+            "vol_ratio": setup["volume_ratio"],
+            "atr_pct": setup["atr_pct"],
+            "entry": round(entry, 2),
+            "stop_loss": round(entry * 0.70, 2),
+            "target_1": round(target1, 2),
+            "target_2": round(target2, 2),
+            "rr": 1.5,
+            "qty": 0,
+            "capital_needed": None,
+            "risk_amount": None,
+            "checks": {
+                "trend": True,
+                "level": False,
+                "volume": True,
+                "options": True,
+                "sector": False,
+                "rs": False
+            },
+            "reasons": reasons,
+            "opt_chain": {
+                "expiry": option_plan.get("expiry"),
+                "strategy": strategy_name,
+                "maximum_loss_per_unit": max_loss
+            },
+            "strike": None,
+            "hedge_plan": None,
+            "option_plan": option_plan,
+            "execution": "SIGNAL_ONLY"
+        }
+
+    except Exception as exc:
+        logging.warning(
+            "Option analysis failed for %s: %s",
+            symbol,
+            exc
+        )
+        return None
+
+
+def scan_stock_options(daily_data):
+    bullish = []
+    bearish = []
+
+    for symbol, frame in daily_data.items():
+
+        # Only symbols with an official lot-size entry
+        # are considered for the stock-option universe.
+        if symbol not in LOT_SIZES:
             continue
 
         try:
-            candidate = make_candidate(symbol, frame)
+            setup = generate_setup(frame)
 
-            if candidate is None:
+            if not setup:
                 continue
 
-            if candidate["side"] == "BUY":
+            candidate = make_option_candidate(
+                symbol,
+                frame,
+                setup
+            )
+
+            if not candidate:
+                continue
+
+            if setup["signal"] == "BUY":
                 bullish.append(candidate)
             else:
                 bearish.append(candidate)
 
         except Exception as exc:
             logging.warning(
-                "Setup failed for %s: %s", symbol, exc
+                "BTST option scan error %s: %s",
+                symbol,
+                exc
             )
 
     bullish.sort(
-        key=lambda item: (
-            item["grade"],
-            item["rsi"]
+        key=lambda x: (
+            x["grade"],
+            x["rsi"],
+            x["vol_ratio"]
         ),
         reverse=True
     )
 
     bearish.sort(
-        key=lambda item: (
-            item["grade"],
-            -item["rsi"]
+        key=lambda x: (
+            x["grade"],
+            -x["rsi"],
+            x["vol_ratio"]
         ),
         reverse=True
     )
 
-    bullish = bullish[:10]
-    bearish = bearish[:10]
+    return (
+        bullish[:MAX_SIGNALS_PER_SIDE],
+        bearish[:MAX_SIGNALS_PER_SIDE]
+    )
 
-    # Global and sector context
+
+# ============================================================
+# MARKET SUMMARY
+# ============================================================
+
+def market_summary(daily_data):
+    advances = 0
+    declines = 0
+    above20 = 0
+    above50 = 0
+    count = 0
+
+    for symbol, frame in daily_data.items():
+        if len(frame) < 200:
+            continue
+
+        count += 1
+
+        current = float(frame["Close"].iloc[-1])
+        previous = float(frame["Close"].iloc[-2])
+
+        if previous > 0:
+            change = (current / previous - 1) * 100
+
+            if change > 0:
+                advances += 1
+            elif change < 0:
+                declines += 1
+
+        tech = analyze(frame)
+
+        if not tech:
+            continue
+
+        if tech["price"] > tech["ema20"]:
+            above20 += 1
+
+        if tech["price"] > tech["ema50"]:
+            above50 += 1
+
+    breadth = (
+        "BULLISH"
+        if advances > declines
+        else "BEARISH"
+        if declines > advances
+        else "MIXED"
+    )
+
+    return {
+        "data_source": "UPSTOX V3",
+        "breadth_ratio": (
+            f"{advances} Adv / {declines} Dec"
+        ),
+        "above_ema20": (
+            round(above20 / count * 100)
+            if count else 0
+        ),
+        "above_ema50": (
+            round(above50 / count * 100)
+            if count else 0
+        ),
+        "breadth_tone": breadth,
+        "ideas_count": 0,
+        "best_rated": "None",
+        "nifty_spot": "Unavailable",
+        "nifty_chg": "Unavailable",
+        "bnf_spot": "Unavailable",
+        "bnf_chg": "Unavailable",
+        "fin_spot": "Unavailable",
+        "fin_chg": "Unavailable",
+        "vix_alert": None
+    }
+
+
+# ============================================================
+# MAIN SCREENER
+# ============================================================
+
+def run_screener():
+
+    logging.info("Starting Upstox Conservative Screener")
+
+    if not TOKEN:
+        logging.error(
+            "UPSTOX_TOKEN missing. No market signals generated."
+        )
+
+        return None
+
+    daily_data = fetch_daily_universe()
+
+    if not daily_data:
+        logging.error(
+            "No valid daily candles. Screener stopped."
+        )
+        return None
+
+    intraday_data = fetch_intraday_universe()
+
+    logging.info(
+        "Daily instruments: %s | Intraday instruments: %s",
+        len(daily_data),
+        len(intraday_data)
+    )
+
+    # Intraday equity
+    intraday_bull, intraday_bear = scan_intraday(
+        intraday_data
+    )
+
+    equity_intraday = (
+        intraday_bull + intraday_bear
+    )
+
+    # BTST stock options
+    option_bull, option_bear = scan_stock_options(
+        daily_data
+    )
+
+    summary = market_summary(daily_data)
+
+    total_ideas = (
+        len(intraday_bull)
+        + len(intraday_bear)
+        + len(option_bull)
+        + len(option_bear)
+    )
+
+    summary["ideas_count"] = total_ideas
+
+    if option_bull:
+        summary["best_rated"] = (
+            option_bull[0]["symbol"]
+        )
+
     try:
         global_cues = fetch_global_cues() or []
     except Exception:
         global_cues = []
 
     try:
-        sectors = compute_sector_strength(candles) or []
+        sectors = compute_sector_strength(
+            daily_data
+        ) or []
     except Exception:
         sectors = []
 
-    contributors = {}
-
-    if nifty_price is not None and bank_price is not None:
-        try:
-            contributors = compute_point_contributors(
-                candles,
-                nifty_price,
-                bank_price
-            ) or {}
-        except Exception:
-            contributors = {}
-
-    def index_info(name, frame, tech):
-        if frame is None or tech is None:
-            return None
-
-        price = safe_price(frame)
-        change = safe_change(frame)
-
-        if price is None:
-            return None
-
-        return {
-            "spot": f"{price:,.2f}",
-            "chg": (
-                f"{change:+.2f}%"
-                if change is not None else "Unavailable"
-            ),
-            "rsi": round(tech.get("rsi", 0), 1),
-            "lifting": contributors.get(
-                name, {}
-            ).get("lifting", []),
-            "dragging": contributors.get(
-                name, {}
-            ).get("dragging", [])
-        }
-
-    index_view = {}
-
-    info = index_info("NIFTY", nifty, nifty_tech)
-    if info:
-        index_view["NIFTY"] = info
-
-    info = index_info("BANKNIFTY", bank, bank_tech)
-    if info:
-        index_view["BANKNIFTY"] = info
-
-    # No intraday signals from daily candles.
-    # No synthetic options or invented option-chain values.
-    index_trades = []
-    equity_intraday = []
-
-    total_ideas = len(bullish) + len(bearish)
-
-    best_rated = (
-        f"{bullish[0]['symbol']} (Swing)"
-        if bullish else "None"
-    )
-
-    nifty_change = safe_change(nifty)
-    bank_change = safe_change(bank)
-    fin_change = safe_change(fin)
-
-    summary = {
-        "data_source": data_source,
-        "nifty_spot": (
-            f"{nifty_price:,.2f}"
-            if nifty_price is not None else "Unavailable"
-        ),
-        "nifty_chg": (
-            f"{nifty_change:+.2f}%"
-            if nifty_change is not None else "Unavailable"
-        ),
-        "nifty_rsi": (
-            round(nifty_tech["rsi"], 1)
-            if nifty_tech else "Unavailable"
-        ),
-        "bnf_spot": (
-            f"{bank_price:,.2f}"
-            if bank_price is not None else "Unavailable"
-        ),
-        "bnf_chg": (
-            f"{bank_change:+.2f}%"
-            if bank_change is not None else "Unavailable"
-        ),
-        "fin_spot": (
-            f"{fin_price:,.2f}"
-            if fin_price is not None else "Unavailable"
-        ),
-        "fin_chg": (
-            f"{fin_change:+.2f}%"
-            if fin_change is not None else "Unavailable"
-        ),
-        "breadth_ratio": f"{advances} Adv / {declines} Dec",
-        "above_ema20": (
-            round(above20 / scanned * 100)
-            if scanned else 0
-        ),
-        "above_ema50": (
-            round(above50 / scanned * 100)
-            if scanned else 0
-        ),
-        "breadth_tone": breadth,
-        "ideas_count": total_ideas,
-        "best_rated": best_rated,
-        "vix_alert": None
-    }
-
     payload = {
-        "mode": MODE,
+        "mode": "INTRADAY + BTST",
         "summary": summary,
         "global_cues": global_cues,
-        "index_view": index_view,
-        "index_trades": index_trades,
+        "index_view": {},
+        "index_trades": [],
         "sectors": sectors,
+
         "setups": {
-            "bullish": bullish,
-            "bearish": bearish
+            "bullish": option_bull,
+            "bearish": option_bear
         },
+
         "equity_intraday": equity_intraday,
-        "execution": "SIGNAL_ONLY",
-        "capital_configured": CAPITAL_CONFIGURED,
-        "capital": CAPITAL,
+
+        "intraday_bullish": intraday_bull,
+        "intraday_bearish": intraday_bear,
+
+        "options_bullish": option_bull,
+        "options_bearish": option_bear,
+
+        "capital": None,
+        "capital_configured": False,
+
         "risk_pct": RISK_PCT,
         "max_allocation_pct": MAX_ALLOCATION_PCT,
+        "max_daily_loss_pct": MAX_DAILY_LOSS_PCT,
+
+        "execution": "SIGNAL_ONLY",
+        "automatic_orders": False,
+
         "intraday_status": (
-            "NOT_GENERATED: intraday candle feed required"
+            "UPSTOX V3 5-MINUTE DATA"
+            if intraday_data
+            else "NO INTRADAY DATA"
+        ),
+
+        "option_strategy": (
+            "OPTION BUYING OR HEDGED DEBIT SPREAD"
         )
     }
 
     try:
         send_alert(payload)
     except Exception as exc:
-        logging.error("Alert delivery failed: %s", exc)
+        logging.error(
+            "Report delivery failed: %s", exc
+        )
 
     logging.info(
-        "Completed. %s bullish and %s bearish setups.",
-        len(bullish),
-        len(bearish)
+        "Completed: Intraday %s BUY / %s SELL | "
+        "Options %s Bullish / %s Bearish",
+        len(intraday_bull),
+        len(intraday_bear),
+        len(option_bull),
+        len(option_bear)
     )
 
     return payload
