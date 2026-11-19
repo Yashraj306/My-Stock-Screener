@@ -1,10 +1,8 @@
 import csv
 import datetime as dt
-import math
 import os
 from pathlib import Path
 
-import numpy as np
 import pandas as pd
 
 IST = dt.timezone(dt.timedelta(hours=5, minutes=30))
@@ -68,11 +66,6 @@ def _estimate_nse_bse_round_trip_cost(
     exchange: str = "NSE",
     slippage_bps_per_side: float = 5.0,
 ) -> dict:
-    """
-    Estimates conservative NSE/BSE transaction costs and slippage for a round-trip trade.
-    Covers brokerage, STT, exchange transaction charges, SEBI turnover fees, stamp duty,
-    18% GST on eligible charges, and price slippage.
-    """
     q = max(int(qty or 0), 0)
     if q <= 0 or entry_price <= 0 or exit_price <= 0:
         return {
@@ -98,7 +91,6 @@ def _estimate_nse_bse_round_trip_cost(
     inst = str(instrument_type or "EQUITY_MIS").upper()
     exch = str(exchange or "NSE").upper()
 
-    # Brokerage: min(Rs 20 per order, 0.03% of leg turnover) * 2 legs
     brokerage = min(20.0, buy_turnover * 0.0003) + min(20.0, sell_turnover * 0.0003)
 
     if "OPT" in inst or "OPTION" in inst:
@@ -106,13 +98,12 @@ def _estimate_nse_bse_round_trip_cost(
         exch_rate = 0.0003503 if exch == "NSE" else 0.000325
         stamp_duty = buy_turnover * 0.00003
     else:
-        # Intraday / short-term equity conservative statutory rates
         stt = sell_turnover * 0.00025
         exch_rate = 0.0000297 if exch == "NSE" else 0.0000375
         stamp_duty = buy_turnover * 0.00003
 
     exchange_txn = total_turnover * exch_rate
-    sebi_fee = total_turnover * 1e-6  # Rs 10 per crore = 0.000001
+    sebi_fee = total_turnover * 1e-6
     gst = 0.18 * (brokerage + exchange_txn + sebi_fee)
 
     total_costs = round(
@@ -142,15 +133,26 @@ def ensure_log_file(log_path: Path = DEFAULT_LOG_PATH) -> Path:
     return path
 
 
+def _read_log_safe(path: Path) -> pd.DataFrame:
+    if not path.exists() or path.stat().st_size == 0:
+        return pd.DataFrame(columns=FIELDNAMES)
+    df = pd.read_csv(
+        path,
+        dtype=str,
+        engine="python",
+        on_bad_lines="skip",
+    ).fillna("")
+    for col in FIELDNAMES:
+        if col not in df.columns:
+            df[col] = ""
+    return df[FIELDNAMES]
+
+
 def log_signals(
     payload: dict,
     log_path: Path = DEFAULT_LOG_PATH,
     session_date: str | None = None,
 ) -> int:
-    """
-    Appends actionable signals from a screener run to signals_log.csv
-    with a valid IST trading-session timestamp.
-    """
     path = ensure_log_file(log_path)
     now_ist = _ist_now()
     sess_day = _normalize_date_str(session_date) or now_ist.date().isoformat()
@@ -195,9 +197,11 @@ def log_signals(
             "notes": item.get("sizing_status") or "",
         })
 
-    opt_items = list((payload or {}).get("index_trades") or []) + list(
-        ((payload or {}).get("setups") or {}).get("bullish") or []
-    ) + list(((payload or {}).get("setups") or {}).get("bearish") or [])
+    opt_items = (
+        list((payload or {}).get("index_trades") or [])
+        + list(((payload or {}).get("setups") or {}).get("bullish") or [])
+        + list(((payload or {}).get("setups") or {}).get("bearish") or [])
+    )
 
     for item in opt_items:
         sym = str(item.get("symbol") or "").strip()
@@ -239,7 +243,7 @@ def log_signals(
     if not rows_to_add:
         return 0
 
-    existing_df = pd.read_csv(path, dtype=str).fillna("") if path.exists() and path.stat().st_size > 0 else pd.DataFrame(columns=FIELDNAMES)
+    existing_df = _read_log_safe(path)
     existing_ids = set(existing_df["signal_id"].tolist()) if "signal_id" in existing_df.columns else set()
     fresh_rows = [r for r in rows_to_add if r["signal_id"] not in existing_ids]
 
@@ -259,12 +263,8 @@ def evaluate_signals_chronologically(
     as_of_date: str | None = None,
     slippage_bps_per_side: float = 5.0,
 ) -> pd.DataFrame:
-    """
-    Evaluates OPEN signals strictly on bars AFTER signal session_date (and <= as_of_date
-    if provided) to prevent lookahead bias, deducting round-trip NSE/BSE costs.
-    """
     path = ensure_log_file(log_path)
-    df_log = pd.read_csv(path, dtype=str).fillna("")
+    df_log = _read_log_safe(path)
     if df_log.empty:
         return df_log
 
@@ -281,7 +281,7 @@ def evaluate_signals_chronologically(
 
         work = candles.copy()
         work.columns = [str(c).strip().capitalize() for c in work.columns]
-        if "Date" not in work.columns or "High" not in work.columns or "Low" not in work.columns or "Close" not in work.columns:
+        if not all(c in work.columns for c in ["Date", "High", "Low", "Close"]):
             continue
 
         work["_bar_date"] = work["Date"].apply(_normalize_date_str)
@@ -314,7 +314,6 @@ def evaluate_signals_chronologically(
                 hit_sl = (sl > 0) and (b_low <= sl)
                 hit_t1 = (t1 > 0) and (b_high >= t1)
                 if hit_sl and hit_t1:
-                    # Conservative tie-breaker: assume stop hit first on ambiguous bar
                     exit_price, exit_date, new_status = sl, b_date, "STOP_HIT"
                     break
                 if hit_sl:
@@ -372,12 +371,8 @@ def walk_forward_summary(
     log_path: Path = DEFAULT_LOG_PATH,
     min_sample_size: int = MIN_RELIABLE_SAMPLE_SIZE,
 ) -> dict:
-    """
-    Summarizes closed post-cost trades and explicitly flags insufficient sample size
-    instead of claiming statistical reliability on small samples.
-    """
     path = ensure_log_file(log_path)
-    df = pd.read_csv(path, dtype=str).fillna("")
+    df = _read_log_safe(path)
     closed_statuses = {"TARGET_1_HIT", "STOP_HIT", "TIME_EXIT"}
     closed = df[df["status"].isin(closed_statuses)].copy() if not df.empty else pd.DataFrame()
 
