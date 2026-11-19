@@ -7,8 +7,7 @@ def clean_ohlcv(df: pd.DataFrame) -> pd.DataFrame:
         return pd.DataFrame()
     out = df.copy()
     out.columns = [str(c).strip().capitalize() for c in out.columns]
-    required = ["Open", "High", "Low", "Close"]
-    if not all(col in out.columns for col in required):
+    if not all(col in out.columns for col in ["Open", "High", "Low", "Close"]):
         return pd.DataFrame()
     if "Volume" not in out.columns:
         out["Volume"] = 0.0
@@ -48,11 +47,7 @@ def atr(df: pd.DataFrame, period: int = 14) -> pd.Series:
     high, low, close = c["High"], c["Low"], c["Close"]
     prev_close = close.shift(1)
     tr = pd.concat(
-        [
-            high - low,
-            (high - prev_close).abs(),
-            (low - prev_close).abs(),
-        ],
+        [high - low, (high - prev_close).abs(), (low - prev_close).abs()],
         axis=1,
     ).max(axis=1)
     return tr.ewm(alpha=1.0 / period, adjust=False).mean()
@@ -71,18 +66,13 @@ def adx(df: pd.DataFrame, period: int = 14) -> pd.Series:
 
     prev_close = close.shift(1)
     tr = pd.concat(
-        [
-            high - low,
-            (high - prev_close).abs(),
-            (low - prev_close).abs(),
-        ],
+        [high - low, (high - prev_close).abs(), (low - prev_close).abs()],
         axis=1,
     ).max(axis=1)
 
     atr_s = tr.ewm(alpha=1.0 / period, adjust=False).mean().replace(0.0, np.nan)
     plus_di = 100.0 * pd.Series(plus_dm, index=c.index).ewm(alpha=1.0 / period, adjust=False).mean() / atr_s
     minus_di = 100.0 * pd.Series(minus_dm, index=c.index).ewm(alpha=1.0 / period, adjust=False).mean() / atr_s
-
     dx = (100.0 * (plus_di - minus_di).abs() / (plus_di + minus_di).replace(0.0, np.nan)).fillna(0.0)
     return dx.ewm(alpha=1.0 / period, adjust=False).mean()
 
@@ -94,12 +84,11 @@ def compute_vwap(df: pd.DataFrame) -> float:
     typical_price = (c["High"] + c["Low"] + c["Close"]) / 3.0
     cum_vol = c["Volume"].cumsum()
     cum_pv = (typical_price * c["Volume"]).cumsum()
-    valid_cum_vol = cum_vol.replace(0.0, np.nan)
-    vwap_series = (cum_pv / valid_cum_vol).ffill()
-    last_vwap = vwap_series.iloc[-1]
-    if pd.isna(last_vwap) or last_vwap <= 0:
+    vwap_series = (cum_pv / cum_vol.replace(0.0, np.nan)).ffill()
+    val = vwap_series.iloc[-1]
+    if pd.isna(val) or val <= 0:
         return float(c["Close"].iloc[-1])
-    return float(last_vwap)
+    return float(val)
 
 
 def analyze(df: pd.DataFrame) -> dict:
