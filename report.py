@@ -91,7 +91,7 @@ def render_sector_table(sectors):
         read = str(item.get("read", "Mixed"))
         color = GREEN if read.lower() == "strong" else (RED if read.lower() == "weak" else GOLD)
         rows += (
-            f'<tr>'
+            f"<tr>"
             f'<td style="padding:8px 7px;border-bottom:1px solid {BORDER};font-weight:700;">{esc(item.get("name"))}</td>'
             f'<td align="right" style="padding:8px 7px;border-bottom:1px solid {BORDER};">{esc(item.get("avg_move"))}</td>'
             f'<td align="center" style="padding:8px 7px;border-bottom:1px solid {BORDER};">{esc(item.get("up_down"))}</td>'
@@ -145,6 +145,39 @@ def _risk_banner_html(summary: dict) -> str:
       <b>SIZING & LEVERAGE POLICY</b><br>
       Capital: <b>{esc(cap_str)}</b> &nbsp;|&nbsp; Per-Trade Risk Cap: <b>{esc(risk_budget_str)}</b> &nbsp;|&nbsp; Max Allocation Cap: <b>{alloc_pct:.0f}%</b><br>
       Leverage Assumption: <b>{esc(lev_str)}</b> &nbsp;|&nbsp; Order Execution: <b>SIGNAL ONLY (Manual Verification Required)</b>
+    </div>
+    """
+
+
+def render_walk_forward_section(wf: dict | None) -> str:
+    wf = wf or {}
+    closed_trades = wf.get("closed_trades", 0)
+    win_rate = wf.get("net_win_rate_pct")
+    net_pnl = wf.get("total_net_pnl", 0.0)
+    total_costs = wf.get("total_costs", 0.0)
+    avg_r = wf.get("avg_r_multiple")
+    max_dd = wf.get("max_drawdown_net_pnl", 0.0)
+    warning = wf.get("sample_warning") or "Insufficient sample size to claim statistical reliability."
+
+    win_str = f"{float(win_rate):.2f}%" if win_rate is not None else "—"
+    avg_r_str = f"{float(avg_r):+.2f}R" if avg_r is not None else "—"
+
+    return f"""
+    {section_header("06", "POST-COST WALK-FORWARD AUDIT", "Chronological signal log evaluation after fees and slippage", BLUE)}
+    <div style="background:#FFFFFF;border:1px solid {BORDER};border-radius:9px;padding:13px;font-size:11px;line-height:1.75;">
+      <div>
+        <b>Closed Trades:</b> {esc(closed_trades)} &nbsp;|&nbsp;
+        <b>Post-Cost Win Rate:</b> {esc(win_str)} &nbsp;|&nbsp;
+        <b>Avg R:</b> {esc(avg_r_str)}
+      </div>
+      <div>
+        <b>Total Costs Deducted:</b> ₹{esc(f"{float(total_costs):,.2f}")} &nbsp;|&nbsp;
+        <b>Net PnL:</b> ₹{esc(f"{float(net_pnl):+,.2f}")} &nbsp;|&nbsp;
+        <b>Max Drawdown:</b> ₹{esc(f"{float(max_dd):,.2f}")}
+      </div>
+      <div style="margin-top:8px;padding:8px 10px;background:#FFFBEB;border:1px solid #FDE68A;border-radius:6px;color:#92400E;font-size:10.5px;">
+        <b>{esc(warning)}</b>
+      </div>
     </div>
     """
 
@@ -223,6 +256,7 @@ def render_html_report(data: dict | None) -> str:
               <tr><td style="padding:0 18px 4px;">{section_header("03", "INDEX OPTIONS & SPREADS", "Directional index plans filtered against live option-chain data", BLUE)}{"".join(render_option_card(x) for x in index_trades) if index_trades else '<div style="padding:13px;background:#FFFFFF;border:1px solid #E5EAF2;border-radius:8px;color:#64748B;font-size:11px;">No index setups generated.</div>'}</td></tr>
               <tr><td style="padding:0 18px 4px;">{section_header("04", "STOCK OPTION PLANS", "Bullish and bearish option/spread candidates", GOLD)}{render_signal_section("BULLISH OPTION SETUPS", "Up to 5 bullish candidates", option_bull, render_option_card, True)}{render_signal_section("BEARISH OPTION SETUPS", "Up to 5 bearish candidates", option_bear, render_option_card, False)}</td></tr>
               <tr><td style="padding:0 18px 4px;">{section_header("05", "INTRADAY EQUITY SETUPS", "Risk-capped sizing per configured capital and leverage policy", GREEN)}{render_signal_section("BULLISH EQUITY SETUPS", "Long candidates", intraday_bull, lambda x: render_intraday_card(x, True), True)}{render_signal_section("BEARISH EQUITY SETUPS", "Short candidates", intraday_bear, lambda x: render_intraday_card(x, False), False)}</td></tr>
+              <tr><td style="padding:0 18px 4px;">{render_walk_forward_section(data.get("walk_forward"))}</td></tr>
 
               <tr>
                 <td style="background:{NAVY};padding:18px 20px;color:#CBD5E1;margin-top:16px;">
