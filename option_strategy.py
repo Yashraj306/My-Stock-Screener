@@ -1,5 +1,7 @@
-# option_strategy.py
+import datetime as dt
 from universe import LOT_SIZES
+
+IST = dt.timezone(dt.timedelta(hours=5, minutes=30))
 
 
 def _strike_step(symbol: str, spot: float) -> float:
@@ -16,7 +18,22 @@ def _strike_step(symbol: str, spot: float) -> float:
     return 5.0
 
 
-def _leg_filter(row: dict, side: str, max_spread_pct: float = 8.0, min_oi: int = 10000, min_vol: int = 10000, max_iv: float = 85.0) -> bool:
+def _is_expired_or_stale(expiry: str | None) -> bool:
+    if not expiry:
+        return False
+    today_str = dt.datetime.now(IST).date().isoformat()
+    return str(expiry).strip() < today_str
+
+
+def _leg_filter(
+    row: dict,
+    side: str,
+    min_ltp: float = 0.25,
+    max_spread_pct: float = 8.0,
+    min_oi: int = 10000,
+    min_vol: int = 10000,
+    max_iv: float = 85.0,
+) -> bool:
     p = "ce" if side == "CE" else "pe"
     ltp = float(row.get(f"{p}_ltp") or 0.0)
     bid = float(row.get(f"{p}_bid") or 0.0)
@@ -25,7 +42,7 @@ def _leg_filter(row: dict, side: str, max_spread_pct: float = 8.0, min_oi: int =
     vol = int(row.get(f"{p}_vol") or 0)
     iv = float(row.get(f"{p}_iv") or 0.0)
 
-    if ltp <= 0:
+    if ltp < min_ltp:
         return False
     if oi < min_oi and vol < min_vol:
         return False
@@ -50,6 +67,15 @@ def select_option_strategy(
     lot_size = int(LOT_SIZES.get(symbol, 0))
     step = _strike_step(symbol, spot)
 
+    if _is_expired_or_stale(expiry):
+        return {
+            "available": False,
+            "strategy": "UNAVAILABLE",
+            "reason": f"Expiry {expiry} is earlier than current IST date.",
+            "lot_size": lot_size,
+            "expiry": expiry,
+        }
+
     if chain_df is None or getattr(chain_df, "empty", True) or spot <= 0:
         return {
             "available": False,
@@ -69,9 +95,10 @@ def select_option_strategy(
             continue
         delta_abs = abs(float(r.get(f"{p}_delta") or 0.0))
         theta_val = float(r.get(f"{p}_theta") or 0.0)
+        ltp_val = float(r[f"{p}_ltp"])
         if delta_abs > 0 and not (0.15 <= delta_abs <= 0.85):
             continue
-        if theta_val < 0 and float(r[f"{p}_ltp"]) > 0 and (abs(theta_val) / float(r[f"{p}_ltp"])) > 0.35:
+        if theta_val < 0 and ltp_val > 0 and (abs(theta_val) / ltp_val) > 0.35:
             continue
         valid.append(r)
 
@@ -79,7 +106,7 @@ def select_option_strategy(
         return {
             "available": False,
             "strategy": "UNAVAILABLE",
-            "reason": "No option contracts met liquidity, spread, IV, and Greek filters.",
+            "reason": "No active contracts met liquidity, minimum premium, spread, IV, and Greek filters.",
             "lot_size": lot_size,
             "expiry": expiry,
         }
