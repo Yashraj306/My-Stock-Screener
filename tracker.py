@@ -1,335 +1,441 @@
-"""
-Signal tracker for My Stock Screener.
-
-This module records screener signals and evaluates their later price status.
-It does not connect to a broker and never places, modifies, or exits orders.
-
-Storage:
-- JSON file, default: data/signal_tracker.json
-- Override with TRACKER_FILE environment variable
-
-Main public functions:
-- load_tracker()
-- save_tracker(records)
-- record_signals(signals, mode=None)
-- update_signal_prices(latest_prices)
-- get_tracker_summary()
-
-`latest_prices` must be a mapping such as {"RELIANCE": 1234.5}.
-No prices are fetched or fabricated by this module.
-"""
-
-import json
-import logging
+import csv
+import datetime as dt
+import math
 import os
-import tempfile
-from datetime import datetime, timezone
 from pathlib import Path
-from typing import Any
+
+import numpy as np
+import pandas as pd
+
+IST = dt.timezone(dt.timedelta(hours=5, minutes=30))
+DEFAULT_LOG_PATH = Path(os.getenv("SIGNALS_LOG_PATH", "signals_log.csv"))
+MIN_RELIABLE_SAMPLE_SIZE = 30
+
+FIELDNAMES = [
+    "signal_id",
+    "logged_at_ist",
+    "session_date",
+    "mode",
+    "symbol",
+    "instrument_type",
+    "side",
+    "entry",
+    "stop_loss",
+    "target_1",
+    "target_2",
+    "qty",
+    "status",
+    "exit_date",
+    "exit_price",
+    "gross_pnl",
+    "total_costs",
+    "net_pnl",
+    "r_multiple",
+    "notes",
+]
 
 
-logger = logging.getLogger(__name__)
-
-TRACKER_FILE = Path(
-    os.getenv("TRACKER_FILE", "data/signal_tracker.json")
-)
-
-VALID_STATUSES = {
-    "OPEN",
-    "TARGET_1_HIT",
-    "TARGET_2_HIT",
-    "STOP_LOSS_HIT",
-    "EXPIRED",
-    "DATA_UNAVAILABLE",
-}
+def _ist_now() -> dt.datetime:
+    return dt.datetime.now(IST)
 
 
-def _now_utc() -> str:
-    return datetime.now(timezone.utc).isoformat(timespec="seconds")
-
-
-def _number(value: Any):
+def _normalize_date_str(value) -> str:
+    if value is None or value == "":
+        return ""
+    if isinstance(value, dt.datetime):
+        if value.tzinfo is None:
+            return value.replace(tzinfo=IST).date().isoformat()
+        return value.astimezone(IST).date().isoformat()
+    if isinstance(value, dt.date):
+        return value.isoformat()
+    text = str(value).strip()
+    if not text:
+        return ""
     try:
-        result = float(value)
-        if result != result or result in (float("inf"), float("-inf")):
-            return None
-        return result
-    except (TypeError, ValueError):
-        return None
+        parsed = dt.datetime.fromisoformat(text.replace("Z", "+00:00"))
+        if parsed.tzinfo is None:
+            return parsed.replace(tzinfo=IST).date().isoformat()
+        return parsed.astimezone(IST).date().isoformat()
+    except ValueError:
+        return text[:10]
 
 
-def _read_json(path: Path):
+def _estimate_nse_bse_round_trip_cost(
+    entry_price: float,
+    exit_price: float,
+    qty: int,
+    instrument_type: str = "EQUITY_MIS",
+    exchange: str = "NSE",
+    slippage_bps_per_side: float = 5.0,
+) -> dict:
+    """
+    Estimates conservative NSE/BSE transaction costs and slippage for a round-trip trade.
+    Covers brokerage, STT, exchange transaction charges, SEBI turnover fees, stamp duty,
+    18% GST on eligible charges, and price slippage.
+    """
+    q = max(int(qty or 0), 0)
+    if q <= 0 or entry_price <= 0 or exit_price <= 0:
+        return {
+            "slippage_cost": 0.0,
+            "brokerage": 0.0,
+            "stt": 0.0,
+            "exchange_txn": 0.0,
+            "sebi_fee": 0.0,
+            "stamp_duty": 0.0,
+            "gst": 0.0,
+            "total_costs": 0.0,
+        }
+
+    slip_rate = max(float(slippage_bps_per_side), 0.0) / 10000.0
+    slip_entry = entry_price * slip_rate
+    slip_exit = exit_price * slip_rate
+    slippage_cost = (slip_entry + slip_exit) * q
+
+    buy_turnover = entry_price * q
+    sell_turnover = exit_price * q
+    total_turnover = buy_turnover + sell_turnover
+
+    inst = str(instrument_type or "EQUITY_MIS").upper()
+    exch = str(exchange or "NSE").upper()
+
+    # Brokerage: min(Rs 20 per order, 0.03% of leg turnover) * 2 legs
+    brokerage = min(20.0, buy_turnover * 0.0003) + min(20.0, sell_turnover * 0.0003)
+
+    if "OPT" in inst or "OPTION" in inst:
+        stt = sell_turnover * 0.0010
+        exch_rate = 0.0003503 if exch == "NSE" else 0.000325
+        stamp_duty = buy_turnover * 0.00003
+    else:
+        # Intraday / short-term equity conservative statutory rates
+        stt = sell_turnover * 0.00025
+        exch_rate = 0.0000297 if exch == "NSE" else 0.0000375
+        stamp_duty = buy_turnover * 0.00003
+
+    exchange_txn = total_turnover * exch_rate
+    sebi_fee = total_turnover * 1e-6  # Rs 10 per crore = 0.000001
+    gst = 0.18 * (brokerage + exchange_txn + sebi_fee)
+
+    total_costs = round(
+        slippage_cost + brokerage + stt + exchange_txn + sebi_fee + stamp_duty + gst,
+        2,
+    )
+    return {
+        "slippage_cost": round(slippage_cost, 2),
+        "brokerage": round(brokerage, 2),
+        "stt": round(stt, 2),
+        "exchange_txn": round(exchange_txn, 2),
+        "sebi_fee": round(sebi_fee, 2),
+        "stamp_duty": round(stamp_duty, 2),
+        "gst": round(gst, 2),
+        "total_costs": total_costs,
+    }
+
+
+def ensure_log_file(log_path: Path = DEFAULT_LOG_PATH) -> Path:
+    path = Path(log_path)
+    if not path.parent.exists() and str(path.parent) not in ("", "."):
+        path.parent.mkdir(parents=True, exist_ok=True)
     if not path.exists():
-        return []
-    try:
-        with path.open("r", encoding="utf-8") as handle:
-            data = json.load(handle)
-        if not isinstance(data, list):
-            logger.warning("Tracker file is not a JSON list; starting empty.")
-            return []
-        return [row for row in data if isinstance(row, dict)]
-    except (OSError, json.JSONDecodeError) as exc:
-        logger.error("Could not read tracker file %s: %s", path, exc)
-        return []
+        with path.open("w", newline="", encoding="utf-8") as f:
+            writer = csv.DictWriter(f, fieldnames=FIELDNAMES)
+            writer.writeheader()
+    return path
 
 
-def load_tracker(path=None):
-    """Load tracker records. Returns an empty list if no file exists."""
-    target = Path(path) if path else TRACKER_FILE
-    return _read_json(target)
-
-
-def save_tracker(records, path=None):
+def log_signals(
+    payload: dict,
+    log_path: Path = DEFAULT_LOG_PATH,
+    session_date: str | None = None,
+) -> int:
     """
-    Atomically save tracker records as JSON.
-
-    Returns the saved file path. Raises OSError if persistence fails.
+    Appends actionable signals from a screener run to signals_log.csv
+    with a valid IST trading-session timestamp.
     """
-    target = Path(path) if path else TRACKER_FILE
-    target.parent.mkdir(parents=True, exist_ok=True)
+    path = ensure_log_file(log_path)
+    now_ist = _ist_now()
+    sess_day = _normalize_date_str(session_date) or now_ist.date().isoformat()
+    logged_ts = now_ist.isoformat()
+    mode = str((payload or {}).get("mode") or "BTST").upper()
 
-    safe_records = records if isinstance(records, list) else []
-    fd, temp_name = tempfile.mkstemp(
-        prefix=target.name + ".",
-        suffix=".tmp",
-        dir=str(target.parent),
-        text=True,
+    rows_to_add: list[dict] = []
+
+    for item in (payload or {}).get("equity_intraday") or []:
+        action = str(item.get("action") or "")
+        is_short = "SELL" in action.upper() or "SHORT" in action.upper()
+        side = "SHORT" if is_short else "LONG"
+        entry = float(item.get("entry") or 0.0)
+        sl = float(item.get("stop_loss") or 0.0)
+        t1 = float(item.get("target_1") or 0.0)
+        t2 = float(item.get("target_2") or 0.0)
+        qty = int(item.get("qty") or 0)
+        sym = str(item.get("symbol") or "").strip()
+        if not sym or entry <= 0:
+            continue
+        sig_id = f"{sess_day}-{mode}-EQ-{sym}-{side}"
+        rows_to_add.append({
+            "signal_id": sig_id,
+            "logged_at_ist": logged_ts,
+            "session_date": sess_day,
+            "mode": mode,
+            "symbol": sym,
+            "instrument_type": "EQUITY_MIS",
+            "side": side,
+            "entry": round(entry, 2),
+            "stop_loss": round(sl, 2) if sl > 0 else "",
+            "target_1": round(t1, 2) if t1 > 0 else "",
+            "target_2": round(t2, 2) if t2 > 0 else "",
+            "qty": qty,
+            "status": "OPEN",
+            "exit_date": "",
+            "exit_price": "",
+            "gross_pnl": "",
+            "total_costs": "",
+            "net_pnl": "",
+            "r_multiple": "",
+            "notes": item.get("sizing_status") or "",
+        })
+
+    opt_items = list((payload or {}).get("index_trades") or []) + list(
+        ((payload or {}).get("setups") or {}).get("bullish") or []
+    ) + list(((payload or {}).get("setups") or {}).get("bearish") or [])
+
+    for item in opt_items:
+        sym = str(item.get("symbol") or "").strip()
+        side_raw = str(item.get("side") or "").upper()
+        is_put = "PUT" in side_raw or "PE" in side_raw
+        side = "BUY_PE" if is_put else "BUY_CE"
+        entry = float(item.get("entry") or item.get("close") or 0.0)
+        sl = float(item.get("stop_loss") or 0.0)
+        t1 = float(item.get("target_1") or 0.0)
+        t2 = float(item.get("target_2") or 0.0)
+        plan = item.get("option_plan") or item.get("hedge_plan") or {}
+        lot_size = int(plan.get("lot_size") or 0)
+        if not sym or entry <= 0:
+            continue
+        sig_id = f"{sess_day}-{mode}-OPT-{sym}-{side}"
+        rows_to_add.append({
+            "signal_id": sig_id,
+            "logged_at_ist": logged_ts,
+            "session_date": sess_day,
+            "mode": mode,
+            "symbol": sym,
+            "instrument_type": "OPTION_PLAN",
+            "side": side,
+            "entry": round(entry, 2),
+            "stop_loss": round(sl, 2) if sl > 0 else "",
+            "target_1": round(t1, 2) if t1 > 0 else "",
+            "target_2": round(t2, 2) if t2 > 0 else "",
+            "qty": lot_size,
+            "status": "OPEN",
+            "exit_date": "",
+            "exit_price": "",
+            "gross_pnl": "",
+            "total_costs": "",
+            "net_pnl": "",
+            "r_multiple": "",
+            "notes": str(plan.get("strategy") or "UNAVAILABLE"),
+        })
+
+    if not rows_to_add:
+        return 0
+
+    existing_df = pd.read_csv(path, dtype=str).fillna("") if path.exists() and path.stat().st_size > 0 else pd.DataFrame(columns=FIELDNAMES)
+    existing_ids = set(existing_df["signal_id"].tolist()) if "signal_id" in existing_df.columns else set()
+    fresh_rows = [r for r in rows_to_add if r["signal_id"] not in existing_ids]
+
+    if not fresh_rows:
+        return 0
+
+    with path.open("a", newline="", encoding="utf-8") as f:
+        writer = csv.DictWriter(f, fieldnames=FIELDNAMES)
+        writer.writerows(fresh_rows)
+
+    return len(fresh_rows)
+
+
+def evaluate_signals_chronologically(
+    candles_by_symbol: dict[str, pd.DataFrame],
+    log_path: Path = DEFAULT_LOG_PATH,
+    as_of_date: str | None = None,
+    slippage_bps_per_side: float = 5.0,
+) -> pd.DataFrame:
+    """
+    Evaluates OPEN signals strictly on bars AFTER signal session_date (and <= as_of_date
+    if provided) to prevent lookahead bias, deducting round-trip NSE/BSE costs.
+    """
+    path = ensure_log_file(log_path)
+    df_log = pd.read_csv(path, dtype=str).fillna("")
+    if df_log.empty:
+        return df_log
+
+    cutoff_str = _normalize_date_str(as_of_date)
+
+    for idx, row in df_log.iterrows():
+        if row.get("status") != "OPEN":
+            continue
+        sym = row.get("symbol", "").strip()
+        sig_date = _normalize_date_str(row.get("session_date"))
+        candles = candles_by_symbol.get(sym)
+        if candles is None or candles.empty or not sig_date:
+            continue
+
+        work = candles.copy()
+        work.columns = [str(c).strip().capitalize() for c in work.columns]
+        if "Date" not in work.columns or "High" not in work.columns or "Low" not in work.columns or "Close" not in work.columns:
+            continue
+
+        work["_bar_date"] = work["Date"].apply(_normalize_date_str)
+        future_bars = work[work["_bar_date"] > sig_date]
+        if cutoff_str:
+            future_bars = future_bars[future_bars["_bar_date"] <= cutoff_str]
+        if future_bars.empty:
+            continue
+
+        entry = float(row.get("entry") or 0.0)
+        sl = float(row.get("stop_loss") or 0.0)
+        t1 = float(row.get("target_1") or 0.0)
+        qty = int(float(row.get("qty") or 0))
+        side = str(row.get("side") or "LONG").upper()
+        inst_type = str(row.get("instrument_type") or "EQUITY_MIS").upper()
+        is_short = side in {"SHORT", "BUY_PE"}
+
+        risk_per_unit = abs(entry - sl) if sl > 0 else 0.0
+        exit_price = None
+        exit_date = ""
+        new_status = "OPEN"
+
+        for _, bar in future_bars.iterrows():
+            b_date = str(bar["_bar_date"])
+            b_high = float(bar["High"])
+            b_low = float(bar["Low"])
+            b_close = float(bar["Close"])
+
+            if not is_short:
+                hit_sl = (sl > 0) and (b_low <= sl)
+                hit_t1 = (t1 > 0) and (b_high >= t1)
+                if hit_sl and hit_t1:
+                    # Conservative tie-breaker: assume stop hit first on ambiguous bar
+                    exit_price, exit_date, new_status = sl, b_date, "STOP_HIT"
+                    break
+                if hit_sl:
+                    exit_price, exit_date, new_status = sl, b_date, "STOP_HIT"
+                    break
+                if hit_t1:
+                    exit_price, exit_date, new_status = t1, b_date, "TARGET_1_HIT"
+                    break
+            else:
+                hit_sl = (sl > 0) and (b_high >= sl)
+                hit_t1 = (t1 > 0) and (b_low <= t1)
+                if hit_sl and hit_t1:
+                    exit_price, exit_date, new_status = sl, b_date, "STOP_HIT"
+                    break
+                if hit_sl:
+                    exit_price, exit_date, new_status = sl, b_date, "STOP_HIT"
+                    break
+                if hit_t1:
+                    exit_price, exit_date, new_status = t1, b_date, "TARGET_1_HIT"
+                    break
+
+            exit_price = b_close
+            exit_date = b_date
+
+        if new_status == "OPEN" and exit_price is not None and len(future_bars) >= 3:
+            new_status = "TIME_EXIT"
+
+        if new_status != "OPEN" and exit_price is not None and entry > 0:
+            move_per_unit = (entry - exit_price) if is_short else (exit_price - entry)
+            effective_qty = qty if qty > 0 else 1
+            gross_pnl = round(move_per_unit * effective_qty, 2)
+            costs = _estimate_nse_bse_round_trip_cost(
+                entry_price=entry,
+                exit_price=exit_price,
+                qty=effective_qty,
+                instrument_type=inst_type,
+                slippage_bps_per_side=slippage_bps_per_side,
+            )["total_costs"]
+            net_pnl = round(gross_pnl - costs, 2)
+            r_mult = round(move_per_unit / risk_per_unit, 2) if risk_per_unit > 0 else ""
+
+            df_log.at[idx, "status"] = new_status
+            df_log.at[idx, "exit_date"] = exit_date
+            df_log.at[idx, "exit_price"] = round(float(exit_price), 2)
+            df_log.at[idx, "gross_pnl"] = f"{gross_pnl:.2f}"
+            df_log.at[idx, "total_costs"] = f"{costs:.2f}"
+            df_log.at[idx, "net_pnl"] = f"{net_pnl:.2f}"
+            df_log.at[idx, "r_multiple"] = "" if r_mult == "" else f"{r_mult:.2f}"
+
+    df_log.to_csv(path, index=False)
+    return df_log
+
+
+def walk_forward_summary(
+    log_path: Path = DEFAULT_LOG_PATH,
+    min_sample_size: int = MIN_RELIABLE_SAMPLE_SIZE,
+) -> dict:
+    """
+    Summarizes closed post-cost trades and explicitly flags insufficient sample size
+    instead of claiming statistical reliability on small samples.
+    """
+    path = ensure_log_file(log_path)
+    df = pd.read_csv(path, dtype=str).fillna("")
+    closed_statuses = {"TARGET_1_HIT", "STOP_HIT", "TIME_EXIT"}
+    closed = df[df["status"].isin(closed_statuses)].copy() if not df.empty else pd.DataFrame()
+
+    n_closed = len(closed)
+    low_sample_warning = n_closed < int(min_sample_size)
+
+    if n_closed == 0:
+        return {
+            "closed_trades": 0,
+            "net_win_rate_pct": None,
+            "total_gross_pnl": 0.0,
+            "total_costs": 0.0,
+            "total_net_pnl": 0.0,
+            "avg_r_multiple": None,
+            "max_drawdown_net_pnl": 0.0,
+            "statistically_reliable": False,
+            "sample_warning": f"Insufficient sample size (0 closed trades < {min_sample_size} minimum). Do not treat as statistically reliable.",
+        }
+
+    closed["net_pnl_num"] = pd.to_numeric(closed["net_pnl"], errors="coerce").fillna(0.0)
+    closed["gross_pnl_num"] = pd.to_numeric(closed["gross_pnl"], errors="coerce").fillna(0.0)
+    closed["costs_num"] = pd.to_numeric(closed["total_costs"], errors="coerce").fillna(0.0)
+    closed["r_num"] = pd.to_numeric(closed["r_multiple"], errors="coerce")
+
+    wins = int((closed["net_pnl_num"] > 0).sum())
+    win_rate = round((wins / n_closed) * 100.0, 2)
+    total_gross = round(float(closed["gross_pnl_num"].sum()), 2)
+    total_costs = round(float(closed["costs_num"].sum()), 2)
+    total_net = round(float(closed["net_pnl_num"].sum()), 2)
+
+    valid_r = closed["r_num"].dropna()
+    avg_r = round(float(valid_r.mean()), 2) if not valid_r.empty else None
+
+    equity_curve = closed["net_pnl_num"].cumsum()
+    running_peak = equity_curve.cummax()
+    drawdown = equity_curve - running_peak
+    max_dd = round(float(drawdown.min()), 2)
+
+    warning_msg = (
+        f"LOW SAMPLE WARNING: Only {n_closed} closed post-cost trades logged (minimum {min_sample_size} recommended before drawing statistical conclusions)."
+        if low_sample_warning
+        else "Sample size meets minimum threshold; interpret results strictly out-of-sample after transaction costs."
     )
 
-    try:
-        with os.fdopen(fd, "w", encoding="utf-8") as handle:
-            json.dump(
-                safe_records,
-                handle,
-                ensure_ascii=False,
-                indent=2,
-                allow_nan=False,
-            )
-            handle.write("\n")
-        os.replace(temp_name, target)
-    except Exception:
-        try:
-            os.unlink(temp_name)
-        except OSError:
-            pass
-        raise
-
-    return str(target)
-
-
-def _signal_direction(signal):
-    action = str(
-        signal.get("action")
-        or signal.get("signal")
-        or signal.get("side")
-        or ""
-    ).upper()
-
-    if "BUY" in action or "BULL" in action or "LONG" in action:
-        return "BULLISH"
-    if "SELL" in action or "BEAR" in action or "SHORT" in action:
-        return "BEARISH"
-    return "UNKNOWN"
-
-
-def _make_record(signal, mode=None):
-    symbol = str(signal.get("symbol", "")).strip().upper()
-    entry = _number(signal.get("entry"))
-    stop = _number(signal.get("stop_loss"))
-    target_1 = _number(signal.get("target_1"))
-    target_2 = _number(signal.get("target_2"))
-
-    if not symbol or entry is None or entry <= 0:
-        return None
-
-    direction = _signal_direction(signal)
-    if direction == "UNKNOWN":
-        return None
-
-    if direction == "BULLISH":
-        if stop is None or target_1 is None or stop >= entry or target_1 <= entry:
-            return None
-        if target_2 is not None and target_2 <= target_1:
-            target_2 = None
-    else:
-        if stop is None or target_1 is None or stop <= entry or target_1 >= entry:
-            return None
-        if target_2 is not None and target_2 >= target_1:
-            target_2 = None
-
-    timestamp = _now_utc()
-    signal_id = f"{symbol}-{timestamp}-{direction}"
-
     return {
-        "signal_id": signal_id,
-        "symbol": symbol,
-        "mode": str(mode or signal.get("mode") or "UNKNOWN").upper(),
-        "direction": direction,
-        "entry": entry,
-        "stop_loss": stop,
-        "target_1": target_1,
-        "target_2": target_2,
-        "status": "OPEN",
-        "created_at": timestamp,
-        "last_updated_at": timestamp,
-        "last_price": None,
-        "closed_at": None,
-        "execution": "SIGNAL_ONLY",
+        "closed_trades": n_closed,
+        "net_win_rate_pct": win_rate,
+        "total_gross_pnl": total_gross,
+        "total_costs": total_costs,
+        "total_net_pnl": total_net,
+        "avg_r_multiple": avg_r,
+        "max_drawdown_net_pnl": max_dd,
+        "statistically_reliable": not low_sample_warning,
+        "sample_warning": warning_msg,
     }
 
 
-def record_signals(signals, mode=None, path=None):
-    """
-    Add valid signals to the JSON tracker.
-
-    `signals` may be a list of signal dictionaries. Duplicate signals with
-    the same symbol, mode, direction and entry are not added while OPEN.
-    Returns the newly added records.
-    """
-    records = load_tracker(path)
-    new_records = []
-
-    for signal in signals or []:
-        if not isinstance(signal, dict):
-            continue
-
-        record = _make_record(signal, mode=mode)
-        if record is None:
-            continue
-
-        duplicate = any(
-            row.get("status") == "OPEN"
-            and row.get("symbol") == record["symbol"]
-            and row.get("mode") == record["mode"]
-            and row.get("direction") == record["direction"]
-            and _number(row.get("entry")) == record["entry"]
-            for row in records
-        )
-        if duplicate:
-            continue
-
-        records.append(record)
-        new_records.append(record)
-
-    if new_records:
-        save_tracker(records, path)
-
-    return new_records
-
-
-def _evaluate_status(record, price):
-    direction = record.get("direction")
-    stop = _number(record.get("stop_loss"))
-    target_1 = _number(record.get("target_1"))
-    target_2 = _number(record.get("target_2"))
-
-    if None in (stop, target_1):
-        return "DATA_UNAVAILABLE"
-
-    # If a single candle crosses both stop and target, this tracker cannot
-    # infer which happened first. It requires a single latest traded price.
-    if direction == "BULLISH":
-        if price <= stop:
-            return "STOP_LOSS_HIT"
-        if target_2 is not None and price >= target_2:
-            return "TARGET_2_HIT"
-        if price >= target_1:
-            return "TARGET_1_HIT"
-    elif direction == "BEARISH":
-        if price >= stop:
-            return "STOP_LOSS_HIT"
-        if target_2 is not None and price <= target_2:
-            return "TARGET_2_HIT"
-        if price <= target_1:
-            return "TARGET_1_HIT"
-
-    return "OPEN"
-
-
-def update_signal_prices(latest_prices, path=None):
-    """
-    Update OPEN records using caller-supplied latest prices.
-
-    latest_prices maps symbol to a numeric latest price. Missing symbols are
-    left unchanged; no price lookup or synthetic value is used.
-    Returns the number of records whose status or price changed.
-    """
-    if not isinstance(latest_prices, dict):
-        raise TypeError("latest_prices must be a dictionary of symbol: price")
-
-    records = load_tracker(path)
-    changed = 0
-    timestamp = _now_utc()
-
-    for record in records:
-        if record.get("status") != "OPEN":
-            continue
-
-        symbol = str(record.get("symbol", "")).upper()
-        price = _number(latest_prices.get(symbol))
-        if price is None or price <= 0:
-            continue
-
-        old_price = record.get("last_price")
-        new_status = _evaluate_status(record, price)
-
-        record["last_price"] = price
-        record["last_updated_at"] = timestamp
-
-        if new_status != record.get("status"):
-            record["status"] = new_status
-            if new_status != "OPEN":
-                record["closed_at"] = timestamp
-
-        if old_price != price or new_status != "OPEN":
-            changed += 1
-
-    if changed:
-        save_tracker(records, path)
-
-    return changed
-
-
-def get_tracker_summary(path=None):
-    """Return counts by status and total record count."""
-    records = load_tracker(path)
-    counts = {status: 0 for status in VALID_STATUSES}
-
-    for record in records:
-        status = record.get("status", "DATA_UNAVAILABLE")
-        if status not in counts:
-            status = "DATA_UNAVAILABLE"
-        counts[status] += 1
-
-    return {
-        "total": len(records),
-        "open": counts["OPEN"],
-        "target_1_hit": counts["TARGET_1_HIT"],
-        "target_2_hit": counts["TARGET_2_HIT"],
-        "stop_loss_hit": counts["STOP_LOSS_HIT"],
-        "expired": counts["EXPIRED"],
-        "data_unavailable": counts["DATA_UNAVAILABLE"],
-    }
-
-
-def mark_expired(before_iso, path=None):
-    """
-    Mark OPEN records created before an ISO-8601 timestamp as EXPIRED.
-    The caller must supply the expiry cutoff explicitly.
-    """
-    cutoff = str(before_iso)
-    records = load_tracker(path)
-    changed = 0
-    timestamp = _now_utc()
-
-    for record in records:
-        if record.get("status") == "OPEN" and str(record.get("created_at", "")) < cutoff:
-            record["status"] = "EXPIRED"
-            record["last_updated_at"] = timestamp
-            record["closed_at"] = timestamp
-            changed += 1
-
-    if changed:
-        save_tracker(records, path)
-
-    return changed
+if __name__ == "__main__":
+    summary = walk_forward_summary()
+    for k, v in summary.items():
+        print(f"{k}: {v}")
