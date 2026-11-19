@@ -1,99 +1,163 @@
-"""Conservative stock-options selector. Signal generation only; no orders."""
-import math
-import pandas as pd
+# option_strategy.py
+from universe import LOT_SIZES
 
-def _n(v):
-    try:
-        x=float(v)
-        return x if math.isfinite(x) else None
-    except (TypeError,ValueError):
-        return None
 
-def _quote(row,prefix):
-    keys=("ltp","bid","ask","oi","vol","iv","delta","theta")
-    q={k:_n(row.get(f"{prefix}_{k}")) for k in keys}
-    q["instrument_key"]=row.get(f"{prefix}_instrument_key")
-    if not q["instrument_key"] or any(q[k] is None for k in keys):
-        return None
-    if min(q["ltp"],q["bid"],q["ask"],q["oi"],q["vol"],q["iv"])<=0:
-        return None
-    if q["ask"]<q["bid"]:
-        return None
-    mid=(q["ask"]+q["bid"])/2
-    if mid<=0 or (q["ask"]-q["bid"])/mid*100>5:
-        return None
-    return q
+def _strike_step(symbol: str, spot: float) -> float:
+    if symbol in {"BANKNIFTY", "SENSEX"}:
+        return 100.0
+    if symbol in {"NIFTY", "FINNIFTY"}:
+        return 50.0
+    if spot >= 3000:
+        return 50.0
+    if spot >= 1000:
+        return 20.0
+    if spot >= 300:
+        return 10.0
+    return 5.0
 
-def _candidate(df,prefix,spot,long=True,reference=None):
-    found=[]
-    for _,row in df.iterrows():
-        strike=_n(row.get("strike"))
-        q=_quote(row,prefix)
-        if strike is None or strike<=0 or q is None: continue
-        delta=abs(q["delta"])
-        if long and not 0.35<=delta<=0.75: continue
-        if not long and not 0.10<=delta<=0.40: continue
-        if long and abs(strike-spot)/spot*100>8: continue
-        if reference is not None:
-            if prefix=="ce" and strike<=reference: continue
-            if prefix=="pe" and strike>=reference: continue
-        found.append({"strike":strike,"quote":q})
-    if not found:return None
-    if long:
-        found.sort(key=lambda x:(abs(abs(x["quote"]["delta"])-0.55),
-                                 (x["quote"]["ask"]-x["quote"]["bid"])/((x["quote"]["ask"]+x["quote"]["bid"])/2)))
-    else:
-        found.sort(key=lambda x:(abs(abs(x["quote"]["delta"])-0.25),
-                                 (x["quote"]["ask"]-x["quote"]["bid"])/((x["quote"]["ask"]+x["quote"]["bid"])/2)))
-    return found[0]
 
-def select_option_strategy(chain_result,signal,lot_size=None):
+def _liquidity_ok(row: dict, side: str, max_spread_pct: float = 8.0, min_oi: int = 10000, min_vol: int = 10000) -> tuple[bool, str]:
+    prefix = "ce" if side == "CE" else "pe"
+    ltp = float(row.get(f"{prefix}_ltp") or 0.0)
+    bid = float(row.get(f"{prefix}_bid") or 0.0)
+    ask = float(row.get(f"{prefix}_ask") or 0.0)
+    oi = int(row.get(f"{prefix}_oi") or 0)
+    vol = int(row.get(f"{prefix}_vol") or 0)
+    iv = float(row.get(f"{prefix}_iv") or 0.0)
+
+    if ltp <= 0:
+        return False, "Missing LTP"
+    if oi < min_oi and vol < min_vol:
+        return False, f"Low liquidity (OI={oi}, Vol={vol})"
+    if bid > 0 and ask > 0 and ask >= bid:
+        mid = (bid + ask) / 2.0
+        spread_pct = ((ask - bid) / mid) * 100.0 if mid > 0 else 100.0
+        if spread_pct > max_spread_pct:
+            return False, f"Wide bid-ask spread ({spread_pct:.1f}%)"
+    if iv > 0 and iv > 85.0:
+        return False, f"Extreme IV ({iv:.1f}%)"
+    return True, "OK"
+
+
+def select_option_strategy(
+    symbol: str,
+    side: str,
+    spot: float,
+    chain_df=None,
+    expiry: str | None = None,
+    prefer_spread: bool = True,
+) -> dict:
     """
-    chain_result must be (DataFrame, expiry, spot).
-    Requires real bid/ask, LTP, OI, volume, IV, delta, theta and instrument key.
+    Selects a single-leg option or a 2-leg debit spread (BULL_CALL_SPREAD / BEAR_PUT_SPREAD)
+    from live option-chain rows using liquidity, bid-ask spread, IV, and Greeks.
+    Does not fabricate option prices if live chain data is absent.
     """
-    if not isinstance(chain_result,(tuple,list)) or len(chain_result)!=3:return None
-    df,expiry,spot=chain_result
-    if not isinstance(df,pd.DataFrame) or df.empty or not expiry:return None
-    spot=_n(spot)
-    if spot is None or spot<=0:return None
-    side=str(signal).upper().strip()
-    if side in ("BUY","BULLISH"): prefix,otype="ce","CE"
-    elif side in ("SELL","BEARISH"): prefix,otype="pe","PE"
-    else:return None
-    long_leg=_candidate(df,prefix,spot,long=True)
-    if long_leg is None:return None
-    q=long_leg["quote"]
-    prefer_spread=q["iv"]>=35 or abs(q["theta"])>=1.5 or ((q["ask"]-q["bid"])/((q["ask"]+q["bid"])/2)*100)>2.5
-    hedge=_candidate(df,prefix,spot,long=False,reference=long_leg["strike"])
-    if prefer_spread and hedge:
-        hq=hedge["quote"]
-        debit=q["ask"]-hq["bid"]
-        width=abs(long_leg["strike"]-hedge["strike"])
-        if 0<debit<width:
-            return {
-                "strategy":"BULL_CALL_SPREAD" if otype=="CE" else "BEAR_PUT_SPREAD",
-                "option_type":otype,"expiry":expiry,
-                "buy_leg":{"strike":long_leg["strike"],"instrument_key":q["instrument_key"],"entry_premium":q["ask"]},
-                "sell_leg":{"strike":hedge["strike"],"instrument_key":hq["instrument_key"],"entry_premium":hq["bid"]},
-                "net_debit_per_unit":round(debit,2),"spread_width":round(width,2),
-                "maximum_loss_per_unit":round(debit,2),"maximum_profit_per_unit":round(width-debit,2),
-                "breakeven":round(long_leg["strike"]+debit if otype=="CE" else long_leg["strike"]-debit,2),
-                "quantity":None,"lot_size":None,"capital_configured":False,
-                "selection_reason":"Defined-risk debit spread selected from live bid/ask and Greeks",
-                "execution":"SIGNAL_ONLY"
-            }
-    spread_pct=(q["ask"]-q["bid"])/((q["ask"]+q["bid"])/2)*100
-    if spread_pct<=2.5 and q["iv"]<45:
+    side_norm = "CE" if str(side).upper() in {"CE", "CALL", "BUY CALL (CE)"} else "PE"
+    strategy_spread = "BULL_CALL_SPREAD" if side_norm == "CE" else "BEAR_PUT_SPREAD"
+    lot_size = int(LOT_SIZES.get(symbol, 0))
+    step = _strike_step(symbol, spot)
+
+    if chain_df is None or getattr(chain_df, "empty", True) or spot <= 0:
         return {
-            "strategy":"OPTION_BUYING","option_type":otype,"expiry":expiry,
-            "strike":long_leg["strike"],"instrument_key":q["instrument_key"],
-            "entry_premium":q["ask"],"bid":q["bid"],"ask":q["ask"],
-            "iv":q["iv"],"delta":q["delta"],"theta":q["theta"],
-            "oi":q["oi"],"volume":q["vol"],
-            "maximum_loss_per_unit":q["ask"],"quantity":None,"lot_size":None,
-            "capital_configured":False,
-            "selection_reason":"Liquid option with acceptable IV and bid-ask spread",
-            "execution":"SIGNAL_ONLY"
+            "available": False,
+            "strategy": "UNAVAILABLE",
+            "reason": "Live option chain unavailable; no synthetic option quotes generated.",
+            "lot_size": lot_size,
+            "expiry": expiry,
         }
-    return None
+
+    records = chain_df.to_dict("records")
+    # Filter to strikes within +/- 6% of spot
+    near = [r for r in records if abs(float(r.get("strike", 0.0)) - spot) <= max(spot * 0.06, step * 4)]
+    if not near:
+        near = records
+
+    prefix = "ce" if side_norm == "CE" else "pe"
+    valid_legs = []
+    for r in near:
+        ok, _ = _liquidity_ok(r, side_norm)
+        delta_abs = abs(float(r.get(f"{prefix}_delta") or 0.0))
+        if ok and (delta_abs == 0.0 or 0.15 <= delta_abs <= 0.85):
+            valid_legs.append(r)
+
+    if not valid_legs:
+        return {
+            "available": False,
+            "strategy": "UNAVAILABLE",
+            "reason": "No contracts passed liquidity, spread, IV, and delta filters.",
+            "lot_size": lot_size,
+            "expiry": expiry,
+        }
+
+    # Pick ATM/slightly-ITM directional leg near target delta ~0.50-0.60
+    buy_leg = min(
+        valid_legs,
+        key=lambda r: (
+            abs(abs(float(r.get(f"{prefix}_delta") or 0.5)) - 0.52),
+            abs(float(r.get("strike", 0.0)) - spot),
+        ),
+    )
+    buy_strike = float(buy_leg["strike"])
+    buy_ltp = float(buy_leg[f"{prefix}_ltp"])
+    buy_iv = float(buy_leg.get(f"{prefix}_iv") or 0.0)
+    buy_delta = float(buy_leg.get(f"{prefix}_delta") or 0.0)
+    buy_theta = float(buy_leg.get(f"{prefix}_theta") or 0.0)
+
+    # Pick OTM hedge leg in direction of trade
+    if side_norm == "CE":
+        otm_candidates = [r for r in valid_legs if float(r["strike"]) > buy_strike and float(r[f"{prefix}_ltp"]) < buy_ltp]
+    else:
+        otm_candidates = [r for r in valid_legs if float(r["strike"]) < buy_strike and float(r[f"{prefix}_ltp"]) < buy_ltp]
+
+    if prefer_spread and otm_candidates:
+        target_offset = step * 2.0
+        sell_leg = min(
+            otm_candidates,
+            key=lambda r: abs(abs(float(r["strike"]) - buy_strike) - target_offset),
+        )
+        sell_strike = float(sell_leg["strike"])
+        sell_ltp = float(sell_leg[f"{prefix}_ltp"])
+        net_debit = round(buy_ltp - sell_ltp, 2)
+        width = round(abs(sell_strike - buy_strike), 2)
+        max_profit_unit = round(max(width - net_debit, 0.0), 2)
+        breakeven = round(buy_strike + net_debit, 2) if side_norm == "CE" else round(buy_strike - net_debit, 2)
+
+        return {
+            "available": True,
+            "strategy": strategy_spread,
+            "option_type": side_norm,
+            "expiry": expiry,
+            "lot_size": lot_size,
+            "buy_leg": {
+                "strike": int(buy_strike) if buy_strike.is_integer() else buy_strike,
+                "ltp": buy_ltp,
+                "iv": buy_iv or None,
+                "delta": buy_delta or None,
+                "theta": buy_theta or None,
+            },
+            "sell_leg": {
+                "strike": int(sell_strike) if sell_strike.is_integer() else sell_strike,
+                "ltp": sell_ltp,
+            },
+            "net_debit_per_unit": net_debit,
+            "maximum_loss_per_unit": net_debit,
+            "maximum_profit_per_unit": max_profit_unit,
+            "max_loss_lot": round(net_debit * lot_size, 2) if lot_size > 0 else None,
+            "max_profit_lot": round(max_profit_unit * lot_size, 2) if lot_size > 0 else None,
+            "breakeven": breakeven,
+        }
+
+    return {
+        "available": True,
+        "strategy": "OPTION_BUYING",
+        "option_type": side_norm,
+        "strike": int(buy_strike) if buy_strike.is_integer() else buy_strike,
+        "expiry": expiry,
+        "lot_size": lot_size,
+        "entry_premium": buy_ltp,
+        "iv": buy_iv or None,
+        "delta": buy_delta or None,
+        "theta": buy_theta or None,
+        "maximum_loss_per_unit": buy_ltp,
+        "max_loss_lot": round(buy_ltp * lot_size, 2) if lot_size > 0 else None,
+    }
