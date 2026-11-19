@@ -5,6 +5,7 @@ import os
 import warnings
 from concurrent.futures import ThreadPoolExecutor
 from urllib.parse import quote
+from tracker import evaluate_signals_chronologically, log_signals, walk_forward_summary
 
 import pandas as pd
 import requests
@@ -574,6 +575,10 @@ def run_screener() -> dict:
         "intraday_bullish": [x for x in equity_intraday if x["action"] == "BUY (LONG)"],
         "intraday_bearish": [x for x in equity_intraday if x["action"] == "SELL (SHORT)"],
     }
+
+    evaluate_signals_chronologically(candles_by_symbol=candles)
+    log_signals(payload)
+    payload["walk_forward"] = walk_forward_summary()
 
     send_alert(payload)
     logging.info("Dispatched %d setups using %s", total_ideas, data_source)
