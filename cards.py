@@ -1,89 +1,232 @@
-"""HTML card helpers compatible with report.py; signals only."""
 from html import escape
 
-NAVY = "#101D35"
-GREEN = "#059669"
-RED = "#DC2626"
-MUTED = "#64748B"
-BORDER = "#E5EAF2"
+from config import ALLOW_MIS_LEVERAGE, CAPITAL, CAPITAL_CONFIGURED, MIS_LEVERAGE
 
-def _e(v, default="—"):
-    return escape(str(default if v is None or v == "" else v))
 
-def _money(v):
+def _esc(value, default="—"):
+    if value is None or value == "":
+        value = default
+    return escape(str(value))
+
+
+def _rupee(value):
     try:
-        return f"₹{float(v):,.2f}"
+        if value is None or value == "":
+            return "—"
+        return "₹" + f"{float(value):,.2f}"
     except (TypeError, ValueError):
-        return "Unavailable"
+        return "—"
 
-def build_stock_card(item):
-    """Render one stock-option or index-option setup."""
-    item = item if isinstance(item, dict) else {}
-    plan = item.get("option_plan") or {}
-    if not isinstance(plan, dict):
-        plan = {}
-    strategy = str(plan.get("strategy") or item.get("strategy") or "OPTION DATA UNAVAILABLE")
-    bullish = ("BULL" in strategy.upper()
-               or str(item.get("side", "")).upper().startswith("CALL")
-               or str(item.get("signal", "")).upper() == "BUY")
-    accent = GREEN if bullish else RED
-    if strategy == "OPTION_BUYING":
-        rows = [
-            ("Option", plan.get("option_type")),
-            ("Strike", plan.get("strike")),
-            ("Expiry", plan.get("expiry")),
-            ("Entry premium", _money(plan.get("entry_premium"))),
-            ("IV", plan.get("iv")), ("Delta", plan.get("delta")),
-            ("Theta", plan.get("theta")),
-            ("Maximum loss / unit", _money(plan.get("maximum_loss_per_unit"))),
-        ]
-    elif strategy in ("BULL_CALL_SPREAD", "BEAR_PUT_SPREAD"):
-        buy, sell = plan.get("buy_leg") or {}, plan.get("sell_leg") or {}
-        rows = [
-            ("Buy strike", buy.get("strike")), ("Sell strike", sell.get("strike")),
-            ("Expiry", plan.get("expiry")),
-            ("Net debit / unit", _money(plan.get("net_debit_per_unit"))),
-            ("Maximum loss / unit", _money(plan.get("maximum_loss_per_unit"))),
-            ("Maximum profit / unit", _money(plan.get("maximum_profit_per_unit"))),
-            ("Breakeven", _money(plan.get("breakeven"))),
-        ]
-    else:
-        rows = [("Option details", "Unavailable — setup rejected unless verified")]
-    detail = "".join(
-        f'<tr><td style="padding:6px;border-bottom:1px solid {BORDER};color:{MUTED}">{_e(k)}</td>'
-        f'<td align="right" style="padding:6px;border-bottom:1px solid {BORDER};font-weight:700">{_e(v)}</td></tr>'
-        for k, v in rows
+
+def _leverage_label(item: dict) -> str:
+    enabled = item.get("leverage_enabled")
+    if enabled is None:
+        enabled = ALLOW_MIS_LEVERAGE
+    mult = item.get("leverage_used")
+    if mult is None:
+        mult = MIS_LEVERAGE if enabled else 1.0
+    try:
+        mult_val = float(mult)
+    except (TypeError, ValueError):
+        mult_val = 1.0
+    if enabled and mult_val > 1.0:
+        return f"MIS {mult_val:g}x Leverage Assumed"
+    return "1x Cash / No Leverage Assumed"
+
+
+def _sizing_summary_line(item: dict) -> str:
+    lev_text = _leverage_label(item)
+    qty = item.get("qty")
+    status = str(item.get("sizing_status") or "")
+    try:
+        qty_int = int(qty) if qty is not None else 0
+    except (TypeError, ValueError):
+        qty_int = 0
+
+    if not CAPITAL_CONFIGURED or (CAPITAL is not None and float(CAPITAL) <= 0.0) or status == "NOT_CALCULATED":
+        return f"{lev_text} &nbsp;|&nbsp; Qty: Not calculated (capital not configured)"
+
+    if qty_int <= 0:
+        max_risk = _rupee(item.get("max_risk_rs"))
+        return f"{lev_text} &nbsp;|&nbsp; Qty: 0 under risk cap (Risk budget: {max_risk})"
+
+    exposure = _rupee(item.get("notional_exposure"))
+    margin = _rupee(item.get("margin_required"))
+    risk_rs = _rupee(item.get("max_risk_rs"))
+    return (
+        f"{lev_text} &nbsp;|&nbsp; Qty: <b>{qty_int}</b> "
+        f"&nbsp;|&nbsp; Exposure: <b>{exposure}</b> "
+        f"&nbsp;|&nbsp; Est. Margin: <b>{margin}</b> "
+        f"&nbsp;|&nbsp; Max Risk: <b>{risk_rs}</b>"
     )
-    return f"""
-    <div style="border:1px solid {BORDER};border-left:4px solid {accent};border-radius:9px;padding:13px;margin:9px 0;background:#fff">
-      <div style="font-size:17px;font-weight:900;color:{NAVY}">{_e(item.get('symbol'))}</div>
-      <div style="font-size:10px;color:{MUTED}">Underlying: {_money(item.get('close'))} | Strategy: {_e(strategy)}</div>
-      <table width="100%" style="font-size:11px;border-collapse:collapse;margin-top:8px">{detail}</table>
-      <div style="font-size:10px;color:{MUTED};padding-top:8px">Quantity / lots not calculated. Signal only; automatic orders disabled.</div>
-    </div>"""
 
-def build_equity_intraday_table(items):
-    """Render intraday equity signals without assuming broker leverage."""
-    if not items:
-        return '<p style="font-size:11px;color:#64748B">No valid intraday signals passed the filters.</p>'
-    rows = []
-    for item in items[:10]:
-        if not isinstance(item, dict):
-            continue
-        action = str(item.get("action", "")).upper()
-        bullish = "BUY" in action or "LONG" in action
-        color = GREEN if bullish else RED
-        rows.append(f"""
+
+def make_checklist_html(checks: dict | None) -> str:
+    checks = checks or {}
+    items = [
+        ("Trend", bool(checks.get("trend", False))),
+        ("VWAP / Level", bool(checks.get("level", False))),
+        ("Volume", bool(checks.get("volume", False))),
+        ("Options / OI", bool(checks.get("options", False))),
+        ("Sector", bool(checks.get("sector", False))),
+        ("Rel. Strength", bool(checks.get("rs", False))),
+    ]
+    parts = []
+    for label, passed in items:
+        mark = "&#10004;" if passed else "&#10008;"
+        color = "#059669" if passed else "#94A3B8"
+        parts.append(f'<span style="margin-right:10px;"><b style="color:{color};">{mark}</b> {_esc(label)}</span>')
+    return f'<div style="margin:8px 0;font-size:11px;color:#334155;">{"".join(parts)}</div>'
+
+
+def render_intraday_card(item: dict, bullish: bool = True) -> str:
+    accent = "#059669" if bullish else "#DC2626"
+    badge_bg = "#ECFDF5" if bullish else "#FEF2F2"
+    side_text = _esc(item.get("action") or ("BUY (LONG)" if bullish else "SELL (SHORT)"))
+
+    entry = item.get("entry")
+    sl = item.get("stop_loss") if item.get("stop_loss") is not None else item.get("sl")
+    t1 = item.get("target_1") if item.get("target_1") is not None else item.get("t1")
+    t2 = item.get("target_2") if item.get("target_2") is not None else item.get("t2")
+    rsi_val = item.get("rsi")
+    vr_val = item.get("volume_ratio") if item.get("volume_ratio") is not None else item.get("vr")
+    vwap_val = item.get("vwap")
+    score_val = item.get("score")
+
+    vr_display = f"{float(vr_val):.2f}x" if vr_val not in (None, "") else "—"
+    score_display = f"Score {float(score_val):.1f}/100" if score_val not in (None, "") else ""
+
+    return f"""
+    <div style="background:#FFFFFF;border:1px solid #E5EAF2;border-left:4px solid {accent};border-radius:9px;padding:14px;margin-bottom:10px;">
+      <table width="100%" cellpadding="0" cellspacing="0">
         <tr>
-          <td style="padding:7px;border-bottom:1px solid {BORDER}"><b>{_e(item.get('symbol'))}</b><br><small>{_e(item.get('sector','Equity'))}</small></td>
-          <td style="padding:7px;color:{color};font-weight:800">{_e(action)}</td>
-          <td style="padding:7px;text-align:right">{_money(item.get('entry'))}</td>
-          <td style="padding:7px;text-align:right">{_money(item.get('stop_loss'))}</td>
-          <td style="padding:7px;text-align:right">{_money(item.get('target_1'))}</td>
-          <td style="padding:7px;text-align:right">{_e(item.get('volume_ratio','Unavailable'))}</td>
-        </tr>""")
-    return f"""<div style="overflow-x:auto"><table width="100%" style="font-size:10px;border-collapse:collapse">
-      <tr style="background:#F1F5F9"><th align="left">SYMBOL</th><th align="left">SIDE</th><th align="right">ENTRY</th><th align="right">STOP</th><th align="right">TARGET</th><th align="right">VOL RATIO</th></tr>
-      {''.join(rows)}
-    </table></div>
-    <p style="font-size:10px;color:{MUTED}">Broker leverage is not assumed. Quantity is not calculated. Signals only.</p>"""
+          <td>
+            <div style="font-size:16px;font-weight:900;color:#101D35;">{_esc(item.get("symbol"))}</div>
+            <div style="font-size:10px;color:#64748B;margin-top:2px;">
+              {_esc(item.get("sector", "Equity"))} &nbsp;|&nbsp; {_esc(item.get("index_tag", "NSE/BSE"))}
+              {f' &nbsp;|&nbsp; <b>{_esc(score_display)}</b>' if score_display else ''}
+            </div>
+          </td>
+          <td align="right" valign="top">
+            <span style="display:inline-block;padding:4px 9px;border-radius:16px;background:{badge_bg};color:{accent};font-size:10px;font-weight:800;">
+              {side_text}
+            </span>
+          </td>
+        </tr>
+      </table>
+
+      <table width="100%" cellpadding="0" cellspacing="0" style="margin-top:11px;">
+        <tr>
+          <td width="33%" style="padding:7px;background:#F8FAFC;border-radius:5px;">
+            <div style="font-size:9px;color:#64748B;">ENTRY</div>
+            <b style="font-size:13px;color:#101D35;">{_rupee(entry)}</b>
+          </td>
+          <td width="33%" style="padding:7px;background:#FEF2F2;border-radius:5px;">
+            <div style="font-size:9px;color:#DC2626;">STOP LOSS</div>
+            <b style="font-size:13px;color:#DC2626;">{_rupee(sl)}</b>
+          </td>
+          <td width="33%" style="padding:7px;background:#ECFDF5;border-radius:5px;">
+            <div style="font-size:9px;color:#059669;">TARGET 1</div>
+            <b style="font-size:13px;color:#059669;">{_rupee(t1)}</b>
+          </td>
+        </tr>
+      </table>
+
+      <table width="100%" cellpadding="0" cellspacing="0" style="margin-top:8px;">
+        <tr>
+          <td style="font-size:10px;color:#64748B;">TARGET 2<br><b style="font-size:11px;color:#101D35;">{_rupee(t2)}</b></td>
+          <td style="font-size:10px;color:#64748B;">RSI<br><b style="font-size:11px;color:#101D35;">{_esc(rsi_val)}</b></td>
+          <td style="font-size:10px;color:#64748B;">VOL RATIO<br><b style="font-size:11px;color:#101D35;">{_esc(vr_display)}</b></td>
+          <td style="font-size:10px;color:#64748B;">VWAP<br><b style="font-size:11px;color:#101D35;">{_rupee(vwap_val)}</b></td>
+        </tr>
+      </table>
+
+      <div style="margin-top:10px;padding-top:8px;border-top:1px solid #E5EAF2;font-size:10px;color:#64748B;">
+        {_sizing_summary_line(item)}
+      </div>
+    </div>
+    """
+
+
+def render_option_card(item: dict) -> str:
+    plan = item.get("option_plan") or item.get("hedge_plan") or {}
+    chain = item.get("opt_chain") or {}
+    side = str(item.get("side") or "")
+    is_bull = ("CALL" in side.upper()) or ("CE" in side.upper()) or ("BULL" in str(plan.get("strategy") or "").upper())
+    accent = "#059669" if is_bull else "#DC2626"
+    badge_bg = "#ECFDF5" if is_bull else "#FEF2F2"
+
+    strategy = str(plan.get("strategy") or "UNAVAILABLE")
+    lot_size = plan.get("lot_size")
+    lot_text = f"Lot Size: {int(lot_size)}" if lot_size not in (None, "", 0) else "Lot Size: —"
+
+    if plan.get("available") and strategy in ("BULL_CALL_SPREAD", "BEAR_PUT_SPREAD"):
+        buy = plan.get("buy_leg") or {}
+        sell = plan.get("sell_leg") or {}
+        lot_loss = _rupee(plan.get("max_loss_lot")) if plan.get("max_loss_lot") is not None else "Not calculated"
+        lot_profit = _rupee(plan.get("max_profit_lot")) if plan.get("max_profit_lot") is not None else "Not calculated"
+        strategy_html = f"""
+        <div style="background:#F8FAFC;border:1px solid #E5EAF2;border-radius:6px;padding:9px;margin-top:8px;font-size:11px;line-height:1.6;">
+          <div><b>Strategy:</b> {_esc(strategy.replace("_", " "))} &nbsp;|&nbsp; <b>Expiry:</b> {_esc(plan.get("expiry"))} &nbsp;|&nbsp; {_esc(lot_text)}</div>
+          <div><b>Buy Leg:</b> {_esc(buy.get("strike"))} ({_rupee(buy.get("ltp"))}) &nbsp;|&nbsp; <b>Sell Leg:</b> {_esc(sell.get("strike"))} ({_rupee(sell.get("ltp"))})</div>
+          <div><b>Net Debit/Unit:</b> {_rupee(plan.get("net_debit_per_unit"))} &nbsp;|&nbsp; <b>Breakeven:</b> {_rupee(plan.get("breakeven"))}</div>
+          <div><b>Max Risk/Unit:</b> <span style="color:#DC2626;font-weight:700;">{_rupee(plan.get("maximum_loss_per_unit"))}</span> (Lot: {lot_loss}) &nbsp;|&nbsp; <b>Max Profit/Unit:</b> <span style="color:#059669;font-weight:700;">{_rupee(plan.get("maximum_profit_per_unit"))}</span> (Lot: {lot_profit})</div>
+        </div>
+        """
+    elif plan.get("available") and strategy == "OPTION_BUYING":
+        lot_loss = _rupee(plan.get("max_loss_lot")) if plan.get("max_loss_lot") is not None else "Not calculated"
+        strategy_html = f"""
+        <div style="background:#F8FAFC;border:1px solid #E5EAF2;border-radius:6px;padding:9px;margin-top:8px;font-size:11px;line-height:1.6;">
+          <div><b>Strategy:</b> OPTION BUYING ({_esc(plan.get("option_type"))}) &nbsp;|&nbsp; <b>Strike:</b> {_esc(plan.get("strike"))} &nbsp;|&nbsp; <b>Expiry:</b> {_esc(plan.get("expiry"))} &nbsp;|&nbsp; {_esc(lot_text)}</div>
+          <div><b>Entry Premium:</b> {_rupee(plan.get("entry_premium"))} &nbsp;|&nbsp; <b>IV:</b> {_esc(plan.get("iv"))}% &nbsp;|&nbsp; <b>Delta:</b> {_esc(plan.get("delta"))} &nbsp;|&nbsp; <b>Theta:</b> {_esc(plan.get("theta"))}</div>
+          <div><b>Max Loss/Unit:</b> <span style="color:#DC2626;font-weight:700;">{_rupee(plan.get("maximum_loss_per_unit"))}</span> (Lot: {lot_loss})</div>
+        </div>
+        """
+    else:
+        reason = plan.get("reason") or "Live option-chain contract data not available."
+        strategy_html = f"""
+        <div style="background:#FFFBEB;border:1px solid #FDE68A;border-radius:6px;padding:8px;margin-top:8px;font-size:11px;color:#92400E;">
+          <b>Option Plan Unavailable:</b> {_esc(reason)}
+        </div>
+        """
+
+    chain_html = ""
+    if chain:
+        chain_html = f"""
+        <div style="font-size:10px;color:#64748B;margin-top:6px;">
+          <b>Option Chain:</b> PCR {_esc(chain.get("oi_pcr"))} | Support {_esc(chain.get("support_strike"))} ({_esc(chain.get("support_oi_pct"))}% OI) | Resistance {_esc(chain.get("resistance_strike"))} ({_esc(chain.get("resistance_oi_pct"))}% OI) | Max Pain {_esc(chain.get("max_pain"))} | {_esc(chain.get("oi_quadrant"))}
+        </div>
+        """
+
+    reasons = item.get("reasons") or []
+    reasons_html = "".join(f"<li>{_esc(r)}</li>" for r in reasons)
+
+    return f"""
+    <div style="background:#FFFFFF;border:1px solid #E5EAF2;border-left:4px solid {accent};border-radius:9px;padding:14px;margin-bottom:11px;">
+      <table width="100%" cellpadding="0" cellspacing="0">
+        <tr>
+          <td>
+            <div style="font-size:16px;font-weight:900;color:#101D35;">{_esc(item.get("symbol"))}</div>
+            <div style="font-size:10px;color:#64748B;margin-top:2px;">
+              Spot: <b>{_rupee(item.get("close"))}</b> ({_esc(item.get("change_pct"))}%) &nbsp;|&nbsp; Sector: {_esc(item.get("sector"))}
+            </div>
+          </td>
+          <td align="right" valign="top">
+            <span style="display:inline-block;padding:4px 9px;border-radius:16px;background:{badge_bg};color:{accent};font-size:10px;font-weight:800;">
+              {_esc(item.get("side"))}
+            </span>
+          </td>
+        </tr>
+      </table>
+
+      {make_checklist_html(item.get("checks"))}
+      {strategy_html}
+      {chain_html}
+
+      {f'<ul style="margin:7px 0 0 16px;padding:0;font-size:10.5px;color:#475569;">{reasons_html}</ul>' if reasons_html else ''}
+    </div>
+    """
+
+
+def build_stock_card(idea: dict) -> str:
+    return render_option_card(idea)
