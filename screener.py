@@ -51,7 +51,7 @@ UPSTOX_BASE_V2 = "https://api.upstox.com/v2"
 YF_SYMBOL_MAP = {
     "NIFTY": "^NSEI",
     "BANKNIFTY": "^NSEBANK",
-    "FINNIFTY": "NIFTY_FIN_SERVICE.NS",
+    "FINNIFTY": "^CNXFIN",
     "SENSEX": "^BSESN",
     "M&M": "M&M.NS",
 }
@@ -89,7 +89,7 @@ def _normalize_df(df: pd.DataFrame) -> pd.DataFrame | None:
 
     work = work.dropna(subset=["Date", "Open", "High", "Low", "Close"]).sort_values("Date").drop_duplicates("Date")
     work = work[work["Close"] > 0]
-    if len(work) < 30:
+    if len(work) < 20:
         return None
     work["Date"] = work["Date"].dt.strftime("%Y-%m-%d")
     return work.reset_index(drop=True)
@@ -131,7 +131,12 @@ def _fetch_yf_1y(symbol: str) -> pd.DataFrame | None:
     ticker = _yf_ticker(symbol)
     try:
         df = yf.download(ticker, period="1y", interval="1d", progress=False, timeout=12)
-        return _normalize_df(df)
+        norm = _normalize_df(df)
+        if norm is not None:
+            return norm
+        t = yf.Ticker(ticker)
+        hist = t.history(period="1y", interval="1d")
+        return _normalize_df(hist)
     except Exception as exc:
         logging.debug("yfinance fetch failed for %s (%s): %s", symbol, ticker, exc)
         return None
@@ -149,7 +154,7 @@ def load_candles_1y() -> tuple[dict[str, pd.DataFrame], str]:
         yf_df = _fetch_yf_1y(sym)
         return sym, yf_df, "YF"
 
-    with ThreadPoolExecutor(max_workers=8) as pool:
+    with ThreadPoolExecutor(max_workers=6) as pool:
         for sym, df, src in pool.map(_worker, list(keys.keys())):
             if df is not None and not df.empty:
                 candles[sym] = df
@@ -252,9 +257,7 @@ def _apply_portfolio_risk_caps(items: list[dict], max_items: int) -> list[dict]:
         sector_counts[sec] = sector_counts.get(sec, 0) + 1
         total_risk += trade_risk
     return selected
-
-
-def _build_stock_setup(sym: str, ind: dict, rs_info: dict, is_bull: bool, chain_bundle: dict | None) -> dict | None:
+def _build_stock_setup(sym: str, ind: dict, rs_info: dict, is_bull: bool, chain_bundle: dict | None, strict_filters: bool = True) -> dict | None:
     close = float(ind["close"])
     atr = float(ind.get("atr") or max(close * 0.015, 1.0))
     vwap = float(ind.get("vwap") or close)
@@ -265,21 +268,27 @@ def _build_stock_setup(sym: str, ind: dict, rs_info: dict, is_bull: bool, chain_
     chg_pct = float(ind.get("change_pct") or 0.0)
     avg_turnover = float(ind.get("avg_turnover") or 0.0)
 
-    if avg_turnover < MIN_DAILY_TURNOVER_RS:
+    min_turn = MIN_DAILY_TURNOVER_RS if strict_filters else 0.0
+    min_vol = 0.80 if strict_filters else 0.30
+
+    if avg_turnover < min_turn:
         return None
-    if vol_ratio < 0.85:
+    if vol_ratio < min_vol:
         return None
 
-    # Strict directional alignment to prevent opposite-day whipsaw signals
+    if strict_filters:
+        if is_bull:
+            if chg_pct < -0.50 or close < ema20 or close < vwap:
+                return None
+        else:
+            if chg_pct > 0.50 or close > ema20 or close > vwap:
+                return None
+
     if is_bull:
-        if chg_pct < -0.50 or close < ema20 or close < vwap:
-            return None
         sl = round(max(close - 1.5 * atr, min(ema20, vwap) * 0.992), 2)
         pa_t1 = round(close + 1.8 * atr, 2)
         pa_t2 = round(close + 3.0 * atr, 2)
     else:
-        if chg_pct > 0.50 or close > ema20 or close > vwap:
-            return None
         sl = round(min(close + 1.5 * atr, max(ema20, vwap) * 1.008), 2)
         pa_t1 = round(max(close - 1.8 * atr, 0.05), 2)
         pa_t2 = round(max(close - 3.0 * atr, 0.05), 2)
@@ -364,14 +373,13 @@ def _build_index_trades(candles: dict[str, pd.DataFrame], vix_val: float | None)
         except Exception as exc:
             logging.debug("Index option chain fetch failed for %s: %s", idx_sym, exc)
 
-        prefer_spread = True if (vix_val is not None and vix_val >= 16.0) else True
         plan = select_option_strategy(
             symbol=idx_sym,
             side="CE" if is_bull else "PE",
             spot=spot,
             chain_df=chain_df,
             expiry=expiry,
-            prefer_spread=prefer_spread,
+            prefer_spread=True,
         )
 
         sl = round(spot - 1.5 * atr, 2) if is_bull else round(spot + 1.5 * atr, 2)
@@ -410,6 +418,7 @@ def _build_index_trades(candles: dict[str, pd.DataFrame], vix_val: float | None)
 
 def run_screener():
     candles, data_source = load_candles_1y()
+    logging.info("Loaded candles for %d symbols using %s", len(candles), data_source)
     global_cues = fetch_global_cues()
     vix_val = None
     for c in global_cues:
@@ -480,14 +489,25 @@ def run_screener():
         rs_info = rs_map.get(sym, {})
         if b_score >= s_score and b_score >= 55.0:
             cb = _get_chain(sym, float(ind["close"]))
-            setup = _build_stock_setup(sym, ind, rs_info, True, cb)
+            setup = _build_stock_setup(sym, ind, rs_info, True, cb, strict_filters=True)
             if setup:
                 bull_raw.append(setup)
         elif s_score > b_score and s_score >= 55.0:
             cb = _get_chain(sym, float(ind["close"]))
-            setup = _build_stock_setup(sym, ind, rs_info, False, cb)
+            setup = _build_stock_setup(sym, ind, rs_info, False, cb, strict_filters=True)
             if setup:
                 bear_raw.append(setup)
+
+    if not bull_raw and not bear_raw and indicators_by_sym:
+        for sym, ind in indicators_by_sym.items():
+            b_score = float(ind.get("bull_score") or 0.0)
+            s_score = float(ind.get("bear_score") or 0.0)
+            rs_info = rs_map.get(sym, {})
+            is_bull = b_score >= s_score
+            cb = _get_chain(sym, float(ind["close"]))
+            setup = _build_stock_setup(sym, ind, rs_info, is_bull, cb, strict_filters=False)
+            if setup:
+                (bull_raw if is_bull else bear_raw).append(setup)
 
     bull_raw.sort(key=lambda x: x.get("score", 0.0), reverse=True)
     bear_raw.sort(key=lambda x: x.get("score", 0.0), reverse=True)
