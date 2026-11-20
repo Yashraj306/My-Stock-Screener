@@ -2,127 +2,130 @@ import numpy as np
 import pandas as pd
 
 
-def clean_ohlcv(df: pd.DataFrame) -> pd.DataFrame:
-    if df is None or df.empty:
-        return pd.DataFrame()
-    out = df.copy()
-    out.columns = [str(c).strip().capitalize() for c in out.columns]
-    if not all(col in out.columns for col in ["Open", "High", "Low", "Close"]):
-        return pd.DataFrame()
-    if "Volume" not in out.columns:
-        out["Volume"] = 0.0
-    for col in ["Open", "High", "Low", "Close", "Volume"]:
-        out[col] = pd.to_numeric(out[col], errors="coerce")
-    out = out.dropna(subset=["Open", "High", "Low", "Close"])
-    out["Volume"] = out["Volume"].fillna(0.0)
-    if "Date" in out.columns:
-        out = out.sort_values("Date").reset_index(drop=True)
+def _ema(series: pd.Series, period: int) -> pd.Series:
+    return series.ewm(span=period, adjust=False).mean()
+
+
+def _rsi(close: pd.Series, period: int = 14) -> pd.Series:
+    delta = close.diff()
+    gain = delta.clip(lower=0.0)
+    loss = (-delta).clip(lower=0.0)
+    avg_gain = gain.ewm(alpha=1.0 / period, min_periods=period, adjust=False).mean()
+    avg_loss = loss.ewm(alpha=1.0 / period, min_periods=period, adjust=False).mean()
+    rs = avg_gain / avg_loss.replace(0.0, np.nan)
+    rsi = 100.0 - (100.0 / (1.0 + rs))
+    return rsi.fillna(50.0)
+
+
+def _atr(high: pd.Series, low: pd.Series, close: pd.Series, period: int = 14) -> pd.Series:
+    prev_close = close.shift(1)
+    tr = pd.concat(
+        [
+            (high - low).abs(),
+            (high - prev_close).abs(),
+            (low - prev_close).abs(),
+        ],
+        axis=1,
+    ).max(axis=1)
+    return tr.ewm(alpha=1.0 / period, min_periods=period, adjust=False).mean()
+
+
+def compute_indicators(df: pd.DataFrame) -> dict | None:
+    if df is None or df.empty or len(df) < 20:
+        return None
+
+    work = df.copy()
+    work.columns = [str(c).strip().capitalize() for c in work.columns]
+    if not all(c in work.columns for c in ["High", "Low", "Close"]):
+        return None
+
+    high = pd.to_numeric(work["High"], errors="coerce")
+    low = pd.to_numeric(work["Low"], errors="coerce")
+    close = pd.to_numeric(work["Close"], errors="coerce")
+    volume = (
+        pd.to_numeric(work["Volume"], errors="coerce").fillna(0.0)
+        if "Volume" in work.columns
+        else pd.Series(0.0, index=work.index)
+    )
+
+    valid = pd.DataFrame({"High": high, "Low": low, "Close": close, "Volume": volume}).dropna(
+        subset=["High", "Low", "Close"]
+    )
+    if len(valid) < 20:
+        return None
+
+    c_last = float(valid["Close"].iloc[-1])
+    c_prev = float(valid["Close"].iloc[-2]) if len(valid) >= 2 else c_last
+    if c_last <= 0:
+        return None
+
+    chg_pct = ((c_last / c_prev) - 1.0) * 100.0 if c_prev > 0 else 0.0
+
+    ema20_s = _ema(valid["Close"], 20)
+    ema50_s = _ema(valid["Close"], min(50, len(valid)))
+    ema200_s = _ema(valid["Close"], min(200, len(valid)))
+    rsi_s = _rsi(valid["Close"], 14)
+    atr_s = _atr(valid["High"], valid["Low"], valid["Close"], 14)
+
+    ema20 = float(ema20_s.iloc[-1])
+    ema50 = float(ema50_s.iloc[-1])
+    ema200 = float(ema200_s.iloc[-1])
+    rsi_val = float(rsi_s.iloc[-1])
+    atr_val = float(atr_s.iloc[-1]) if pd.notna(atr_s.iloc[-1]) and float(atr_s.iloc[-1]) > 0 else max(c_last * 0.015, 0.05)
+
+    vol_last = float(valid["Volume"].iloc[-1])
+    vol_avg20 = float(valid["Volume"].tail(20).mean())
+    vol_ratio = (vol_last / vol_avg20) if vol_avg20 > 0 else 1.0
+
+    bull_score = 45.0
+    bear_score = 45.0
+
+    if c_last >= ema20:
+        bull_score += 15.0
     else:
-        out = out.reset_index(drop=True)
-    return out
+        bear_score += 15.0
 
+    if c_last >= ema50:
+        bull_score += 12.0
+    else:
+        bear_score += 12.0
 
-def pct(curr: float, prev: float) -> float:
-    if prev is None or prev == 0 or pd.isna(curr) or pd.isna(prev):
-        return 0.0
-    return float(((float(curr) - float(prev)) / float(prev)) * 100.0)
+    if len(valid) >= 200:
+        if c_last >= ema200:
+            bull_score += 8.0
+        else:
+            bear_score += 8.0
 
+    if chg_pct > 0:
+        bull_score += min(12.0, chg_pct * 3.0)
+    elif chg_pct < 0:
+        bear_score += min(12.0, abs(chg_pct) * 3.0)
 
-def rsi(series: pd.Series, period: int = 14) -> pd.Series:
-    s = pd.to_numeric(series, errors="coerce").astype(float)
-    delta = s.diff()
-    gain = delta.clip(lower=0.0).ewm(alpha=1.0 / period, adjust=False).mean()
-    loss = (-delta.clip(upper=0.0)).ewm(alpha=1.0 / period, adjust=False).mean()
-    rs = gain / loss.replace(0.0, np.nan)
-    res = 100.0 - (100.0 / (1.0 + rs))
-    res = res.mask((loss == 0.0) & (gain > 0.0), 100.0)
-    res = res.mask((loss == 0.0) & (gain == 0.0), 50.0)
-    return res
+    if 52.0 <= rsi_val <= 78.0:
+        bull_score += 8.0
+    elif 22.0 <= rsi_val <= 48.0:
+        bear_score += 8.0
 
+    if vol_ratio >= 1.2:
+        bull_score += 5.0
+        bear_score += 5.0
 
-def atr(df: pd.DataFrame, period: int = 14) -> pd.Series:
-    c = clean_ohlcv(df)
-    if c.empty:
-        return pd.Series(dtype=float)
-    high, low, close = c["High"], c["Low"], c["Close"]
-    prev_close = close.shift(1)
-    tr = pd.concat(
-        [high - low, (high - prev_close).abs(), (low - prev_close).abs()],
-        axis=1,
-    ).max(axis=1)
-    return tr.ewm(alpha=1.0 / period, adjust=False).mean()
+    bull_score = round(max(0.0, min(100.0, bull_score)), 2)
+    bear_score = round(max(0.0, min(100.0, bear_score)), 2)
 
-
-def adx(df: pd.DataFrame, period: int = 14) -> pd.Series:
-    c = clean_ohlcv(df)
-    if c.empty or len(c) < period + 2:
-        return pd.Series(dtype=float)
-    high, low, close = c["High"], c["Low"], c["Close"]
-    up_move = high.diff()
-    down_move = -low.diff()
-
-    plus_dm = np.where((up_move > down_move) & (up_move > 0), up_move, 0.0)
-    minus_dm = np.where((down_move > up_move) & (down_move > 0), down_move, 0.0)
-
-    prev_close = close.shift(1)
-    tr = pd.concat(
-        [high - low, (high - prev_close).abs(), (low - prev_close).abs()],
-        axis=1,
-    ).max(axis=1)
-
-    atr_s = tr.ewm(alpha=1.0 / period, adjust=False).mean().replace(0.0, np.nan)
-    plus_di = 100.0 * pd.Series(plus_dm, index=c.index).ewm(alpha=1.0 / period, adjust=False).mean() / atr_s
-    minus_di = 100.0 * pd.Series(minus_dm, index=c.index).ewm(alpha=1.0 / period, adjust=False).mean() / atr_s
-    dx = (100.0 * (plus_di - minus_di).abs() / (plus_di + minus_di).replace(0.0, np.nan)).fillna(0.0)
-    return dx.ewm(alpha=1.0 / period, adjust=False).mean()
-
-
-def compute_vwap(df: pd.DataFrame) -> float:
-    c = clean_ohlcv(df)
-    if c.empty:
-        return 0.0
-    typical_price = (c["High"] + c["Low"] + c["Close"]) / 3.0
-    cum_vol = c["Volume"].cumsum()
-    cum_pv = (typical_price * c["Volume"]).cumsum()
-    vwap_series = (cum_pv / cum_vol.replace(0.0, np.nan)).ffill()
-    val = vwap_series.iloc[-1]
-    if pd.isna(val) or val <= 0:
-        return float(c["Close"].iloc[-1])
-    return float(val)
-
-
-def analyze(df: pd.DataFrame) -> dict:
-    c = clean_ohlcv(df)
-    if c.empty or len(c) < 15:
-        return {}
-
-    close = c["Close"]
-    c_rsi = rsi(close)
-    c_atr = atr(c)
-    c_adx = adx(c)
-
-    ema20 = close.ewm(span=20, adjust=False).mean()
-    ema50 = close.ewm(span=50, adjust=False).mean()
-    ema200 = close.ewm(span=200, adjust=False).mean() if len(c) >= 200 else ema50
-
-    avg_vol_20 = c["Volume"].tail(20).mean()
-    last_vol = float(c["Volume"].iloc[-1])
-    vr = float(last_vol / avg_vol_20) if avg_vol_20 and avg_vol_20 > 0 else 0.0
-
-    price = float(close.iloc[-1])
-    atr_val = float(c_atr.iloc[-1]) if not pd.isna(c_atr.iloc[-1]) else price * 0.015
+    history_label = "1y/200+ bars" if len(valid) >= 200 else f"{len(valid)} bars"
 
     return {
-        "price": price,
-        "prev_close": float(close.iloc[-2]) if len(close) >= 2 else price,
-        "rsi": float(c_rsi.iloc[-1]) if not pd.isna(c_rsi.iloc[-1]) else 50.0,
-        "atr": atr_val,
-        "adx": float(c_adx.iloc[-1]) if not c_adx.empty and not pd.isna(c_adx.iloc[-1]) else 20.0,
-        "vr": vr,
-        "ema20": float(ema20.iloc[-1]),
-        "ema50": float(ema50.iloc[-1]),
-        "ema200": float(ema200.iloc[-1]),
-        "has_ema200_history": len(c) >= 200,
-        "vwap": compute_vwap(c),
-        "bars": len(c),
+        "close": round(c_last, 2),
+        "prev_close": round(c_prev, 2),
+        "change_pct": round(chg_pct, 2),
+        "ema20": round(ema20, 2),
+        "ema50": round(ema50, 2),
+        "ema200": round(ema200, 2),
+        "rsi": round(rsi_val, 1),
+        "atr": round(atr_val, 2),
+        "vol_ratio": round(vol_ratio, 2),
+        "bull_score": bull_score,
+        "bear_score": bear_score,
+        "history_label": history_label,
     }
