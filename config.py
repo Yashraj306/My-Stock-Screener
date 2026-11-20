@@ -24,5 +24,9 @@ except ValueError:
 
 MAX_ALLOCATION_PCT = float(os.getenv("MAX_ALLOCATION_PCT", "0.25"))
 MAX_OPEN_POSITIONS = int(os.getenv("MAX_OPEN_POSITIONS", "6"))
+MAX_SECTOR_POSITIONS = int(os.getenv("MAX_SECTOR_POSITIONS", "2"))
+MAX_PORTFOLIO_RISK_PCT = float(os.getenv("MAX_PORTFOLIO_RISK_PCT", "0.03"))
+MIN_DAILY_TURNOVER_RS = float(os.getenv("MIN_DAILY_TURNOVER_RS", "500000000"))  # ₹50 Cr default liquidity guard
+
 MIS_LEVERAGE = float(os.getenv("MIS_LEVERAGE", "5.0"))
 ALLOW_MIS_LEVERAGE = os.getenv("ALLOW_MIS_LEVERAGE", "true").strip().lower() in {"1", "true", "yes"}
