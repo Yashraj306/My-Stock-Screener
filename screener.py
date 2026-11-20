@@ -50,7 +50,6 @@ UPSTOX_ACCESS_TOKEN = (
     or os.getenv("UPSTOX_TOKEN")
     or ""
 ).strip()
-
 UPSTOX_BASE_V2 = "https://api.upstox.com/v2"
 
 YF_SYMBOL_MAP = {
@@ -135,7 +134,7 @@ def _fetch_upstox_1y(instrument_key: str) -> pd.DataFrame | None:
 def _fetch_yf_1y(symbol: str) -> pd.DataFrame | None:
     ticker = _yf_ticker(symbol)
     try:
-        df = yf.download(ticker, period="1y", interval="1d", progress=False, timeout=12)
+        df = yf.download(ticker, period="1y", interval="1d", progress=False, threads=False, timeout=12)
         norm = _normalize_df(df)
         if norm is not None:
             return norm
@@ -262,6 +261,65 @@ def _apply_portfolio_risk_caps(items: list[dict], max_items: int) -> list[dict]:
         sector_counts[sec] = sector_counts.get(sec, 0) + 1
         total_risk += trade_risk
     return selected
+def _build_entry_and_rationale(
+    sector: str,
+    is_bull: bool,
+    close: float,
+    atr: float,
+    vwap: float,
+    ema20: float,
+    rsi: float,
+    vol_ratio: float,
+    chg_pct: float,
+    rs_score: float,
+    chain_summary: dict | None,
+) -> dict:
+    atr_safe = max(atr, 0.05)
+    dist_from_vwap_atr = abs(close - vwap) / atr_safe
+
+    if is_bull:
+        overextended = (rsi >= 75.0) or (chg_pct >= 3.5) or (close > vwap and dist_from_vwap_atr >= 2.0)
+        best_low = round(max(min(vwap, close) - 0.25 * atr_safe, close - 1.0 * atr_safe), 2)
+        best_high = round(max(vwap, close - 0.35 * atr_safe), 2)
+        if best_low > best_high:
+            best_low, best_high = best_high, best_low
+    else:
+        overextended = (rsi <= 25.0) or (chg_pct <= -3.5) or (close < vwap and dist_from_vwap_atr >= 2.0)
+        best_low = round(min(vwap, close + 0.35 * atr_safe), 2)
+        best_high = round(min(max(vwap, close) + 0.25 * atr_safe, close + 1.0 * atr_safe), 2)
+        if best_low > best_high:
+            best_low, best_high = best_high, best_low
+
+    if overextended:
+        extension_status = "EXTENDED / NEAR TOP (Pullback Risk)"
+        entry_action = "WAIT FOR RETRACEMENT"
+    elif dist_from_vwap_atr > 1.1:
+        extension_status = "MODERATELY STRETCHED"
+        entry_action = "PREFER PULLBACK TO BEST ZONE"
+    else:
+        extension_status = "HEALTHY / IN-ZONE"
+        entry_action = "IMMEDIATE OR BEST ZONE"
+
+    oi_txt = ""
+    if chain_summary and chain_summary.get("oi_build_up"):
+        oi_txt = f" OI: {chain_summary.get('oi_build_up')} (PCR {chain_summary.get('pcr')})."
+
+    dir_txt = "Bullish alignment" if is_bull else "Bearish alignment"
+    why_trade = (
+        f"{dir_txt} ({chg_pct:+.2f}%), {'above' if close >= ema20 else 'below'} EMA20 ({ema20:.2f}) & "
+        f"{'above' if close >= vwap else 'below'} VWAP ({vwap:.2f}), RSI {rsi:.1f}, Vol {vol_ratio:.2f}x, "
+        f"RS vs Nifty {rs_score:+.2f}% in {sector}.{oi_txt}"
+    )
+
+    return {
+        "why_trade": why_trade,
+        "extension_status": extension_status,
+        "entry_action": entry_action,
+        "best_entry_low": best_low,
+        "best_entry_high": best_high,
+    }
+
+
 def _build_stock_setup(sym: str, ind: dict, rs_info: dict, is_bull: bool, chain_bundle: dict | None, strict_filters: bool = True) -> dict | None:
     close = float(ind["close"])
     atr = float(ind.get("atr") or max(close * 0.015, 1.0))
@@ -317,12 +375,27 @@ def _build_stock_setup(sym: str, ind: dict, rs_info: dict, is_bull: bool, chain_
     )
 
     rs_score = float((rs_info or {}).get("rs_score") or 0.0)
+    sector = SECTOR_MAP.get(sym, "OTHER")
+    rationale = _build_entry_and_rationale(
+        sector=sector,
+        is_bull=is_bull,
+        close=close,
+        atr=atr,
+        vwap=vwap,
+        ema20=ema20,
+        rsi=rsi,
+        vol_ratio=vol_ratio,
+        chg_pct=chg_pct,
+        rs_score=rs_score,
+        chain_summary=chain_summary,
+    )
+
     base_score = float(ind.get("bull_score" if is_bull else "bear_score") or 50.0)
     adj_score = round(max(0.0, min(100.0, 0.8 * base_score + 0.2 * (50.0 + rs_score * 2.0))), 2)
 
     return {
         "symbol": sym,
-        "sector": SECTOR_MAP.get(sym, "OTHER"),
+        "sector": sector,
         "side": "BULLISH" if is_bull else "BEARISH",
         "action": "BUY (LONG)" if is_bull else "SELL (SHORT)",
         "entry": round(close, 2),
@@ -345,6 +418,7 @@ def _build_stock_setup(sym: str, ind: dict, rs_info: dict, is_bull: bool, chain_
         "history_label": ind.get("history_label", "1y"),
         "chain_summary": chain_summary,
         "option_plan": opt_plan,
+        **rationale,
         **sizing,
     }
 
@@ -396,6 +470,20 @@ def _build_index_trades(candles: dict[str, pd.DataFrame], vix_val: float | None)
         max_loss_lot = plan.get("max_loss_lot")
         sizing_status = "CAPITAL NOT CONFIGURED" if not CAPITAL_CONFIGURED else "1 Lot Risk Cap"
 
+        rationale = _build_entry_and_rationale(
+            sector="INDEX",
+            is_bull=is_bull,
+            close=spot,
+            atr=atr,
+            vwap=ema20,
+            ema20=ema20,
+            rsi=float(ind.get("rsi") or 50.0),
+            vol_ratio=float(ind.get("vol_ratio") or 1.0),
+            chg_pct=chg_pct,
+            rs_score=0.0,
+            chain_summary=chain_summary,
+        )
+
         trades.append({
             "symbol": idx_sym,
             "sector": "INDEX",
@@ -417,6 +505,7 @@ def _build_index_trades(candles: dict[str, pd.DataFrame], vix_val: float | None)
             "sizing_status": sizing_status,
             "chain_summary": chain_summary,
             "option_plan": plan,
+            **rationale,
         })
     return trades
 
