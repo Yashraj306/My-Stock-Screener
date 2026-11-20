@@ -313,9 +313,6 @@ def evaluate_signals_chronologically(
             if not is_short:
                 hit_sl = (sl > 0) and (b_low <= sl)
                 hit_t1 = (t1 > 0) and (b_high >= t1)
-                if hit_sl and hit_t1:
-                    exit_price, exit_date, new_status = sl, b_date, "STOP_HIT"
-                    break
                 if hit_sl:
                     exit_price, exit_date, new_status = sl, b_date, "STOP_HIT"
                     break
@@ -325,9 +322,6 @@ def evaluate_signals_chronologically(
             else:
                 hit_sl = (sl > 0) and (b_high >= sl)
                 hit_t1 = (t1 > 0) and (b_low <= t1)
-                if hit_sl and hit_t1:
-                    exit_price, exit_date, new_status = sl, b_date, "STOP_HIT"
-                    break
                 if hit_sl:
                     exit_price, exit_date, new_status = sl, b_date, "STOP_HIT"
                     break
@@ -407,8 +401,9 @@ def walk_forward_summary(
     avg_r = round(float(valid_r.mean()), 2) if not valid_r.empty else None
 
     equity_curve = closed["net_pnl_num"].cumsum()
-    running_peak = equity_curve.cummax()
-    drawdown = equity_curve - running_peak
+    equity_with_zero = pd.concat([pd.Series([0.0]), equity_curve.reset_index(drop=True)], ignore_index=True)
+    running_peak = equity_with_zero.cummax()
+    drawdown = equity_with_zero - running_peak
     max_dd = round(float(drawdown.min()), 2)
 
     warning_msg = (
