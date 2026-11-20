@@ -1,534 +1,132 @@
-
-"""
-Stock Screener V2.0
-Conservative Swing / BTST Setup Engine
-
-Capital is optional.
-No leverage assumptions.
-No automatic order execution.
-"""
-
 import math
-import numpy as np
 import pandas as pd
 
 from config import (
-    SWING,
+    ALLOW_MIS_LEVERAGE,
     CAPITAL,
-    RISK_PCT,
+    CAPITAL_CONFIGURED,
     MAX_ALLOCATION_PCT,
-    CAPITAL_CONFIGURED
+    MIS_LEVERAGE,
+    RISK_PCT,
 )
-
-from tech import analyze, atr, pct, clean_ohlcv
-
-
-# ============================================================
-# 1. POSITION SIZING
-# ============================================================
-
-def position_size(entry, stop, capital=None):
-    """
-    Conservative position sizing.
-
-    Returns zero if capital is not configured.
-    Quantity is restricted by both risk and allocation limits.
-    """
-
-    capital = CAPITAL if capital is None else capital
-
-    if capital is None:
-        return 0
-
-    if not all(
-        math.isfinite(float(x))
-        for x in [entry, stop, capital]
-    ):
-        return 0
-
-    if entry <= 0 or stop <= 0 or capital <= 0:
-        return 0
-
-    risk_per_share = abs(entry - stop)
-
-    if risk_per_share <= 0:
-        return 0
-
-    risk_amount = capital * (RISK_PCT / 100.0)
-
-    allocation_amount = (
-        capital * MAX_ALLOCATION_PCT / 100.0
-    )
-
-    risk_qty = math.floor(
-        risk_amount / risk_per_share
-    )
-
-    allocation_qty = math.floor(
-        allocation_amount / entry
-    )
-
-    return max(
-        0,
-        min(risk_qty, allocation_qty)
-    )
-
-
-# ============================================================
-# 2. SWING SETUP ENGINE
-# ============================================================
-
-def generate_setup(df, market_data=None, sector_data=None):
-    """
-    Generate daily timeframe Swing BUY / SELL candidates.
-
-    Requires:
-    - Valid OHLCV data
-    - EMA20, EMA50, EMA200
-    - RSI
-    - ADX
-    - ATR
-    - Volume confirmation
-
-    This function does not place orders.
-    """
-
-    data = clean_ohlcv(df)
-
-    # Require sufficient history for EMA200.
-    if data.empty or len(data) < 200:
-        return None
-
-    t = analyze(data)
-
-    if not t:
-        return None
-
-    price = t.get("price")
-    c_atr = t.get("atr")
-    c_rsi = t.get("rsi")
-    c_adx = t.get("adx")
-
-    ema20 = t.get("ema20")
-    ema50 = t.get("ema50")
-    ema200 = t.get("ema200")
-
-    volume_ratio = t.get("vr")
-
-    required = [
-        price, c_atr, c_rsi, c_adx,
-        ema20, ema50, ema200, volume_ratio
-    ]
-
-    if any(
-        value is None or not math.isfinite(float(value))
-        for value in required
-    ):
-        return None
-
-    if price <= 0 or c_atr <= 0:
-        return None
-
-    if c_adx < float(SWING.get("ADX_MIN", 18)):
-        return None
-
-    if volume_ratio < float(
-        SWING.get("MIN_VOLUME_RATIO", 1.2)
-    ):
-        return None
-
-    atr_pct = (c_atr / price) * 100
-
-    if atr_pct > float(
-        SWING.get("MAX_ATR_PERCENT", 8)
-    ):
-        return None
-
-    # ------------------------------------------
-    # Trend Structure
-    # ------------------------------------------
-
-    bullish_trend = (
-        price > ema20 > ema50 > ema200
-    )
-
-    bearish_trend = (
-        price < ema20 < ema50 < ema200
-    )
-
-    signal = None
-    stop_loss = 0.0
-
-    min_rsi = float(
-        SWING.get("RSI_BULL_MIN", 50)
-    )
-
-    max_rsi = float(
-        SWING.get("RSI_BULL_MAX", 72)
-    )
-
-    bear_min_rsi = float(
-        SWING.get("RSI_BEAR_MIN", 28)
-    )
-
-    bear_max_rsi = float(
-        SWING.get("RSI_BEAR_MAX", 50)
-    )
-
-    atr_multiplier = float(
-        SWING.get("ATR_STOP_MULTIPLIER", 2.0)
-    )
-
-    target_1_r = float(
-        SWING.get("TARGET_1_R", 1.5)
-    )
-
-    target_2_r = float(
-        SWING.get("TARGET_2_R", 2.5)
-    )
-
-    # ------------------------------------------
-    # Bullish Setup
-    # ------------------------------------------
-
-    if (
-        bullish_trend
-        and min_rsi <= c_rsi <= max_rsi
-    ):
-
-        signal = "BUY"
-
-        stop_loss = round(
-            price - (atr_multiplier * c_atr), 2
-        )
-
-        risk = price - stop_loss
-
-    # ------------------------------------------
-    # Bearish Setup
-    # ------------------------------------------
-
-    elif (
-        bearish_trend
-        and bear_min_rsi <= c_rsi <= bear_max_rsi
-    ):
-
-        signal = "SELL"
-
-        stop_loss = round(
-            price + (atr_multiplier * c_atr), 2
-        )
-
-        risk = stop_loss - price
-
-    else:
-        return None
-
-    if risk <= 0:
-        return None
-
-    # ------------------------------------------
-    # Targets
-    # ------------------------------------------
-
-    if signal == "BUY":
-
-        target_1 = round(
-            price + target_1_r * risk, 2
-        )
-
-        target_2 = round(
-            price + target_2_r * risk, 2
-        )
-
-    else:
-
-        target_1 = round(
-            price - target_1_r * risk, 2
-        )
-
-        target_2 = round(
-            price - target_2_r * risk, 2
-        )
-
-    # ------------------------------------------
-    # Position Sizing
-    # ------------------------------------------
-
-    qty = position_size(price, stop_loss)
-
-    capital_needed = round(qty * price, 2)
-
-    if CAPITAL_CONFIGURED:
-        sizing_status = (
-            "SIZED"
-            if qty > 0
-            else "RISK_LIMIT_BLOCKED"
-        )
-    else:
-        sizing_status = "CAPITAL_NOT_CONFIGURED"
-
-    # ------------------------------------------
-    # Output
-    # ------------------------------------------
+from tech import analyze, atr, clean_ohlcv, compute_indicators, cumulative_vwap, pct
+
+
+def _to_fraction(val: float, default: float) -> float:
+    try:
+        f = float(val)
+    except (TypeError, ValueError):
+        return default
+    if f <= 0:
+        return 0.0
+    return f / 100.0 if f > 1.0 else f
+
+
+def position_size(
+    entry: float,
+    stop_loss: float,
+    capital: float | None = None,
+    risk_pct: float | None = None,
+    max_allocation_pct: float | None = None,
+    allow_leverage: bool | None = None,
+    leverage: float | None = None,
+) -> dict:
+    cap = CAPITAL if capital is None else float(capital)
+    cap_ok = (cap > 0.0) if capital is not None else bool(CAPITAL_CONFIGURED and CAPITAL > 0.0)
+
+    r_frac = _to_fraction(RISK_PCT if risk_pct is None else risk_pct, 0.01)
+    a_frac = _to_fraction(MAX_ALLOCATION_PCT if max_allocation_pct is None else max_allocation_pct, 0.25)
+
+    lev_enabled = ALLOW_MIS_LEVERAGE if allow_leverage is None else bool(allow_leverage)
+    lev_mult_raw = MIS_LEVERAGE if leverage is None else float(leverage)
+    lev_mult = lev_mult_raw if (lev_enabled and lev_mult_raw > 1.0) else 1.0
+
+    if not cap_ok or cap <= 0.0:
+        return {
+            "qty": 0,
+            "exposure": 0.0,
+            "est_margin": 0.0,
+            "max_risk": 0.0,
+            "sizing_status": "CAPITAL NOT CONFIGURED",
+        }
+
+    entry_f = float(entry or 0.0)
+    sl_f = float(stop_loss or 0.0)
+    risk_per_share = abs(entry_f - sl_f)
+    if entry_f <= 0.0 or risk_per_share <= 0.0:
+        return {
+            "qty": 0,
+            "exposure": 0.0,
+            "est_margin": 0.0,
+            "max_risk": 0.0,
+            "sizing_status": "INVALID SL / ENTRY",
+        }
+
+    max_risk_budget = cap * r_frac
+    max_notional_by_alloc = (cap * a_frac) * lev_mult
+
+    qty_by_risk = math.floor(max_risk_budget / risk_per_share)
+    qty_by_alloc = math.floor(max_notional_by_alloc / entry_f)
+    qty = max(min(qty_by_risk, qty_by_alloc), 0)
+
+    if qty <= 0:
+        return {
+            "qty": 0,
+            "exposure": 0.0,
+            "est_margin": 0.0,
+            "max_risk": 0.0,
+            "sizing_status": "SIZE TOO SMALL FOR RISK CAP",
+        }
+
+    exposure = round(qty * entry_f, 2)
+    est_margin = round(exposure / lev_mult, 2)
+    max_risk = round(qty * risk_per_share, 2)
+    lev_label = f"MIS {lev_mult:g}x" if lev_mult > 1.0 else "1x Cash"
 
     return {
-        "signal": signal,
-
-        "strategy": "SWING",
-
-        "entry": round(price, 2),
-
-        "stop_loss": stop_loss,
-
-        "target_1": target_1,
-
-        "target_2": target_2,
-
-        "risk_per_share": round(risk, 2),
-
-        "rr_ratio": target_1_r,
-
         "qty": qty,
-
-        "capital_needed": capital_needed,
-
-        "risk_amount": round(qty * risk, 2),
-
-        "sizing_status": sizing_status,
-
-        "capital_configured": CAPITAL_CONFIGURED,
-
-        "rsi": round(c_rsi, 2),
-
-        "adx": round(c_adx, 2),
-
-        "atr": round(c_atr, 2),
-
-        "atr_pct": round(atr_pct, 2),
-
-        "ema20": round(ema20, 2),
-
-        "ema50": round(ema50, 2),
-
-        "ema200": round(ema200, 2),
-
-        "volume_ratio": round(volume_ratio, 2),
-
-        "trade_execution": "SIGNAL_ONLY"
+        "exposure": exposure,
+        "est_margin": est_margin,
+        "max_risk": max_risk,
+        "sizing_status": f"{lev_label} Assumed",
     }
 
 
-# ============================================================
-# 3. SUPPORT AND RESISTANCE LEVELS
-# ============================================================
-
-def levels(df):
-    """Calculate previous-day pivot levels."""
-
-    data = clean_ohlcv(df)
-
-    if len(data) < 2:
-        return {}
-
-    prev = data.iloc[-2]
-
-    high = float(prev["High"])
-    low = float(prev["Low"])
-    close = float(prev["Close"])
-
-    pivot = (high + low + close) / 3
-
-    r1 = (2 * pivot) - low
-    s1 = (2 * pivot) - high
-
-    r2 = pivot + (high - low)
-    s2 = pivot - (high - low)
-
-    return {
-        "pivot": round(pivot, 2),
-        "r1": round(r1, 2),
-        "s1": round(s1, 2),
-        "r2": round(r2, 2),
-        "s2": round(s2, 2)
-    }
-
-
-# ============================================================
-# 4. PRICE ACTION FLAGS
-# ============================================================
-
-def flags_for(df):
-    """Detect volume spikes, inside bars and gaps."""
-
-    data = clean_ohlcv(df)
-
-    flags = []
-
-    if len(data) < 21:
-        return flags
-
-    curr = data.iloc[-1]
-    prev = data.iloc[-2]
-    prior = data.iloc[-3]
-
-    # Volume spike compared with previous 20 candles.
-    avg_volume = data["Volume"].iloc[-21:-1].mean()
-
-    if avg_volume > 0:
-        if curr["Volume"] >= 2 * avg_volume:
-            flags.append("HIGH_VOL")
-
-    # Inside Bar
-    inside_bar = (
-        prev["High"] < prior["High"]
-        and prev["Low"] > prior["Low"]
-    )
-
-    if inside_bar:
-
-        if curr["Close"] > prev["High"]:
-            flags.append("INSIDE_BAR_BULLISH_BO")
-
-        elif curr["Close"] < prev["Low"]:
-            flags.append("INSIDE_BAR_BEARISH_BD")
-
-    # Gap
-    gap_pct = pct(
-        curr["Open"],
-        prev["Close"]
-    )
-
-    if gap_pct > 1.2:
-        flags.append("GAP_UP")
-
-    elif gap_pct < -1.2:
-        flags.append("GAP_DOWN")
-
-    return flags
-
-
-# ============================================================
-# 5. PRE-RALLY DETECTION
-# ============================================================
-
-def prerally(df):
-    """Detect possible volatility contraction setups."""
-
-    data = clean_ohlcv(df)
-
-    if len(data) < 50:
-        return False
-
-    t = analyze(data)
-
-    if not t:
-        return False
-
-    ema20 = t.get("ema20")
-    rsi_value = t.get("rsi")
-    price = t.get("price")
-
-    if (
-        ema20 is None
-        or rsi_value is None
-        or price is None
-        or price <= 0
-    ):
-        return False
-
-    recent_range = (
-        data["High"].iloc[-5:]
-        - data["Low"].iloc[-5:]
-    ).mean()
-
-    previous_range = (
-        data["High"].iloc[-20:-5]
-        - data["Low"].iloc[-20:-5]
-    ).mean()
-
-    if previous_range <= 0:
-        return False
-
-    contraction = (
-        recent_range < previous_range * 0.75
-    )
-
-    near_ema = (
-        abs(price - ema20) / price < 0.015
-    )
-
-    momentum_building = 48 <= rsi_value <= 62
-
-    return bool(
-        contraction
-        and near_ema
-        and momentum_building
-    )
-
-
-# ============================================================
-# 6. BTST CANDIDATE FILTER
-# ============================================================
-
-def btst_gate(df):
-    """
-    Identify possible BTST candidates.
-
-    This is a watchlist filter, not an overnight
-    execution recommendation.
-    """
-
-    data = clean_ohlcv(df)
-
-    if len(data) < 11:
-        return False
-
-    curr = data.iloc[-1]
-
-    day_range = curr["High"] - curr["Low"]
-
-    if day_range <= 0:
-        return False
-
-    close_position = (
-        curr["Close"] - curr["Low"]
-    ) / day_range
-
-    previous_average_volume = (
-        data["Volume"].iloc[-11:-1].mean()
-    )
-
-    if previous_average_volume <= 0:
-        return False
-
-    volume_surge = (
-        curr["Volume"] >= previous_average_volume * 1.3
-    )
-
-    return bool(
-        close_position >= 0.80
-        and volume_surge
-    )
-
-
-# ============================================================
-# 7. SIGNAL GRADING
-# ============================================================
-
-def grade(score):
-    """Classify a setup score."""
-
-    if score >= 85:
-        return "A+"
-
-    if score >= 75:
-        return "A"
-
-    if score >= 65:
-        return "B"
-
-    if score >= 50:
-        return "C"
-
-    return "NO TRADE"
+def build_directional_levels(entry: float, atr_val: float, ema20: float, vwap: float, is_bull: bool) -> dict | None:
+    c = float(entry or 0.0)
+    if c <= 0.0:
+        return None
+    a = float(atr_val or 0.0)
+    if a <= 0.0:
+        a = max(c * 0.015, 0.05)
+
+    if is_bull:
+        sl = round(max(c - 1.5 * a, min(float(ema20 or c), float(vwap or c)) * 0.992), 2)
+        if sl >= c:
+            sl = round(max(c - 1.5 * a, 0.05), 2)
+        if sl >= c:
+            return None
+        t1 = round(c + 1.8 * a, 2)
+        t2 = round(c + 3.0 * a, 2)
+    else:
+        sl = round(min(c + 1.5 * a, max(float(ema20 or c), float(vwap or c)) * 1.008), 2)
+        if sl <= c:
+            sl = round(c + 1.5 * a, 2)
+        if sl <= c:
+            return None
+        t1 = round(max(c - 1.8 * a, 0.05), 2)
+        t2 = round(max(c - 3.0 * a, 0.05), 2)
+
+    return {"stop_loss": sl, "target_1": t1, "target_2": t2}
+
+
+__all__ = [
+    "analyze",
+    "atr",
+    "build_directional_levels",
+    "clean_ohlcv",
+    "compute_indicators",
+    "cumulative_vwap",
+    "pct",
+    "position_size",
+]
