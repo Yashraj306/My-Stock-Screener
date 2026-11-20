@@ -24,6 +24,37 @@ def fmt_inr(value, decimals=2):
         return esc(value)
 
 
+def _render_rationale_and_entry_box(item: dict, is_bull: bool = True) -> str:
+    why_trade = item.get("why_trade")
+    ext_status = item.get("extension_status")
+    entry_action = item.get("entry_action")
+    be_low = item.get("best_entry_low")
+    be_high = item.get("best_entry_high")
+
+    if not any([why_trade, ext_status, entry_action, be_low is not None, be_high is not None]):
+        return ""
+
+    action_color = GOLD if "WAIT" in str(entry_action or "").upper() else (GREEN if is_bull else RED)
+    zone_str = (
+        f"{fmt_inr(be_low)} – {fmt_inr(be_high)}"
+        if (be_low not in (None, "") and be_high not in (None, ""))
+        else "—"
+    )
+
+    return f"""
+    <div style="margin-top:8px;padding:8px 10px;background:#FFFDF7;border:1px solid #FDE68A;border-radius:6px;font-size:10.5px;line-height:1.65;color:{NAVY};">
+      {f'<div><b>Why This Trade:</b> {esc(why_trade)}</div>' if why_trade else ''}
+      <div style="margin-top:2px;">
+        <b>Timing / Extension:</b> {esc(ext_status)} &nbsp;|&nbsp;
+        <b>Entry Plan:</b> <span style="color:{action_color};font-weight:800;">{esc(entry_action)}</span>
+      </div>
+      <div style="margin-top:2px;">
+        <b>Best Entry Zone (Pullback):</b> <b>{esc(zone_str)}</b>
+      </div>
+    </div>
+    """
+
+
 def _render_levels_and_sizing_box(item: dict, is_bull: bool = True) -> str:
     entry = item.get("entry") or item.get("close")
     sl = item.get("stop_loss")
@@ -103,6 +134,7 @@ def render_intraday_card(item: dict, bullish: bool = True) -> str:
           </td>
         </tr>
       </table>
+      {_render_rationale_and_entry_box(item, is_bull=bullish)}
       {_render_levels_and_sizing_box(item, is_bull=bullish)}
       {f'<div style="margin-top:6px;font-size:10px;color:{MUTED};">{" &nbsp;|&nbsp; ".join(esc(x) for x in meta_parts)}</div>' if meta_parts else ''}
     </div>
@@ -187,6 +219,7 @@ def render_option_card(item: dict) -> str:
           </td>
         </tr>
       </table>
+      {_render_rationale_and_entry_box(item, is_bull=is_bull)}
       {plan_html}
       {_render_levels_and_sizing_box(item, is_bull=is_bull)}
       {chain_line}
