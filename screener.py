@@ -45,7 +45,12 @@ warnings.filterwarnings("ignore")
 logging.basicConfig(level=logging.INFO, format="%(asctime)s - %(levelname)s - %(message)s")
 
 IST = dt.timezone(dt.timedelta(hours=5, minutes=30))
-UPSTOX_ACCESS_TOKEN = os.getenv("UPSTOX_ACCESS_TOKEN", "").strip()
+UPSTOX_ACCESS_TOKEN = (
+    os.getenv("UPSTOX_ACCESS_TOKEN")
+    or os.getenv("UPSTOX_TOKEN")
+    or ""
+).strip()
+
 UPSTOX_BASE_V2 = "https://api.upstox.com/v2"
 
 YF_SYMBOL_MAP = {
