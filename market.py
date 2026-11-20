@@ -10,14 +10,20 @@ SECTOR_MAP = {
     "CHOLAFIN": "FINANCE", "MUTHOOTFIN": "FINANCE", "PFC": "FINANCE", "RECLTD": "FINANCE",
     "HDFCLIFE": "FINANCE", "SBILIFE": "FINANCE", "ICICIPRULI": "FINANCE", "ICICIGI": "FINANCE",
     "TCS": "IT", "INFY": "IT", "HCLTECH": "IT", "WIPRO": "IT", "TECHM": "IT",
+    "PERSISTENT": "IT", "COFORGE": "IT",
     "SUNPHARMA": "PHARMA", "CIPLA": "PHARMA", "DRREDDY": "PHARMA", "DIVISLAB": "PHARMA",
-    "APOLLOHOSP": "PHARMA", "MARUTI": "AUTO", "M&M": "AUTO", "EICHERMOT": "AUTO",
-    "HEROMOTOCO": "AUTO", "RELIANCE": "ENERGY", "NTPC": "ENERGY", "POWERGRID": "ENERGY",
-    "BPCL": "ENERGY", "ONGC": "ENERGY", "COALINDIA": "ENERGY", "TATASTEEL": "METAL",
-    "JSWSTEEL": "METAL", "HINDALCO": "METAL", "ITC": "FMCG", "HINDUNILVR": "FMCG",
-    "NESTLEIND": "FMCG", "BRITANNIA": "FMCG", "LT": "INFRA", "BHARTIARTL": "TELECOM",
+    "MAXHEALTH": "PHARMA", "LUPIN": "PHARMA", "AUROPHARMA": "PHARMA",
+    "MARUTI": "AUTO", "M&M": "AUTO", "EICHERMOT": "AUTO", "HEROMOTOCO": "AUTO", "TVSMOTOR": "AUTO",
+    "RELIANCE": "ENERGY", "NTPC": "ENERGY", "POWERGRID": "ENERGY",
+    "BPCL": "ENERGY", "ONGC": "ENERGY", "COALINDIA": "ENERGY",
+    "TATASTEEL": "METAL", "JSWSTEEL": "METAL", "HINDALCO": "METAL",
+    "ITC": "FMCG", "HINDUNILVR": "FMCG", "NESTLEIND": "FMCG", "BRITANNIA": "FMCG",
+    "JUBLFOOD": "FMCG", "PAGEIND": "FMCG",
+    "LT": "INFRA", "BHARTIARTL": "TELECOM",
     "ADANIENT": "OTHER", "ADANIPORTS": "OTHER", "ULTRACEMCO": "OTHER", "GRASIM": "OTHER",
     "TITAN": "OTHER", "TRENT": "OTHER", "BEL": "OTHER", "ASIANPAINT": "OTHER",
+    "HAL": "OTHER", "DIXON": "OTHER", "POLYCAB": "OTHER", "CUMMINSIND": "OTHER",
+    "INDHOTEL": "OTHER", "IRCTC": "OTHER", "ASTRAL": "OTHER",
 }
 
 
@@ -59,6 +65,46 @@ def fetch_global_cues():
             logging.debug("Global cue fetch failed for %s (%s): %s", name, sym, exc)
             continue
     return results
+
+
+def compute_relative_strength(candles: dict) -> dict:
+    """Computes 20-day and 5-day excess return (%) vs NIFTY for each symbol."""
+    nifty_df = candles.get("NIFTY")
+    if nifty_df is None or len(nifty_df) < 6:
+        return {}
+
+    n_close = pd.to_numeric(nifty_df["Close"], errors="coerce").dropna()
+    if len(n_close) < 6 or float(n_close.iloc[-1]) <= 0:
+        return {}
+
+    n_5d = ((float(n_close.iloc[-1]) / float(n_close.iloc[-6])) - 1.0) * 100.0
+    n_20d = (
+        ((float(n_close.iloc[-1]) / float(n_close.iloc[-21])) - 1.0) * 100.0
+        if len(n_close) >= 21 and float(n_close.iloc[-21]) > 0
+        else n_5d
+    )
+
+    rs_map = {}
+    for sym, df in candles.items():
+        if sym in {"NIFTY", "BANKNIFTY", "FINNIFTY", "SENSEX"} or df is None or len(df) < 6:
+            continue
+        s_close = pd.to_numeric(df["Close"], errors="coerce").dropna()
+        if len(s_close) < 6 or float(s_close.iloc[-1]) <= 0:
+            continue
+        s_5d = ((float(s_close.iloc[-1]) / float(s_close.iloc[-6])) - 1.0) * 100.0
+        s_20d = (
+            ((float(s_close.iloc[-1]) / float(s_close.iloc[-21])) - 1.0) * 100.0
+            if len(s_close) >= 21 and float(s_close.iloc[-21]) > 0
+            else s_5d
+        )
+        rs_5d = round(s_5d - n_5d, 2)
+        rs_20d = round(s_20d - n_20d, 2)
+        rs_map[sym] = {
+            "rs_5d": rs_5d,
+            "rs_20d": rs_20d,
+            "rs_score": round(0.6 * rs_20d + 0.4 * rs_5d, 2),
+        }
+    return rs_map
 
 
 def compute_sector_strength(candles):
