@@ -80,9 +80,7 @@ def _estimate_nse_bse_round_trip_cost(
         }
 
     slip_rate = max(float(slippage_bps_per_side), 0.0) / 10000.0
-    slip_entry = entry_price * slip_rate
-    slip_exit = exit_price * slip_rate
-    slippage_cost = (slip_entry + slip_exit) * q
+    slippage_cost = (entry_price * slip_rate + exit_price * slip_rate) * q
 
     buy_turnover = entry_price * q
     sell_turnover = exit_price * q
@@ -171,7 +169,7 @@ def log_signals(
         t2 = float(item.get("target_2") or 0.0)
         qty = int(item.get("qty") or 0)
         sym = str(item.get("symbol") or "").strip()
-        if not sym or entry <= 0:
+        if not sym or entry <= 0 or qty <= 0:
             continue
         sig_id = f"{sess_day}-{mode}-EQ-{sym}-{side}"
         rows_to_add.append({
@@ -213,8 +211,10 @@ def log_signals(
         t1 = float(item.get("target_1") or 0.0)
         t2 = float(item.get("target_2") or 0.0)
         plan = item.get("option_plan") or item.get("hedge_plan") or {}
+        if not plan.get("available"):
+            continue
         lot_size = int(plan.get("lot_size") or 0)
-        if not sym or entry <= 0:
+        if not sym or entry <= 0 or lot_size <= 0:
             continue
         sig_id = f"{sess_day}-{mode}-OPT-{sym}-{side}"
         rows_to_add.append({
@@ -237,7 +237,7 @@ def log_signals(
             "total_costs": "",
             "net_pnl": "",
             "r_multiple": "",
-            "notes": str(plan.get("strategy") or "UNAVAILABLE"),
+            "notes": str(plan.get("strategy") or ""),
         })
 
     if not rows_to_add:
@@ -279,15 +279,13 @@ def evaluate_signals_chronologically(
         if candles is None or candles.empty or not sig_date:
             continue
 
-        work = candles.copy()
-        work.columns = [str(c).strip().capitalize() for c in work.columns]
-        if not all(c in work.columns for c in ["Date", "High", "Low", "Close"]):
+        work = clean_ohlcv(candles, min_bars=1)
+        if work is None:
             continue
 
-        work["_bar_date"] = work["Date"].apply(_normalize_date_str)
-        future_bars = work[work["_bar_date"] > sig_date]
+        future_bars = work[work["Date"] > sig_date]
         if cutoff_str:
-            future_bars = future_bars[future_bars["_bar_date"] <= cutoff_str]
+            future_bars = future_bars[future_bars["Date"] <= cutoff_str]
         if future_bars.empty:
             continue
 
@@ -305,7 +303,7 @@ def evaluate_signals_chronologically(
         new_status = "OPEN"
 
         for _, bar in future_bars.iterrows():
-            b_date = str(bar["_bar_date"])
+            b_date = str(bar["Date"])
             b_high = float(bar["High"])
             b_low = float(bar["Low"])
             b_close = float(bar["Close"])
@@ -335,14 +333,13 @@ def evaluate_signals_chronologically(
         if new_status == "OPEN" and exit_price is not None and len(future_bars) >= 3:
             new_status = "TIME_EXIT"
 
-        if new_status != "OPEN" and exit_price is not None and entry > 0:
+        if new_status != "OPEN" and exit_price is not None and entry > 0 and qty > 0:
             move_per_unit = (entry - exit_price) if is_short else (exit_price - entry)
-            effective_qty = qty if qty > 0 else 1
-            gross_pnl = round(move_per_unit * effective_qty, 2)
+            gross_pnl = round(move_per_unit * qty, 2)
             costs = _estimate_nse_bse_round_trip_cost(
                 entry_price=entry,
                 exit_price=exit_price,
-                qty=effective_qty,
+                qty=qty,
                 instrument_type=inst_type,
                 slippage_bps_per_side=slippage_bps_per_side,
             )["total_costs"]
@@ -383,7 +380,10 @@ def walk_forward_summary(
             "avg_r_multiple": None,
             "max_drawdown_net_pnl": 0.0,
             "statistically_reliable": False,
-            "sample_warning": f"Insufficient sample size (0 closed trades < {min_sample_size} minimum). Do not treat as statistically reliable.",
+            "sample_warning": (
+                f"LOW SAMPLE WARNING: 0 closed post-cost trades logged (< {min_sample_size} minimum). "
+                "Do not claim win rate or accuracy."
+            ),
         }
 
     closed["net_pnl_num"] = pd.to_numeric(closed["net_pnl"], errors="coerce").fillna(0.0)
@@ -423,9 +423,4 @@ def walk_forward_summary(
         "statistically_reliable": not low_sample_warning,
         "sample_warning": warning_msg,
     }
-
-
-if __name__ == "__main__":
-    summary = walk_forward_summary()
-    for k, v in summary.items():
-        print(f"{k}: {v}")
+    
