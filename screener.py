@@ -5,7 +5,6 @@ import os
 import warnings
 from concurrent.futures import ThreadPoolExecutor
 from urllib.parse import quote
-from tracker import evaluate_signals_chronologically, log_signals, walk_forward_summary
 
 import pandas as pd
 import requests
@@ -18,6 +17,9 @@ from config import (
     CAPITAL_CONFIGURED,
     MAX_ALLOCATION_PCT,
     MAX_OPEN_POSITIONS,
+    MAX_PORTFOLIO_RISK_PCT,
+    MAX_SECTOR_POSITIONS,
+    MIN_DAILY_TURNOVER_RS,
     MIS_LEVERAGE,
     MODE,
     RISK_PCT,
@@ -27,543 +29,523 @@ from config import (
 from market import (
     SECTOR_MAP,
     compute_point_contributors,
+    compute_relative_strength,
     compute_sector_strength,
     fetch_global_cues,
 )
 from notify import send_alert
 from option_strategy import select_option_strategy
 from options_data import chain_upstox
-from tech import analyze, clean_ohlcv, pct
-from universe import STOCKS_UNIVERSE, eq_keys
+from report import render_html_report
+from tech import compute_indicators
+from tracker import evaluate_signals_chronologically, log_signals, walk_forward_summary
+from universe import INDEX_MAP, LOT_SIZES, STOCKS_UNIVERSE, eq_keys
 
 warnings.filterwarnings("ignore")
-
 logging.basicConfig(level=logging.INFO, format="%(asctime)s - %(levelname)s - %(message)s")
-UPSTOX_TOKEN = os.getenv("UPSTOX_TOKEN", "").strip()
+
 IST = dt.timezone(dt.timedelta(hours=5, minutes=30))
+UPSTOX_ACCESS_TOKEN = os.getenv("UPSTOX_ACCESS_TOKEN", "").strip()
+UPSTOX_BASE_V2 = "https://api.upstox.com/v2"
+
+YF_SYMBOL_MAP = {
+    "NIFTY": "^NSEI",
+    "BANKNIFTY": "^NSEBANK",
+    "FINNIFTY": "NIFTY_FIN_SERVICE.NS",
+    "SENSEX": "^BSESN",
+    "M&M": "M&M.NS",
+}
 
 
-def _fetch_upstox_historical_candles() -> tuple[dict[str, pd.DataFrame], bool]:
-    if not UPSTOX_TOKEN:
-        return {}, False
-
-    headers = {
-        "Accept": "application/json",
-        "Authorization": f"Bearer {UPSTOX_TOKEN}",
-    }
-    key_map = eq_keys()
-    to_date = dt.datetime.now(IST).date().strftime("%Y-%m-%d")
-    from_date = (dt.datetime.now(IST).date() - dt.timedelta(days=375)).strftime("%Y-%m-%d")
-    candles_by_sym: dict[str, pd.DataFrame] = {}
-
-    def _fetch_one(item: tuple[str, str]) -> tuple[str, pd.DataFrame | None]:
-        sym, inst_key = item
-        encoded = quote(inst_key, safe="")
-        url = f"https://api.upstox.com/v2/historical-candle/{encoded}/day/{to_date}/{from_date}"
-        try:
-            resp = requests.get(url, headers=headers, timeout=8)
-            if resp.status_code != 200:
-                return sym, None
-            raw_candles = resp.json().get("data", {}).get("candles", [])
-            if not raw_candles:
-                return sym, None
-            df = pd.DataFrame(
-                raw_candles,
-                columns=["Date", "Open", "High", "Low", "Close", "Volume", "OI"],
-            )
-            cleaned = clean_ohlcv(df)
-            if cleaned.empty or len(cleaned) < 20:
-                return sym, None
-            return sym, cleaned
-        except Exception as exc:
-            logging.debug("Upstox historical fetch failed for %s: %s", sym, exc)
-            return sym, None
-
-    with ThreadPoolExecutor(max_workers=10) as pool:
-        for sym, df in pool.map(_fetch_one, key_map.items()):
-            if df is not None:
-                candles_by_sym[sym] = df
-
-    if len(candles_by_sym) < 10:
-        return {}, False
-    return candles_by_sym, True
+def _yf_ticker(sym: str) -> str:
+    return YF_SYMBOL_MAP.get(sym, f"{sym}.NS")
 
 
-def _fetch_yfinance_candles() -> tuple[dict[str, pd.DataFrame], str]:
-    tickers = {
-        "NIFTY": "^NSEI",
-        "BANKNIFTY": "^NSEBANK",
-        "FINNIFTY": "NIFTY_FIN_SERVICE.NS",
-        "SENSEX": "^BSESN",
-    }
-    for sym in STOCKS_UNIVERSE:
-        tickers[sym] = f"{sym}.NS"
+def _normalize_df(df: pd.DataFrame) -> pd.DataFrame | None:
+    if df is None or df.empty:
+        return None
+    work = df.copy()
+    if isinstance(work.columns, pd.MultiIndex):
+        work.columns = [c[0] for c in work.columns]
+    work.columns = [str(c).strip().capitalize() for c in work.columns]
 
+    if "Date" not in work.columns:
+        if isinstance(work.index, pd.DatetimeIndex):
+            work = work.reset_index().rename(columns={work.columns[0]: "Date"})
+        elif "Datetime" in work.columns:
+            work = work.rename(columns={"Datetime": "Date"})
+        else:
+            return None
+
+    needed = ["Date", "Open", "High", "Low", "Close"]
+    if not all(c in work.columns for c in needed):
+        return None
+    if "Volume" not in work.columns:
+        work["Volume"] = 0.0
+
+    work["Date"] = pd.to_datetime(work["Date"], errors="coerce")
+    for col in ["Open", "High", "Low", "Close", "Volume"]:
+        work[col] = pd.to_numeric(work[col], errors="coerce")
+
+    work = work.dropna(subset=["Date", "Open", "High", "Low", "Close"]).sort_values("Date").drop_duplicates("Date")
+    work = work[work["Close"] > 0]
+    if len(work) < 30:
+        return None
+    work["Date"] = work["Date"].dt.strftime("%Y-%m-%d")
+    return work.reset_index(drop=True)
+
+
+def _fetch_upstox_1y(instrument_key: str) -> pd.DataFrame | None:
+    if not UPSTOX_ACCESS_TOKEN or not instrument_key:
+        return None
+    end_date = dt.datetime.now(IST).date()
+    start_date = end_date - dt.timedelta(days=370)
+    encoded = quote(instrument_key, safe="")
+    url = f"{UPSTOX_BASE_V2}/historical-candle/{encoded}/day/{end_date.isoformat()}/{start_date.isoformat()}"
+    headers = {"Authorization": f"Bearer {UPSTOX_ACCESS_TOKEN}", "Accept": "application/json"}
     try:
-        raw = yf.download(
-            " ".join(tickers.values()),
-            period="1y",
-            interval="1d",
-            group_by="ticker",
-            threads=True,
-            progress=False,
-            ignore_tz=True,
-            timeout=25,
-        )
+        resp = requests.get(url, headers=headers, timeout=12)
+        if resp.status_code != 200:
+            return None
+        candles = ((resp.json() or {}).get("data") or {}).get("candles") or []
+        if not candles:
+            return None
+        rows = []
+        for c in candles:
+            if len(c) >= 6:
+                rows.append({
+                    "Date": str(c[0])[:10],
+                    "Open": c[1],
+                    "High": c[2],
+                    "Low": c[3],
+                    "Close": c[4],
+                    "Volume": c[5],
+                })
+        return _normalize_df(pd.DataFrame(rows))
     except Exception as exc:
-        logging.error("yfinance 1y download error: %s", exc)
-        return {}, "UNAVAILABLE"
+        logging.debug("Upstox 1y fetch failed for %s: %s", instrument_key, exc)
+        return None
 
-    if raw is None or raw.empty:
-        return {}, "UNAVAILABLE"
 
-    data: dict[str, pd.DataFrame] = {}
-    is_multi = isinstance(raw.columns, pd.MultiIndex)
+def _fetch_yf_1y(symbol: str) -> pd.DataFrame | None:
+    ticker = _yf_ticker(symbol)
+    try:
+        df = yf.download(ticker, period="1y", interval="1d", progress=False, timeout=12)
+        return _normalize_df(df)
+    except Exception as exc:
+        logging.debug("yfinance fetch failed for %s (%s): %s", symbol, ticker, exc)
+        return None
 
-    for name, yf_sym in tickers.items():
+
+def load_candles_1y() -> tuple[dict[str, pd.DataFrame], str]:
+    keys = eq_keys()
+    candles: dict[str, pd.DataFrame] = {}
+    upstox_hits = 0
+
+    def _worker(sym: str):
+        df = _fetch_upstox_1y(keys.get(sym, ""))
+        if df is not None and not df.empty:
+            return sym, df, "UPSTOX"
+        yf_df = _fetch_yf_1y(sym)
+        return sym, yf_df, "YF"
+
+    with ThreadPoolExecutor(max_workers=8) as pool:
+        for sym, df, src in pool.map(_worker, list(keys.keys())):
+            if df is not None and not df.empty:
+                candles[sym] = df
+                if src == "UPSTOX":
+                    upstox_hits += 1
+
+    if upstox_hits > 0 and upstox_hits >= max(1, len(candles) // 2):
+        source_label = "UPSTOX_V2_HIST_1Y"
+    elif upstox_hits > 0:
+        source_label = "UPSTOX_V2 + YFINANCE_1Y"
+    else:
+        source_label = "YFINANCE_1Y"
+    return candles, source_label
+
+
+def _compute_oi_target(chain_summary: dict | None, entry: float, is_bull: bool) -> float | None:
+    if not chain_summary or entry <= 0:
+        return None
+    candidates = []
+    for key in ("resistance_strike", "support_strike", "max_pain"):
+        val = chain_summary.get(key)
         try:
-            slice_df = raw[yf_sym] if (is_multi and yf_sym in raw.columns.get_level_values(0)) else raw
-            reset_df = slice_df.dropna(how="all").reset_index()
-            cleaned = clean_ohlcv(reset_df)
-            if not cleaned.empty and len(cleaned) >= 20:
-                data[name] = cleaned
-        except Exception as exc:
-            logging.debug("Failed parsing candles for %s: %s", name, exc)
+            fval = float(val)
+            if fval > 0:
+                candidates.append(fval)
+        except (TypeError, ValueError):
             continue
-
-    source_label = "Yahoo Finance (1y)" if data else "UNAVAILABLE"
-    return data, source_label
-
-
-def batch_fetch_candles() -> tuple[dict[str, pd.DataFrame], str]:
-    upstox_data, ok = _fetch_upstox_historical_candles()
-    if ok:
-        return upstox_data, "UPSTOX_V2_HIST_1Y"
-    return _fetch_yfinance_candles()
-
-
-def _bounded_scores(metrics: dict, high_val: float, low_val: float, mode: str) -> tuple[float, float]:
-    price = float(metrics["price"])
-    ema20 = float(metrics["ema20"])
-    ema50 = float(metrics["ema50"])
-    ema200 = float(metrics["ema200"])
-    rsi_val = float(metrics["rsi"])
-    vr = max(float(metrics.get("vr") or 0.0), 0.0)
-    vwap = float(metrics.get("vwap") or price)
-
-    bar_range = max(high_val - low_val, 1e-9)
-    pos_in_range = min(max((price - low_val) / bar_range, 0.0), 1.0)
-
-    bull_trend = 0.0
-    bear_trend = 0.0
-    if price > ema20:
-        bull_trend += 12.0
-    else:
-        bear_trend += 12.0
-    if ema20 > ema50:
-        bull_trend += 13.0
-    elif ema20 < ema50:
-        bear_trend += 13.0
-    if price > ema200:
-        bull_trend += 10.0
-    elif price < ema200:
-        bear_trend += 10.0
-
-    bull_rsi = max(0.0, min(25.0, ((rsi_val - 40.0) / 35.0) * 25.0))
-    bear_rsi = max(0.0, min(25.0, ((60.0 - rsi_val) / 35.0) * 25.0))
-    vol_score = min(20.0, (min(vr, 2.0) / 2.0) * 20.0)
-
-    vwap_bull = 10.0 if price >= vwap else 0.0
-    vwap_bear = 10.0 if price <= vwap else 0.0
-    if mode == SWING:
-        range_bull = 10.0 if price >= ema50 else pos_in_range * 10.0
-        range_bear = 10.0 if price <= ema50 else (1.0 - pos_in_range) * 10.0
-    else:
-        range_bull = pos_in_range * 10.0
-        range_bear = (1.0 - pos_in_range) * 10.0
-
-    bull_total = round(min(max(bull_trend + bull_rsi + vol_score + vwap_bull + range_bull, 0.0), 100.0), 2)
-    bear_total = round(min(max(bear_trend + bear_rsi + vol_score + vwap_bear + range_bear, 0.0), 100.0), 2)
-    return bull_total, bear_total
+    if is_bull:
+        ahead = [x for x in candidates if x > entry]
+        return round(min(ahead), 2) if ahead else None
+    below = [x for x in candidates if x < entry]
+    return round(max(below), 2) if below else None
 
 
 def _compute_equity_sizing(entry: float, stop_loss: float) -> dict:
-    risk_per_share = abs(float(entry) - float(stop_loss))
-    effective_leverage = MIS_LEVERAGE if ALLOW_MIS_LEVERAGE else 1.0
-
-    if not CAPITAL_CONFIGURED or CAPITAL <= 0.0 or entry <= 0.0 or risk_per_share <= 0.0:
+    if not CAPITAL_CONFIGURED or CAPITAL <= 0:
         return {
             "qty": 0,
-            "notional_exposure": 0.0,
-            "margin_required": 0.0,
-            "max_risk_rs": 0.0,
-            "leverage_used": effective_leverage,
-            "sizing_status": "NOT_CALCULATED",
+            "exposure": 0.0,
+            "est_margin": 0.0,
+            "max_risk": 0.0,
+            "sizing_status": "CAPITAL NOT CONFIGURED",
+        }
+    risk_per_share = abs(entry - stop_loss)
+    if entry <= 0 or risk_per_share <= 0:
+        return {
+            "qty": 0,
+            "exposure": 0.0,
+            "est_margin": 0.0,
+            "max_risk": 0.0,
+            "sizing_status": "INVALID SL / ENTRY",
         }
 
+    lev_mult = MIS_LEVERAGE if (ALLOW_MIS_LEVERAGE and MIS_LEVERAGE > 1.0) else 1.0
     max_risk_budget = CAPITAL * RISK_PCT
-    max_notional_cap = CAPITAL * MAX_ALLOCATION_PCT * effective_leverage
+    max_notional_by_alloc = (CAPITAL * MAX_ALLOCATION_PCT) * lev_mult
 
     qty_by_risk = math.floor(max_risk_budget / risk_per_share)
-    qty_by_notional = math.floor(max_notional_cap / entry)
-    qty = max(0, min(qty_by_risk, qty_by_notional))
+    qty_by_alloc = math.floor(max_notional_by_alloc / entry)
+    qty = max(min(qty_by_risk, qty_by_alloc), 0)
 
-    notional_exposure = round(qty * entry, 2)
-    margin_required = round(notional_exposure / effective_leverage, 2)
-    actual_max_risk = round(qty * risk_per_share, 2)
+    if qty <= 0:
+        return {
+            "qty": 0,
+            "exposure": 0.0,
+            "est_margin": 0.0,
+            "max_risk": 0.0,
+            "sizing_status": "SIZE TOO SMALL FOR RISK CAP",
+        }
 
+    exposure = round(qty * entry, 2)
+    est_margin = round(exposure / lev_mult, 2)
+    max_risk = round(qty * risk_per_share, 2)
+    lev_label = f"MIS {lev_mult:g}x" if lev_mult > 1.0 else "1x Cash"
     return {
         "qty": qty,
-        "notional_exposure": notional_exposure,
-        "margin_required": margin_required,
-        "max_risk_rs": actual_max_risk,
-        "leverage_used": effective_leverage,
-        "sizing_status": "CALCULATED" if qty > 0 else "ZERO_QTY_UNDER_RISK_CAP",
+        "exposure": exposure,
+        "est_margin": est_margin,
+        "max_risk": max_risk,
+        "sizing_status": f"{lev_label} Assumed",
     }
 
 
-def _index_tag_for_sector(sec: str) -> str:
-    if sec == "BANK":
-        return "NSE/BSE • Bank/Fin"
-    if sec == "FINANCE":
-        return "NSE/BSE • FinNifty"
-    return "NSE/BSE • LargeCap"
-def run_screener() -> dict:
-    run_ts = dt.datetime.now(IST).isoformat()
-    logging.info("Running screener in MODE=%s at %s", MODE, run_ts)
+def _apply_portfolio_risk_caps(items: list[dict], max_items: int) -> list[dict]:
+    selected: list[dict] = []
+    sector_counts: dict[str, int] = {}
+    total_risk = 0.0
+    portfolio_risk_cap = CAPITAL * MAX_PORTFOLIO_RISK_PCT if CAPITAL_CONFIGURED else float("inf")
 
-    candles, data_source = batch_fetch_candles()
-    sector_list = compute_sector_strength(candles)
+    for item in items:
+        if len(selected) >= max_items:
+            break
+        sec = str(item.get("sector") or "OTHER").upper()
+        if sector_counts.get(sec, 0) >= MAX_SECTOR_POSITIONS:
+            continue
+        trade_risk = float(item.get("max_risk") or 0.0)
+        if CAPITAL_CONFIGURED and trade_risk > 0 and (total_risk + trade_risk) > portfolio_risk_cap:
+            continue
+        selected.append(item)
+        sector_counts[sec] = sector_counts.get(sec, 0) + 1
+        total_risk += trade_risk
+    return selected
+
+
+def _build_stock_setup(sym: str, ind: dict, rs_info: dict, is_bull: bool, chain_bundle: dict | None) -> dict | None:
+    close = float(ind["close"])
+    atr = float(ind.get("atr") or max(close * 0.015, 1.0))
+    vwap = float(ind.get("vwap") or close)
+    ema20 = float(ind.get("ema20") or close)
+    ema50 = float(ind.get("ema50") or close)
+    rsi = float(ind.get("rsi") or 50.0)
+    vol_ratio = float(ind.get("vol_ratio") or 1.0)
+    chg_pct = float(ind.get("change_pct") or 0.0)
+    avg_turnover = float(ind.get("avg_turnover") or 0.0)
+
+    if avg_turnover < MIN_DAILY_TURNOVER_RS:
+        return None
+    if vol_ratio < 0.85:
+        return None
+
+    # Strict directional alignment to prevent opposite-day whipsaw signals
+    if is_bull:
+        if chg_pct < -0.50 or close < ema20 or close < vwap:
+            return None
+        sl = round(max(close - 1.5 * atr, min(ema20, vwap) * 0.992), 2)
+        pa_t1 = round(close + 1.8 * atr, 2)
+        pa_t2 = round(close + 3.0 * atr, 2)
+    else:
+        if chg_pct > 0.50 or close > ema20 or close > vwap:
+            return None
+        sl = round(min(close + 1.5 * atr, max(ema20, vwap) * 1.008), 2)
+        pa_t1 = round(max(close - 1.8 * atr, 0.05), 2)
+        pa_t2 = round(max(close - 3.0 * atr, 0.05), 2)
+
+    if (is_bull and sl >= close) or (not is_bull and sl <= close):
+        return None
+
+    chain_summary = (chain_bundle or {}).get("summary") or {}
+    chain_df = (chain_bundle or {}).get("df")
+    expiry = (chain_bundle or {}).get("expiry")
+    oi_target = _compute_oi_target(chain_summary, close, is_bull=is_bull)
+
+    sizing = _compute_equity_sizing(close, sl)
+    opt_plan = select_option_strategy(
+        symbol=sym,
+        side="CE" if is_bull else "PE",
+        spot=close,
+        chain_df=chain_df,
+        expiry=expiry,
+        prefer_spread=True,
+    )
+
+    rs_score = float((rs_info or {}).get("rs_score") or 0.0)
+    base_score = float(ind.get("bull_score" if is_bull else "bear_score") or 50.0)
+    adj_score = round(max(0.0, min(100.0, 0.8 * base_score + 0.2 * (50.0 + rs_score * 2.0))), 2)
+
+    return {
+        "symbol": sym,
+        "sector": SECTOR_MAP.get(sym, "OTHER"),
+        "side": "BULLISH" if is_bull else "BEARISH",
+        "action": "BUY (LONG)" if is_bull else "SELL (SHORT)",
+        "entry": round(close, 2),
+        "close": round(close, 2),
+        "spot": round(close, 2),
+        "change_pct": round(chg_pct, 2),
+        "stop_loss": sl,
+        "target_1": pa_t1,
+        "target_2": pa_t2,
+        "pa_target_1": pa_t1,
+        "pa_target_2": pa_t2,
+        "oi_target": oi_target,
+        "rsi": round(rsi, 1),
+        "vol_ratio": round(vol_ratio, 2),
+        "vwap": round(vwap, 2),
+        "ema20": round(ema20, 2),
+        "ema50": round(ema50, 2),
+        "rs_score": rs_score,
+        "score": adj_score,
+        "history_label": ind.get("history_label", "1y"),
+        "chain_summary": chain_summary,
+        "option_plan": opt_plan,
+        **sizing,
+    }
+
+
+def _build_index_trades(candles: dict[str, pd.DataFrame], vix_val: float | None) -> list[dict]:
+    trades = []
+    for idx_sym in ["NIFTY", "BANKNIFTY", "FINNIFTY", "SENSEX"]:
+        df = candles.get(idx_sym)
+        if df is None or df.empty:
+            continue
+        ind = compute_indicators(df)
+        if not ind:
+            continue
+        spot = float(ind["close"])
+        atr = float(ind.get("atr") or max(spot * 0.01, 1.0))
+        ema20 = float(ind.get("ema20") or spot)
+        chg_pct = float(ind.get("change_pct") or 0.0)
+
+        is_bull = spot >= ema20 and chg_pct >= -0.35
+        chain_df, expiry = None, None
+        chain_summary = {}
+        try:
+            raw_chain = chain_upstox(idx_sym, spot)
+            if isinstance(raw_chain, tuple):
+                chain_df, expiry = raw_chain[0], raw_chain[1] if len(raw_chain) > 1 else None
+            elif isinstance(raw_chain, dict):
+                chain_df = raw_chain.get("df")
+                expiry = raw_chain.get("expiry")
+            if chain_df is not None and not getattr(chain_df, "empty", True):
+                chain_summary = analyze_chain(chain_df, spot) or {}
+        except Exception as exc:
+            logging.debug("Index option chain fetch failed for %s: %s", idx_sym, exc)
+
+        prefer_spread = True if (vix_val is not None and vix_val >= 16.0) else True
+        plan = select_option_strategy(
+            symbol=idx_sym,
+            side="CE" if is_bull else "PE",
+            spot=spot,
+            chain_df=chain_df,
+            expiry=expiry,
+            prefer_spread=prefer_spread,
+        )
+
+        sl = round(spot - 1.5 * atr, 2) if is_bull else round(spot + 1.5 * atr, 2)
+        pa_t1 = round(spot + 1.5 * atr, 2) if is_bull else round(max(spot - 1.5 * atr, 0.0), 2)
+        pa_t2 = round(spot + 2.5 * atr, 2) if is_bull else round(max(spot - 2.5 * atr, 0.0), 2)
+        oi_target = _compute_oi_target(chain_summary, spot, is_bull=is_bull)
+
+        lot_size = int(plan.get("lot_size") or LOT_SIZES.get(idx_sym, 0))
+        max_loss_lot = plan.get("max_loss_lot")
+        sizing_status = "CAPITAL NOT CONFIGURED" if not CAPITAL_CONFIGURED else "1 Lot Risk Cap"
+
+        trades.append({
+            "symbol": idx_sym,
+            "sector": "INDEX",
+            "side": "BULLISH" if is_bull else "BEARISH",
+            "entry": round(spot, 2),
+            "close": round(spot, 2),
+            "spot": round(spot, 2),
+            "change_pct": round(chg_pct, 2),
+            "stop_loss": sl,
+            "target_1": pa_t1,
+            "target_2": pa_t2,
+            "pa_target_1": pa_t1,
+            "pa_target_2": pa_t2,
+            "oi_target": oi_target,
+            "qty": lot_size,
+            "est_margin": max_loss_lot,
+            "exposure": max_loss_lot,
+            "max_risk": max_loss_lot,
+            "sizing_status": sizing_status,
+            "chain_summary": chain_summary,
+            "option_plan": plan,
+        })
+    return trades
+
+
+def run_screener():
+    candles, data_source = load_candles_1y()
     global_cues = fetch_global_cues()
+    vix_val = None
+    for c in global_cues:
+        if "VIX" in str(c.get("name", "")).upper() and c.get("raw_val") is not None:
+            vix_val = float(c["raw_val"])
+            break
 
-    nifty_df = candles.get("NIFTY")
-    nifty_m = analyze(nifty_df) if nifty_df is not None else {}
-    nifty_spot = float(nifty_m.get("price") or 0.0)
-    nifty_prev = float(nifty_m.get("prev_close") or nifty_spot)
-    nifty_chg_num = pct(nifty_spot, nifty_prev)
-    nifty_chg_str = f"{nifty_chg_num:+.2f}%"
-    nifty_rsi = round(float(nifty_m.get("rsi") or 50.0))
+    sectors = compute_sector_strength(candles)
+    rs_map = compute_relative_strength(candles)
 
-    bnf_df = candles.get("BANKNIFTY")
-    bnf_m = analyze(bnf_df) if bnf_df is not None else {}
-    bnf_spot = float(bnf_m.get("price") or 0.0)
-    bnf_prev = float(bnf_m.get("prev_close") or bnf_spot)
-    bnf_chg_num = pct(bnf_spot, bnf_prev)
-    bnf_chg_str = f"{bnf_chg_num:+.2f}%"
-
-    fin_df = candles.get("FINNIFTY")
-    fin_m = analyze(fin_df) if fin_df is not None else {}
-    fin_spot = float(fin_m.get("price") or 0.0)
-    fin_prev = float(fin_m.get("prev_close") or fin_spot)
-    fin_chg_num = pct(fin_spot, fin_prev)
-    fin_chg_str = f"{fin_chg_num:+.2f}%"
-
-    contributors = compute_point_contributors(candles, nifty_spot, bnf_spot)
-
-    ups = 0
-    downs = 0
-    above_20 = 0
-    above_50 = 0
-    scanned = 0
-    scored_stocks: list[dict] = []
+    indicators_by_sym: dict[str, dict] = {}
+    adv, dec, above20, above50, total_stocks = 0, 0, 0, 0, 0
 
     for sym in STOCKS_UNIVERSE:
         df = candles.get(sym)
-        if df is None or len(df) < 20:
+        if df is None or df.empty:
             continue
-        m = analyze(df)
-        if not m:
+        ind = compute_indicators(df)
+        if not ind:
             continue
+        close = float(ind["close"])
+        high = float(df["High"].iloc[-1])
+        low = float(df["Low"].iloc[-1])
+        vol = float(df["Volume"].iloc[-1])
+        typical = (high + low + close) / 3.0
+        vol_20 = pd.to_numeric(df["Volume"], errors="coerce").tail(20).mean()
+        typ_20 = ((pd.to_numeric(df["High"], errors="coerce") + pd.to_numeric(df["Low"], errors="coerce") + pd.to_numeric(df["Close"], errors="coerce")) / 3.0).tail(20).mean()
+        ind["vwap"] = round(typical, 2)
+        ind["avg_turnover"] = float((vol_20 or vol) * (typ_20 or close))
+        indicators_by_sym[sym] = ind
 
-        scanned += 1
-        price = float(m["price"])
-        prev_close = float(m["prev_close"])
-        chg_pct = round(pct(price, prev_close), 2)
+        total_stocks += 1
+        chg = float(ind.get("change_pct") or 0.0)
+        if chg > 0:
+            adv += 1
+        elif chg < 0:
+            dec += 1
+        if close >= float(ind.get("ema20") or close):
+            above20 += 1
+        if close >= float(ind.get("ema50") or close):
+            above50 += 1
 
-        if chg_pct > 0:
-            ups += 1
-        elif chg_pct < 0:
-            downs += 1
+    bull_raw, bear_raw = [], []
+    chain_cache: dict[str, dict] = {}
 
-        if price > float(m["ema20"]):
-            above_20 += 1
-        if price > float(m["ema50"]):
-            above_50 += 1
-
-        high_val = float(df["High"].iloc[-1])
-        low_val = float(df["Low"].iloc[-1])
-        bull_score, bear_score = _bounded_scores(m, high_val, low_val, MODE)
-
-        scored_stocks.append({
-            "symbol": sym,
-            "price": price,
-            "prev_close": prev_close,
-            "change_pct": chg_pct,
-            "rsi": round(float(m["rsi"]), 1),
-            "adx": round(float(m["adx"]), 1),
-            "vr": round(float(m["vr"]), 2),
-            "atr": float(m["atr"]),
-            "ema20": float(m["ema20"]),
-            "ema50": float(m["ema50"]),
-            "ema200": float(m["ema200"]),
-            "has_ema200_history": bool(m.get("has_ema200_history")),
-            "vwap": round(float(m["vwap"]), 2),
-            "sector": SECTOR_MAP.get(sym, "OTHER"),
-            "index_tag": _index_tag_for_sector(SECTOR_MAP.get(sym, "OTHER")),
-            "bull_score": bull_score,
-            "bear_score": bear_score,
-            "bars": int(m["bars"]),
-        })
-
-    bull_candidates = [
-        s for s in scored_stocks
-        if s["price"] >= s["ema20"] and s["bull_score"] >= s["bear_score"]
-    ]
-    bear_candidates = [
-        s for s in scored_stocks
-        if s["price"] <= s["ema20"] and s["bear_score"] > s["bull_score"]
-    ]
-
-    top_bulls = sorted(bull_candidates, key=lambda x: x["bull_score"], reverse=True)[:5]
-    top_bears = sorted(bear_candidates, key=lambda x: x["bear_score"], reverse=True)[:5]
-
-    chains_cache: dict[str, tuple[pd.DataFrame | None, str | None]] = {}
-
-    def _get_chain(symbol: str) -> tuple[pd.DataFrame | None, str | None]:
-        if symbol not in chains_cache:
-            res = chain_upstox(symbol)
-            if res and isinstance(res, tuple) and len(res) >= 2:
-                chains_cache[symbol] = (res[0], res[1])
+    def _get_chain(sym: str, spot: float) -> dict:
+        if sym in chain_cache:
+            return chain_cache[sym]
+        bundle = {"df": None, "expiry": None, "summary": {}}
+        try:
+            raw = chain_upstox(sym, spot)
+            if isinstance(raw, tuple):
+                cdf, exp = raw[0], raw[1] if len(raw) > 1 else None
+            elif isinstance(raw, dict):
+                cdf, exp = raw.get("df"), raw.get("expiry")
             else:
-                chains_cache[symbol] = (None, None)
-        return chains_cache[symbol]
+                cdf, exp = None, None
+            csum = analyze_chain(cdf, spot) if cdf is not None and not getattr(cdf, "empty", True) else {}
+            bundle = {"df": cdf, "expiry": exp, "summary": csum or {}}
+        except Exception as exc:
+            logging.debug("Stock chain error for %s: %s", sym, exc)
+        chain_cache[sym] = bundle
+        return bundle
 
-    index_trades: list[dict] = []
-    for idx_name in ["NIFTY", "BANKNIFTY", "FINNIFTY", "SENSEX"]:
-        df = candles.get(idx_name)
-        if df is None:
-            continue
-        m = analyze(df)
-        if not m:
-            continue
+    for sym, ind in indicators_by_sym.items():
+        b_score = float(ind.get("bull_score") or 0.0)
+        s_score = float(ind.get("bear_score") or 0.0)
+        rs_info = rs_map.get(sym, {})
+        if b_score >= s_score and b_score >= 55.0:
+            cb = _get_chain(sym, float(ind["close"]))
+            setup = _build_stock_setup(sym, ind, rs_info, True, cb)
+            if setup:
+                bull_raw.append(setup)
+        elif s_score > b_score and s_score >= 55.0:
+            cb = _get_chain(sym, float(ind["close"]))
+            setup = _build_stock_setup(sym, ind, rs_info, False, cb)
+            if setup:
+                bear_raw.append(setup)
 
-        price = float(m["price"])
-        prev_c = float(m["prev_close"])
-        chg_pct = round(pct(price, prev_c), 2)
-        atr_val = float(m["atr"])
-        ema20 = float(m["ema20"])
+    bull_raw.sort(key=lambda x: x.get("score", 0.0), reverse=True)
+    bear_raw.sort(key=lambda x: x.get("score", 0.0), reverse=True)
 
-        is_bull = (price >= ema20) and (chg_pct >= 0.0 or price >= float(m["vwap"]))
-        side_code = "CE" if is_bull else "PE"
-        side_label = "BUY CALL (CE)" if is_bull else "BUY PUT (PE)"
+    options_bullish = _apply_portfolio_risk_caps(bull_raw, max_items=5)
+    options_bearish = _apply_portfolio_risk_caps(bear_raw, max_items=5)
 
-        sl = round(price - 1.2 * atr_val, 2) if is_bull else round(price + 1.2 * atr_val, 2)
-        risk_pts = max(abs(price - sl), 1e-4)
-        t1 = round(price + 1.5 * risk_pts, 2) if is_bull else round(price - 1.5 * risk_pts, 2)
-        t2 = round(price + 2.5 * risk_pts, 2) if is_bull else round(price - 2.5 * risk_pts, 2)
-
-        chain_df, expiry = _get_chain(idx_name)
-        chain_summary = analyze_chain(chain_df, spot_override=price, prev_spot=prev_c)
-        opt_plan = select_option_strategy(
-            symbol=idx_name,
-            side=side_code,
-            spot=price,
-            chain_df=chain_df,
-            expiry=expiry,
-            prefer_spread=True,
-        )
-
-        index_trades.append({
-            "symbol": idx_name,
-            "side": side_label,
-            "setup_kind": f"{MODE} Index {'Bullish' if is_bull else 'Bearish'}",
-            "sector": "INDEX",
-            "close": round(price, 2),
-            "change_pct": chg_pct,
-            "rsi": round(float(m["rsi"]), 1),
-            "vol_ratio": round(float(m["vr"]), 2),
-            "entry": round(price, 2),
-            "stop_loss": sl,
-            "target_1": t1,
-            "target_2": t2,
-            "score": round(float(m["rsi"]), 1),
-            "opt_chain": chain_summary,
-            "option_plan": opt_plan,
-            "hedge_plan": opt_plan if opt_plan.get("available") else None,
-            "reasons": [
-                f"Price {'above' if is_bull else 'below'} EMA20 ({round(ema20, 2)}) with {chg_pct:+.2f}% move",
-                chain_summary["oi_quadrant"] if chain_summary else "Live option chain not available",
-            ],
-            "timestamp": run_ts,
-        })
-
-    def _build_option_card(stock: dict, is_bull: bool) -> dict:
-        sym = stock["symbol"]
-        price = stock["price"]
-        atr_val = stock["atr"]
-        side_code = "CE" if is_bull else "PE"
-        side_label = "BUY CALL (CE)" if is_bull else "BUY PUT (PE)"
-
-        sl = round(price - 1.5 * atr_val, 2) if is_bull else round(price + 1.5 * atr_val, 2)
-        risk_pts = max(abs(price - sl), 1e-4)
-        t1 = round(price + 1.5 * risk_pts, 2) if is_bull else round(price - 1.5 * risk_pts, 2)
-        t2 = round(price + 2.5 * risk_pts, 2) if is_bull else round(price - 2.5 * risk_pts, 2)
-
-        chain_df, expiry = _get_chain(sym)
-        chain_summary = analyze_chain(chain_df, spot_override=price, prev_spot=stock["prev_close"])
-        opt_plan = select_option_strategy(
-            symbol=sym,
-            side=side_code,
-            spot=price,
-            chain_df=chain_df,
-            expiry=expiry,
-            prefer_spread=True,
-        )
-
-        score_val = stock["bull_score"] if is_bull else stock["bear_score"]
-        reasons = [
-            f"Score {score_val}/100 | RSI {stock['rsi']} | Vol {stock['vr']}x | VWAP ₹{stock['vwap']}",
-            f"EMA200 history: {'1y/200+ bars' if stock['has_ema200_history'] else 'Short history (<200 bars)'}",
-        ]
-        if chain_summary:
-            reasons.append(f"OI Structure: {chain_summary['oi_quadrant']} (PCR {chain_summary['oi_pcr']})")
-
-        return {
-            "symbol": sym,
-            "side": side_label,
-            "setup_kind": f"{MODE} {'Bullish' if is_bull else 'Bearish'} Option",
-            "sector": stock["sector"],
-            "close": round(price, 2),
-            "change_pct": stock["change_pct"],
-            "rsi": stock["rsi"],
-            "vol_ratio": stock["vr"],
-            "vwap": stock["vwap"],
-            "entry": round(price, 2),
-            "stop_loss": sl,
-            "target_1": t1,
-            "target_2": t2,
-            "score": score_val,
-            "opt_chain": chain_summary,
-            "option_plan": opt_plan,
-            "hedge_plan": opt_plan if opt_plan.get("available") else None,
-            "reasons": reasons,
-            "timestamp": run_ts,
-        }
-
-    options_bullish = [_build_option_card(s, True) for s in top_bulls]
-    options_bearish = [_build_option_card(s, False) for s in top_bears]
-
-    per_side_cap = max(1, MAX_OPEN_POSITIONS // 2) if MAX_OPEN_POSITIONS >= 2 else 1
-    equity_intraday: list[dict] = []
-
-    for s in top_bulls[:per_side_cap]:
-        entry = s["price"]
-        sl = round(entry - 0.75 * s["atr"], 2)
-        risk_pts = max(entry - sl, entry * 0.005)
-        t1 = round(entry + 1.5 * risk_pts, 2)
-        t2 = round(entry + 2.5 * risk_pts, 2)
-        sizing = _compute_equity_sizing(entry, sl)
-        equity_intraday.append({
-            "symbol": s["symbol"],
-            "sector": s["sector"],
-            "index_tag": s["index_tag"],
-            "action": "BUY (LONG)",
-            "entry": round(entry, 2),
-            "chg": s["change_pct"],
-            "stop_loss": sl,
-            "target_1": t1,
-            "target_2": t2,
-            "rsi": s["rsi"],
-            "volume_ratio": s["vr"],
-            "vwap": s["vwap"],
-            "score": s["bull_score"],
-            "timestamp": run_ts,
-            **sizing,
-        })
-
-    for s in top_bears[:per_side_cap]:
-        entry = s["price"]
-        sl = round(entry + 0.75 * s["atr"], 2)
-        risk_pts = max(sl - entry, entry * 0.005)
-        t1 = round(entry - 1.5 * risk_pts, 2)
-        t2 = round(entry - 2.5 * risk_pts, 2)
-        sizing = _compute_equity_sizing(entry, sl)
-        equity_intraday.append({
-            "symbol": s["symbol"],
-            "sector": s["sector"],
-            "index_tag": s["index_tag"],
-            "action": "SELL (SHORT)",
-            "entry": round(entry, 2),
-            "chg": s["change_pct"],
-            "stop_loss": sl,
-            "target_1": t1,
-            "target_2": t2,
-            "rsi": s["rsi"],
-            "volume_ratio": s["vr"],
-            "vwap": s["vwap"],
-            "score": s["bear_score"],
-            "timestamp": run_ts,
-            **sizing,
-        })
-
-    breadth_tone = "BULLISH" if ups > downs * 1.15 else ("BEARISH" if downs > ups * 1.15 else "MIXED")
-    total_ideas = len(index_trades) + len(options_bullish) + len(options_bearish) + len(equity_intraday)
-
-    all_ranked = sorted(
-        options_bullish + options_bearish,
+    intraday_pool = sorted(
+        bull_raw[:4] + bear_raw[:4],
         key=lambda x: x.get("score", 0.0),
         reverse=True,
     )
-    best_rated = (
-        f"{all_ranked[0]['symbol']} ({all_ranked[0]['side']}) [Score {all_ranked[0]['score']}]"
-        if all_ranked
-        else "None"
-    )
+    equity_intraday = _apply_portfolio_risk_caps(intraday_pool, max_items=MAX_OPEN_POSITIONS)
+    index_trades = _build_index_trades(candles, vix_val=vix_val)
+
+    def _idx_fmt(sym: str):
+        df = candles.get(sym)
+        if df is None or len(df) < 2:
+            return "—", "—"
+        c_last = float(df["Close"].iloc[-1])
+        c_prev = float(df["Close"].iloc[-2])
+        chg = ((c_last / c_prev) - 1.0) * 100.0 if c_prev else 0.0
+        return f"{c_last:,.2f}", f"{chg:+.2f}%"
+
+    n_spot, n_chg = _idx_fmt("NIFTY")
+    b_spot, b_chg = _idx_fmt("BANKNIFTY")
+    f_spot, f_chg = _idx_fmt("FINNIFTY")
+
+    breadth_tone = "BULLISH" if adv > dec else ("BEARISH" if dec > adv else "MIXED")
+    above20_pct = round((above20 / total_stocks) * 100.0) if total_stocks else 0
+    above50_pct = round((above50 / total_stocks) * 100.0) if total_stocks else 0
+
+    total_ideas = len(index_trades) + len(options_bullish) + len(options_bearish) + len(equity_intraday)
 
     payload = {
-        "mode": MODE,
         "title": TITLE,
-        "timestamp": run_ts,
         "summary": {
-            "data_source": data_source,
-            "nifty_spot": f"{nifty_spot:,.2f}" if nifty_spot > 0 else "—",
-            "nifty_chg": nifty_chg_str,
-            "nifty_rsi": nifty_rsi,
-            "bnf_spot": f"{bnf_spot:,.2f}" if bnf_spot > 0 else "—",
-            "bnf_chg": bnf_chg_str,
-            "fin_spot": f"{fin_spot:,.2f}" if fin_spot > 0 else "—",
-            "fin_chg": fin_chg_str,
-            "breadth_ratio": f"{ups} Adv / {downs} Dec",
-            "above_ema20": round((above_20 / max(1, scanned)) * 100),
-            "above_ema50": round((above_50 / max(1, scanned)) * 100),
-            "breadth_tone": breadth_tone,
             "ideas_count": total_ideas,
-            "best_rated": best_rated,
+            "breadth_tone": breadth_tone,
+            "data_source": data_source,
+            "nifty_spot": n_spot,
+            "nifty_chg": n_chg,
+            "bnf_spot": b_spot,
+            "bnf_chg": b_chg,
+            "fin_spot": f_spot,
+            "fin_chg": f_chg,
+            "breadth_ratio": f"{adv} Adv/{dec} Dec",
+            "above_ema20": above20_pct,
+            "above_ema50": above50_pct,
             "capital": CAPITAL,
             "capital_configured": CAPITAL_CONFIGURED,
             "risk_pct": RISK_PCT,
             "max_allocation_pct": MAX_ALLOCATION_PCT,
             "leverage_enabled": ALLOW_MIS_LEVERAGE,
-            "leverage_multiplier": MIS_LEVERAGE if ALLOW_MIS_LEVERAGE else 1.0,
+            "leverage_multiplier": MIS_LEVERAGE,
         },
         "global_cues": global_cues,
-        "index_view": {
-            "NIFTY": {
-                "spot": f"{nifty_spot:,.2f}" if nifty_spot > 0 else "—",
-                "chg": nifty_chg_str,
-                "rsi": nifty_rsi,
-                "lifting": contributors["NIFTY"]["lifting"],
-                "dragging": contributors["NIFTY"]["dragging"],
-            },
-            "BANKNIFTY": {
-                "spot": f"{bnf_spot:,.2f}" if bnf_spot > 0 else "—",
-                "chg": bnf_chg_str,
-                "rsi": round(float(bnf_m.get("rsi") or 50.0)),
-                "lifting": contributors["BANKNIFTY"]["lifting"],
-                "dragging": contributors["BANKNIFTY"]["dragging"],
-            },
-        },
-        "sectors": sector_list,
+        "sectors": sectors,
         "index_trades": index_trades,
         "setups": {
             "bullish": options_bullish,
@@ -572,8 +554,8 @@ def run_screener() -> dict:
         "options_bullish": options_bullish,
         "options_bearish": options_bearish,
         "equity_intraday": equity_intraday,
-        "intraday_bullish": [x for x in equity_intraday if x["action"] == "BUY (LONG)"],
-        "intraday_bearish": [x for x in equity_intraday if x["action"] == "SELL (SHORT)"],
+        "intraday_bullish": [x for x in equity_intraday if x.get("action") == "BUY (LONG)"],
+        "intraday_bearish": [x for x in equity_intraday if x.get("action") == "SELL (SHORT)"],
     }
 
     evaluate_signals_chronologically(candles_by_symbol=candles)
@@ -582,7 +564,6 @@ def run_screener() -> dict:
 
     send_alert(payload)
     logging.info("Dispatched %d setups using %s", total_ideas, data_source)
-    return payload
 
 
 if __name__ == "__main__":
