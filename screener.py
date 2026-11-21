@@ -56,6 +56,9 @@ YF_SYMBOL_MAP = {
     "M&M": "M&M.NS",
 }
 
+_WARNED_UPSTOX_STATUS: set[int] = set()
+_WARNED_YF_COUNT = 0
+
 
 def _yf_ticker(sym: str) -> str:
     return YF_SYMBOL_MAP.get(sym, f"{sym}.NS")
@@ -78,8 +81,12 @@ def _compute_cumulative_vwap(df: pd.DataFrame) -> float | None:
 
 
 def _fetch_upstox_1y(instrument_key: str) -> pd.DataFrame | None:
-    if not UPSTOX_ACCESS_TOKEN or not instrument_key:
+    if not UPSTOX_ACCESS_TOKEN:
+        logging.warning("Upstox token is empty for %s", instrument_key)
         return None
+    if not instrument_key:
+        return None
+
     end_date = dt.datetime.now(IST).date()
     start_date = end_date - dt.timedelta(days=370)
     encoded = quote(instrument_key, safe="")
@@ -88,9 +95,18 @@ def _fetch_upstox_1y(instrument_key: str) -> pd.DataFrame | None:
     try:
         resp = requests.get(url, headers=headers, timeout=12)
         if resp.status_code != 200:
+            if resp.status_code not in _WARNED_UPSTOX_STATUS:
+                _WARNED_UPSTOX_STATUS.add(resp.status_code)
+                logging.warning(
+                    "Upstox %s HTTP %s: %s",
+                    instrument_key,
+                    resp.status_code,
+                    (resp.text or "")[:120],
+                )
             return None
         candles = ((resp.json() or {}).get("data") or {}).get("candles") or []
         if not candles:
+            logging.warning("Upstox %s returned empty candles", instrument_key)
             return None
         rows = [
             {
@@ -104,13 +120,17 @@ def _fetch_upstox_1y(instrument_key: str) -> pd.DataFrame | None:
             for c in candles
             if len(c) >= 6
         ]
-        return clean_ohlcv(pd.DataFrame(rows), min_bars=20)
+        cleaned = clean_ohlcv(pd.DataFrame(rows), min_bars=20)
+        if cleaned is None:
+            logging.warning("Upstox %s failed OHLCV normalization/min_bars", instrument_key)
+        return cleaned
     except Exception as exc:
-        logging.debug("Upstox 1y fetch failed for %s: %s", instrument_key, exc)
+        logging.warning("Upstox %s exception: %s", instrument_key, exc)
         return None
 
 
 def _fetch_yf_1y(symbol: str) -> pd.DataFrame | None:
+    global _WARNED_YF_COUNT
     ticker = _yf_ticker(symbol)
     try:
         df = yf.download(ticker, period="1y", interval="1d", progress=False, threads=False, timeout=12)
@@ -118,9 +138,15 @@ def _fetch_yf_1y(symbol: str) -> pd.DataFrame | None:
         if norm is not None:
             return norm
         hist = yf.Ticker(ticker).history(period="1y", interval="1d")
-        return clean_ohlcv(hist, min_bars=20)
+        norm2 = clean_ohlcv(hist, min_bars=20)
+        if norm2 is None and _WARNED_YF_COUNT < 3:
+            _WARNED_YF_COUNT += 1
+            logging.warning("YF %s returned empty/insufficient data", ticker)
+        return norm2
     except Exception as exc:
-        logging.debug("yfinance fetch failed for %s (%s): %s", symbol, ticker, exc)
+        if _WARNED_YF_COUNT < 3:
+            _WARNED_YF_COUNT += 1
+            logging.warning("YF %s err: %s", ticker, exc)
         return None
 
 
@@ -516,11 +542,9 @@ def run_screener():
     bull_candidates.sort(key=lambda x: x.get("score", 0.0), reverse=True)
     bear_candidates.sort(key=lambda x: x.get("score", 0.0), reverse=True)
 
-    # Up to 5 Bullish + 5 Bearish for Stock Options (10)
     options_bullish = _select_capped_items(bull_candidates, max_items=5, enforce_risk_cap=False)
     options_bearish = _select_capped_items(bear_candidates, max_items=5, enforce_risk_cap=False)
 
-    # Up to 5 Bullish + 5 Bearish for Stock Equity (10) -> Total up to 20 stocks (10 Bull + 10 Bear)
     intraday_bullish = _select_capped_items(bull_candidates, max_items=5, enforce_risk_cap=True)
     intraday_bearish = _select_capped_items(bear_candidates, max_items=5, enforce_risk_cap=True)
     equity_intraday = intraday_bullish + intraday_bearish
