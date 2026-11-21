@@ -1,4 +1,5 @@
 import datetime as dt
+import inspect
 import logging
 import os
 import warnings
@@ -221,6 +222,30 @@ def _select_capped_items(items: list[dict], max_items: int, enforce_risk_cap: bo
         sector_counts[sec] = sector_counts.get(sec, 0) + 1
         total_risk += trade_risk
     return selected
+
+
+def _safe_position_size(entry: float, stop_loss: float, lot_size: int = 1) -> dict:
+    try:
+        sig = inspect.signature(position_size)
+        params = sig.parameters
+        kwargs = {}
+        if "entry" in params:
+            kwargs["entry"] = entry
+        if "stop_loss" in params:
+            kwargs["stop_loss"] = stop_loss
+        elif "sl" in params:
+            kwargs["sl"] = stop_loss
+        if "lot_size" in params:
+            kwargs["lot_size"] = lot_size
+
+        if kwargs and all(k in params for k in kwargs):
+            res = position_size(**kwargs)
+        else:
+            res = position_size(entry, stop_loss)
+        return dict(res) if isinstance(res, dict) else {"qty": int(res or 0)}
+    except Exception:
+        res = position_size(entry, stop_loss)
+        return dict(res) if isinstance(res, dict) else {"qty": int(res or 0)}
 def _build_entry_and_rationale(
     sector: str,
     is_bull: bool,
@@ -319,7 +344,7 @@ def _build_stock_setup(sym: str, ind: dict, rs_info: dict, is_bull: bool, chain_
     expiry = (chain_bundle or {}).get("expiry")
     oi_target = _compute_oi_target(chain_summary, close, is_bull=is_bull)
 
-    sizing = position_size(entry=close, stop_loss=sl, lot_size=1)
+    sizing = _safe_position_size(entry=close, stop_loss=sl, lot_size=1)
     if sizing.get("qty", 0) <= 0:
         return None
 
