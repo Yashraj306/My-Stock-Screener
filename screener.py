@@ -120,9 +120,12 @@ def _fetch_upstox_1y(instrument_key: str) -> pd.DataFrame | None:
             for c in candles
             if len(c) >= 6
         ]
-        cleaned = clean_ohlcv(pd.DataFrame(rows), min_bars=20)
+        cleaned = clean_ohlcv(pd.DataFrame(rows))
         if cleaned is None:
-            logging.warning("Upstox %s failed OHLCV normalization/min_bars", instrument_key)
+            logging.warning("Upstox %s failed OHLCV normalization", instrument_key)
+            return None
+        if len(cleaned) < 20:
+            return None
         return cleaned
     except Exception as exc:
         logging.warning("Upstox %s exception: %s", instrument_key, exc)
@@ -134,15 +137,17 @@ def _fetch_yf_1y(symbol: str) -> pd.DataFrame | None:
     ticker = _yf_ticker(symbol)
     try:
         df = yf.download(ticker, period="1y", interval="1d", progress=False, threads=False, timeout=12)
-        norm = clean_ohlcv(df, min_bars=20)
-        if norm is not None:
+        norm = clean_ohlcv(df)
+        if norm is not None and len(norm) >= 20:
             return norm
         hist = yf.Ticker(ticker).history(period="1y", interval="1d")
-        norm2 = clean_ohlcv(hist, min_bars=20)
-        if norm2 is None and _WARNED_YF_COUNT < 3:
+        norm2 = clean_ohlcv(hist)
+        if norm2 is not None and len(norm2) >= 20:
+            return norm2
+        if _WARNED_YF_COUNT < 3:
             _WARNED_YF_COUNT += 1
             logging.warning("YF %s returned empty/insufficient data", ticker)
-        return norm2
+        return None
     except Exception as exc:
         if _WARNED_YF_COUNT < 3:
             _WARNED_YF_COUNT += 1
