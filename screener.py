@@ -15,7 +15,6 @@ from config import (
     CAPITAL,
     CAPITAL_CONFIGURED,
     MAX_ALLOCATION_PCT,
-    MAX_OPEN_POSITIONS,
     MAX_PORTFOLIO_RISK_PCT,
     MAX_SECTOR_POSITIONS,
     MIN_DAILY_TURNOVER_RS,
@@ -172,11 +171,11 @@ def _compute_oi_target(chain_summary: dict | None, entry: float, is_bull: bool) 
     return round(max(below), 2) if below else None
 
 
-def _apply_portfolio_risk_caps(items: list[dict], max_items: int) -> list[dict]:
+def _select_capped_items(items: list[dict], max_items: int, enforce_risk_cap: bool = True) -> list[dict]:
     selected: list[dict] = []
     sector_counts: dict[str, int] = {}
     total_risk = 0.0
-    portfolio_risk_cap = CAPITAL * MAX_PORTFOLIO_RISK_PCT if CAPITAL_CONFIGURED else float("inf")
+    portfolio_risk_cap = CAPITAL * MAX_PORTFOLIO_RISK_PCT if (CAPITAL_CONFIGURED and enforce_risk_cap) else float("inf")
 
     for item in items:
         if len(selected) >= max_items:
@@ -185,13 +184,12 @@ def _apply_portfolio_risk_caps(items: list[dict], max_items: int) -> list[dict]:
         if sector_counts.get(sec, 0) >= MAX_SECTOR_POSITIONS:
             continue
         trade_risk = float(item.get("max_risk") or 0.0)
-        if CAPITAL_CONFIGURED and trade_risk > 0 and (total_risk + trade_risk) > portfolio_risk_cap:
+        if enforce_risk_cap and CAPITAL_CONFIGURED and trade_risk > 0 and (total_risk + trade_risk) > portfolio_risk_cap:
             continue
         selected.append(item)
         sector_counts[sec] = sector_counts.get(sec, 0) + 1
         total_risk += trade_risk
     return selected
-            
 def _build_entry_and_rationale(
     sector: str,
     is_bull: bool,
@@ -266,17 +264,17 @@ def _build_stock_setup(sym: str, ind: dict, rs_info: dict, is_bull: bool, chain_
 
     if avg_turnover < MIN_DAILY_TURNOVER_RS:
         return None
-    if vol_ratio < 0.85:
+    if vol_ratio < 0.70:
         return None
 
     if is_bull:
-        if chg_pct < -0.50 or close < ema20 or (vwap is not None and close < float(vwap)):
+        if chg_pct < -0.75 or close < ema20:
             return None
         sl = round(close - 1.5 * atr_val, 2)
         pa_t1 = round(close + 1.8 * atr_val, 2)
         pa_t2 = round(close + 3.0 * atr_val, 2)
     else:
-        if chg_pct > 0.50 or close > ema20 or (vwap is not None and close > float(vwap)):
+        if chg_pct > 0.75 or close > ema20:
             return None
         sl = round(close + 1.5 * atr_val, 2)
         pa_t1 = round(max(close - 1.8 * atr_val, 0.05), 2)
@@ -478,7 +476,7 @@ def run_screener():
         if close >= float(ind.get("ema50") or close):
             above50 += 1
 
-    bull_raw, bear_raw = [], []
+    bull_candidates, bear_candidates = [], []
     chain_cache: dict[str, dict] = {}
 
     def _get_chain(sym: str, spot: float) -> dict:
@@ -504,29 +502,29 @@ def run_screener():
         b_score = float(ind.get("bull_score") or 0.0)
         s_score = float(ind.get("bear_score") or 0.0)
         rs_info = rs_map.get(sym, {})
-        if b_score >= s_score and b_score >= 55.0:
+        if b_score >= s_score and b_score >= 52.0:
             cb = _get_chain(sym, float(ind["close"]))
             setup = _build_stock_setup(sym, ind, rs_info, True, cb)
             if setup:
-                bull_raw.append(setup)
-        elif s_score > b_score and s_score >= 55.0:
+                bull_candidates.append(setup)
+        elif s_score > b_score and s_score >= 52.0:
             cb = _get_chain(sym, float(ind["close"]))
             setup = _build_stock_setup(sym, ind, rs_info, False, cb)
             if setup:
-                bear_raw.append(setup)
+                bear_candidates.append(setup)
 
-    bull_raw.sort(key=lambda x: x.get("score", 0.0), reverse=True)
-    bear_raw.sort(key=lambda x: x.get("score", 0.0), reverse=True)
+    bull_candidates.sort(key=lambda x: x.get("score", 0.0), reverse=True)
+    bear_candidates.sort(key=lambda x: x.get("score", 0.0), reverse=True)
 
-    options_bullish = _apply_portfolio_risk_caps(bull_raw, max_items=5)
-    options_bearish = _apply_portfolio_risk_caps(bear_raw, max_items=5)
+    # Up to 5 Bullish + 5 Bearish for Stock Options (10)
+    options_bullish = _select_capped_items(bull_candidates, max_items=5, enforce_risk_cap=False)
+    options_bearish = _select_capped_items(bear_candidates, max_items=5, enforce_risk_cap=False)
 
-    intraday_pool = sorted(
-        bull_raw[:4] + bear_raw[:4],
-        key=lambda x: x.get("score", 0.0),
-        reverse=True,
-    )
-    equity_intraday = _apply_portfolio_risk_caps(intraday_pool, max_items=MAX_OPEN_POSITIONS)
+    # Up to 5 Bullish + 5 Bearish for Stock Equity (10) -> Total up to 20 stocks (10 Bull + 10 Bear)
+    intraday_bullish = _select_capped_items(bull_candidates, max_items=5, enforce_risk_cap=True)
+    intraday_bearish = _select_capped_items(bear_candidates, max_items=5, enforce_risk_cap=True)
+    equity_intraday = intraday_bullish + intraday_bearish
+
     index_trades = _build_index_trades(candles)
 
     def _idx_fmt(sym: str):
@@ -546,22 +544,17 @@ def run_screener():
     above20_pct = round((above20 / total_stocks) * 100.0) if total_stocks else 0
     above50_pct = round((above50 / total_stocks) * 100.0) if total_stocks else 0
 
-    total_ideas = len(index_trades) + len(options_bullish) + len(options_bearish) + len(equity_intraday)
-    filter_status = (
-        f"STRICT_FILTERS_PASSED ({total_ideas} setups)"
-        if total_ideas > 0
-        else "STRICT_FILTERS_NO_MATCH (0 setups surfaced)"
-    )
+    stock_setups_count = len(options_bullish) + len(options_bearish) + len(intraday_bullish) + len(intraday_bearish)
+    total_ideas = len(index_trades) + stock_setups_count
 
     payload = {
         "title": TITLE,
         "mode": MODE,
-        "filter_status": filter_status,
         "summary": {
             "ideas_count": total_ideas,
+            "stock_setups_count": stock_setups_count,
             "breadth_tone": breadth_tone,
             "data_source": data_source,
-            "filter_status": filter_status,
             "nifty_spot": n_spot,
             "nifty_chg": n_chg,
             "bnf_spot": b_spot,
@@ -588,8 +581,8 @@ def run_screener():
         "options_bullish": options_bullish,
         "options_bearish": options_bearish,
         "equity_intraday": equity_intraday,
-        "intraday_bullish": [x for x in equity_intraday if x.get("action") == "BUY (LONG)"],
-        "intraday_bearish": [x for x in equity_intraday if x.get("action") == "SELL (SHORT)"],
+        "intraday_bullish": intraday_bullish,
+        "intraday_bearish": intraday_bearish,
     }
 
     evaluate_signals_chronologically(candles_by_symbol=candles)
@@ -597,9 +590,17 @@ def run_screener():
     payload["walk_forward"] = walk_forward_summary()
 
     send_alert(payload)
-    logging.info("Dispatched %d setups using %s | %s", total_ideas, data_source, filter_status)
+    logging.info(
+        "Dispatched %d total ideas (%d stock setups: %dB/%dS opt + %dB/%dS eq) using %s",
+        total_ideas,
+        stock_setups_count,
+        len(options_bullish),
+        len(options_bearish),
+        len(intraday_bullish),
+        len(intraday_bearish),
+        data_source,
+    )
 
 
 if __name__ == "__main__":
     run_screener()
-    
