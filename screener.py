@@ -280,6 +280,7 @@ def _safe_position_size(entry: float, stop_loss: float, lot_size: int = 1) -> di
     except Exception:
         res = position_size(entry, stop_loss)
         return dict(res) if isinstance(res, dict) else {"qty": int(res or 0)}
+        
 def _build_entry_and_rationale(
     sector: str,
     is_bull: bool,
