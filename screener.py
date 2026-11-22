@@ -1,4 +1,4 @@
-import datetime as dt
+&import datetime as dt
 import inspect
 import logging
 import os
@@ -133,18 +133,42 @@ def _fetch_upstox_1y(instrument_key: str) -> pd.DataFrame | None:
         return None
 
 
+def _clean_yf_duplicates(df: pd.DataFrame | None) -> pd.DataFrame | None:
+    if df is None or df.empty:
+        return None
+    out = df.copy()
+    if isinstance(out.columns, pd.MultiIndex):
+        out.columns = [str(c[0]) for c in out.columns]
+    out = out.loc[:, ~out.columns.duplicated()]
+    if out.index.duplicated().any():
+        out = out[~out.index.duplicated(keep="last")]
+    return out
+
+
 def _fetch_yf_1y(symbol: str) -> pd.DataFrame | None:
     global _WARNED_YF_COUNT
     ticker = _yf_ticker(symbol)
     try:
-        df = yf.download(ticker, period="1y", interval="1d", progress=False, threads=False, timeout=12)
-        norm = clean_ohlcv(df)
+        df = yf.download(
+            ticker,
+            period="1y",
+            interval="1d",
+            progress=False,
+            threads=False,
+            timeout=12,
+            auto_adjust=False,
+        )
+        cleaned_raw = _clean_yf_duplicates(df)
+        norm = clean_ohlcv(cleaned_raw) if cleaned_raw is not None else None
         if norm is not None and len(norm) >= 20:
             return norm
-        hist = yf.Ticker(ticker).history(period="1y", interval="1d")
-        norm2 = clean_ohlcv(hist)
+
+        hist = yf.Ticker(ticker).history(period="1y", interval="1d", auto_adjust=False)
+        cleaned_hist = _clean_yf_duplicates(hist)
+        norm2 = clean_ohlcv(cleaned_hist) if cleaned_hist is not None else None
         if norm2 is not None and len(norm2) >= 20:
             return norm2
+
         if _WARNED_YF_COUNT < 3:
             _WARNED_YF_COUNT += 1
             logging.warning("YF %s returned empty/insufficient data", ticker)
@@ -154,6 +178,7 @@ def _fetch_yf_1y(symbol: str) -> pd.DataFrame | None:
             _WARNED_YF_COUNT += 1
             logging.warning("YF %s err: %s", ticker, exc)
         return None
+
 
 
 def load_candles_1y() -> tuple[dict[str, pd.DataFrame], str]:
