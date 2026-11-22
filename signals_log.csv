@@ -1,5 +1,4 @@
 signal_id,logged_at_ist,session_date,mode,symbol,instrument_type,side,entry,stop_loss,target_1,target_2,qty,status,exit_date,exit_price,gross_pnl,total_costs,net_pnl,r_multiple,notes
-_price,gross_pnl,total_costs,net_pnl,r_multiple,notes
 2026-11-08-MORNING-EQ-DRREDDY-LONG,2026-11-08T09:15:00+05:30,2026-11-08,MORNING,DRREDDY,EQUITY_MIS,LONG,1387.77,1357.87,1432.62,,0,NO_TRIGGER,2026-11-08,1387.77,0.00,0.00,0.00,0.00,grade=A;setup=PRE;legacy_ret=0.00%
 2026-11-08-MORNING-EQ-HEROMOTOCO-LONG,2026-11-08T09:15:00+05:30,2026-11-08,MORNING,HEROMOTOCO,EQUITY_MIS,LONG,5561.10,5398.24,5805.39,,0,NO_TRIGGER,2026-11-08,5561.10,0.00,0.00,0.00,0.00,grade=B;setup=PRE;legacy_ret=0.00%
 2026-11-08-MORNING-EQ-RELIANCE-LONG,2026-11-08T09:15:00+05:30,2026-11-08,MORNING,RELIANCE,EQUITY_MIS,LONG,1327.65,1293.09,1379.49,,0,NO_TRIGGER,2026-11-08,1327.65,0.00,0.00,0.00,0.00,grade=B;setup=PRE;legacy_ret=0.00%
