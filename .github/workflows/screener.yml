@@ -1,4 +1,3 @@
-
 name: Market Screener Automation
 
 on:
@@ -21,7 +20,7 @@ on:
         default: MORNING
 
 permissions:
-  contents: read
+  contents: write
 
 concurrency:
   group: market-screener
@@ -83,6 +82,15 @@ jobs:
       - name: Run Screener Engine
         run: |
           python screener.py
+
+      - name: Commit Screener Snapshot and Logs
+        run: |
+          git config user.name "github-actions[bot]"
+          git config user.email "github-actions[bot]@users.noreply.github.com"
+          git add signals_log.csv docs/data
+          git diff --cached --quiet || git commit -m "chore: update screener snapshot and history"
+          git pull --rebase
+          git push
 
       - name: Workflow Summary
         if: always()
