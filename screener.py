@@ -218,6 +218,128 @@ def load_candles_1y() -> tuple[dict[str, pd.DataFrame], str]:
     return candles, source_label
 
 
+def _pick_col(df: pd.DataFrame, candidates: list[str]) -> str | None:
+    lower_map = {str(c).strip().lower(): c for c in df.columns}
+    for cand in candidates:
+        key = cand.strip().lower()
+        if key in lower_map:
+            return lower_map[key]
+    for c in df.columns:
+        cl = str(c).strip().lower()
+        for cand in candidates:
+            if cand.strip().lower() in cl:
+                return c
+    return None
+
+
+def _serialize_option_chain_rows(chain_df: Any, spot: float, lot_size: int = 1) -> list[dict]:
+    if chain_df is None or getattr(chain_df, "empty", True):
+        return []
+    df = chain_df.copy()
+    strike_col = _pick_col(df, ["strike", "strike_price", "strikePrice"])
+    ce_oi_col = _pick_col(df, ["ce_oi", "call_oi", "ceOi", "oi_ce"])
+    pe_oi_col = _pick_col(df, ["pe_oi", "put_oi", "peOi", "oi_pe"])
+    ce_chg_col = _pick_col(df, ["ce_chg_oi", "ce_oi_chg", "call_oi_change", "ceChgOi", "chg_oi_ce"])
+    pe_chg_col = _pick_col(df, ["pe_chg_oi", "pe_oi_chg", "put_oi_change", "peChgOi", "chg_oi_pe"])
+    ce_ltp_col = _pick_col(df, ["ce_ltp", "call_ltp", "ceLtp", "ltp_ce"])
+    pe_ltp_col = _pick_col(df, ["pe_ltp", "put_ltp", "peLtp", "ltp_pe"])
+    ce_vol_col = _pick_col(df, ["ce_vol", "ce_volume", "call_volume", "ceVol"])
+    pe_vol_col = _pick_col(df, ["pe_vol", "pe_volume", "put_volume", "peVol"])
+
+    if not strike_col:
+        return []
+
+    eff_lot = max(int(lot_size or 1), 1)
+    rows: list[dict] = []
+
+    for _, r in df.iterrows():
+        try:
+            strike = float(r[strike_col])
+        except (TypeError, ValueError):
+            continue
+        if strike <= 0:
+            continue
+
+        def _f(col):
+            if not col:
+                return 0.0
+            try:
+                v = float(r[col])
+                return 0.0 if pd.isna(v) else v
+            except (TypeError, ValueError):
+                return 0.0
+
+        ce_oi = _f(ce_oi_col)
+        pe_oi = _f(pe_oi_col)
+        ce_chg = _f(ce_chg_col)
+        pe_chg = _f(pe_chg_col)
+        ce_ltp = _f(ce_ltp_col)
+        pe_ltp = _f(pe_ltp_col)
+        ce_vol = _f(ce_vol_col)
+        pe_vol = _f(pe_vol_col)
+
+        prev_ce_oi = max(ce_oi - ce_chg, 1.0)
+        prev_pe_oi = max(pe_oi - pe_chg, 1.0)
+        ce_chg_pct = round((ce_chg / prev_ce_oi) * 100.0, 1) if ce_oi > 0 else 0.0
+        pe_chg_pct = round((pe_chg / prev_pe_oi) * 100.0, 1) if pe_oi > 0 else 0.0
+
+        ce_contracts = int(round(ce_chg / eff_lot)) if eff_lot > 1 else int(round(ce_chg))
+        pe_contracts = int(round(pe_chg / eff_lot)) if eff_lot > 1 else int(round(pe_chg))
+
+        rows.append({
+            "strike": round(strike, 2),
+            "is_atm": abs(strike - spot) <= max(spot * 0.006, 25.0),
+            "ce_oi": int(round(ce_oi)),
+            "pe_oi": int(round(pe_oi)),
+            "ce_chg_oi": int(round(ce_chg)),
+            "pe_chg_oi": int(round(pe_chg)),
+            "ce_chg_pct": ce_chg_pct,
+            "pe_chg_pct": pe_chg_pct,
+            "ce_contracts": ce_contracts,
+            "pe_contracts": pe_contracts,
+            "ce_ltp": round(ce_ltp, 2),
+            "pe_ltp": round(pe_ltp, 2),
+            "ce_vol": int(round(ce_vol)),
+            "pe_vol": int(round(pe_vol)),
+        })
+
+    rows.sort(key=lambda x: x["strike"])
+
+    # Identify Strong Support (Max PE OI), Weak Support (2nd Max PE OI or high PE OI surge),
+    # Strong Resistance (Max CE OI), Weak Resistance (2nd Max CE OI or high CE OI surge)
+    if rows:
+        sorted_pe = sorted(rows, key=lambda x: x["pe_oi"], reverse=True)
+        sorted_ce = sorted(rows, key=lambda x: x["ce_oi"], reverse=True)
+        strong_sup_strike = sorted_pe[0]["strike"] if sorted_pe and sorted_pe[0]["pe_oi"] > 0 else None
+        weak_sup_strike = sorted_pe[1]["strike"] if len(sorted_pe) > 1 and sorted_pe[1]["pe_oi"] > 0 else None
+        strong_res_strike = sorted_ce[0]["strike"] if sorted_ce and sorted_ce[0]["ce_oi"] > 0 else None
+        weak_res_strike = sorted_ce[1]["strike"] if len(sorted_ce) > 1 and sorted_ce[1]["ce_oi"] > 0 else None
+
+        for r in rows:
+            st = r["strike"]
+            role = "NEUTRAL"
+            impact = "Balanced OI activity; watch breakout/breakdown around ATM."
+            if st == strong_sup_strike:
+                role = "STRONG_SUPPORT"
+                impact = f"Strong Put base ({r['pe_chg_pct']:+.1f}% OI chg): key downside cushion/floor."
+            elif st == strong_res_strike:
+                role = "STRONG_RESISTANCE"
+                impact = f"Strong Call wall ({r['ce_chg_pct']:+.1f}% OI chg): major upside hurdle/supply."
+            elif st == weak_sup_strike or (r["pe_chg_oi"] > 0 and r["pe_chg_pct"] >= 20.0):
+                role = "WEAK_SUPPORT"
+                impact = f"Developing/Weak Support ({r['pe_chg_oi']:+,} OI / {r['pe_chg_pct']:+.1f}%): secondary floor; if PE unwinds, price can slip."
+            elif st == weak_res_strike or (r["ce_chg_oi"] > 0 and r["ce_chg_pct"] >= 20.0):
+                role = "WEAK_RESISTANCE"
+                impact = f"Developing/Weak Resistance ({r['ce_chg_oi']:+,} OI / {r['ce_chg_pct']:+.1f}%): secondary ceiling; breakout here can trigger short covering."
+            elif r["pe_chg_oi"] < 0 and abs(r["pe_chg_pct"]) >= 15.0:
+                impact = f"Put Unwinding ({r['pe_chg_pct']:+.1f}%): support losing strength below {st}."
+            elif r["ce_chg_oi"] < 0 and abs(r["ce_chg_pct"]) >= 15.0:
+                impact = f"Call Unwinding ({r['ce_chg_pct']:+.1f}%): resistance easing above {st}."
+
+            r["zone_role"] = role
+            r["impact_note"] = impact
+
+    return rows
 def _compute_oi_target(chain_summary: dict | None, entry: float, is_bull: bool) -> float | None:
     if not chain_summary or entry <= 0:
         return None
@@ -280,7 +402,8 @@ def _safe_position_size(entry: float, stop_loss: float, lot_size: int = 1) -> di
     except Exception:
         res = position_size(entry, stop_loss)
         return dict(res) if isinstance(res, dict) else {"qty": int(res or 0)}
-        
+
+
 def _build_entry_and_rationale(
     sector: str,
     is_bull: bool,
@@ -391,6 +514,8 @@ def _build_stock_setup(sym: str, ind: dict, rs_info: dict, is_bull: bool, chain_
         expiry=expiry,
         prefer_spread=True,
     )
+    lot_sz = int(opt_plan.get("lot_size") or LOT_SIZES.get(sym, 1) or 1)
+    chain_rows = _serialize_option_chain_rows(chain_df, spot=close, lot_size=lot_sz)
 
     rs_score = float((rs_info or {}).get("rs_score") or 0.0)
     sector = SECTOR_MAP.get(sym, "OTHER")
@@ -435,6 +560,8 @@ def _build_stock_setup(sym: str, ind: dict, rs_info: dict, is_bull: bool, chain_
         "score": adj_score,
         "history_label": ind.get("history_label", "1y"),
         "chain_summary": chain_summary,
+        "option_chain": chain_rows,
+        "option_expiry": expiry,
         "option_plan": opt_plan,
         **rationale,
         **sizing,
@@ -485,7 +612,8 @@ def _build_index_trades(candles: dict[str, pd.DataFrame]) -> list[dict]:
         pa_t2 = round(spot + 2.5 * atr_val, 2) if is_bull else round(max(spot - 2.5 * atr_val, 0.0), 2)
         oi_target = _compute_oi_target(chain_summary, spot, is_bull=is_bull)
 
-        lot_size = int(plan.get("lot_size") or LOT_SIZES.get(idx_sym, 0))
+        lot_size = int(plan.get("lot_size") or LOT_SIZES.get(idx_sym, 1) or 1)
+        chain_rows = _serialize_option_chain_rows(chain_df, spot=spot, lot_size=lot_size)
         max_loss_lot = plan.get("max_loss_lot")
         sizing_status = "CAPITAL NOT CONFIGURED" if not CAPITAL_CONFIGURED else "1 Lot Risk Cap"
 
@@ -523,6 +651,8 @@ def _build_index_trades(candles: dict[str, pd.DataFrame]) -> list[dict]:
             "max_risk": max_loss_lot,
             "sizing_status": sizing_status,
             "chain_summary": chain_summary,
+            "option_chain": chain_rows,
+            "option_expiry": expiry,
             "option_plan": plan,
             **rationale,
         })
