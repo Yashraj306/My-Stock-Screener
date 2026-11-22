@@ -1,426 +1,438 @@
 import csv
 import datetime as dt
+import math
 import os
 from pathlib import Path
+from typing import Any
 
 import pandas as pd
 
-IST = dt.timezone(dt.timedelta(hours=5, minutes=30))
-DEFAULT_LOG_PATH = Path(os.getenv("SIGNALS_LOG_PATH", "signals_log.csv"))
-MIN_RELIABLE_SAMPLE_SIZE = 30
+from tech import clean_ohlcv
 
-FIELDNAMES = [
+IST = dt.timezone(dt.timedelta(hours=5, minutes=30))
+SIGNALS_LOG_PATH = Path(os.getenv("SIGNALS_LOG_PATH", "signals_log.csv"))
+
+SIGNAL_COLUMNS = [
     "signal_id",
-    "logged_at_ist",
+    "timestamp_ist",
     "session_date",
     "mode",
+    "category",
     "symbol",
-    "instrument_type",
+    "sector",
     "side",
     "entry",
     "stop_loss",
     "target_1",
     "target_2",
+    "oi_target",
     "qty",
     "status",
-    "exit_date",
     "exit_price",
+    "exit_date",
     "gross_pnl",
-    "total_costs",
+    "est_charges",
     "net_pnl",
-    "r_multiple",
-    "notes",
 ]
 
 
-def _ist_now() -> dt.datetime:
-    return dt.datetime.now(IST)
-
-
-def _normalize_date_str(value) -> str:
-    if value is None or value == "":
-        return ""
-    if isinstance(value, dt.datetime):
-        if value.tzinfo is None:
-            return value.replace(tzinfo=IST).date().isoformat()
-        return value.astimezone(IST).date().isoformat()
-    if isinstance(value, dt.date):
-        return value.isoformat()
-    text = str(value).strip()
-    if not text:
-        return ""
+def _safe_float(val: Any) -> float | None:
+    if val is None or val == "":
+        return None
     try:
-        parsed = dt.datetime.fromisoformat(text.replace("Z", "+00:00"))
-        if parsed.tzinfo is None:
-            return parsed.replace(tzinfo=IST).date().isoformat()
-        return parsed.astimezone(IST).date().isoformat()
-    except ValueError:
-        return text[:10]
+        num = float(val)
+        return None if math.isnan(num) or math.isinf(num) else num
+    except (TypeError, ValueError):
+        return None
+
+
+def _safe_int(val: Any, default: int = 0) -> int:
+    num = _safe_float(val)
+    return int(round(num)) if num is not None else default
+
+
+def _normalize_row(row: dict[str, Any]) -> dict[str, str]:
+    normalized: dict[str, str] = {}
+    for col in SIGNAL_COLUMNS:
+        raw_val = row.get(col, "")
+        normalized[col] = "" if raw_val is None else str(raw_val).strip()
+    if not normalized["status"]:
+        normalized["status"] = "OPEN"
+    return normalized
+
+
+def _read_signals_df(path: Path = SIGNALS_LOG_PATH) -> pd.DataFrame:
+    if not path.exists() or path.stat().st_size == 0:
+        return pd.DataFrame(columns=SIGNAL_COLUMNS)
+    try:
+        df = pd.read_csv(path, dtype=str, keep_default_na=False)
+    except Exception:
+        return pd.DataFrame(columns=SIGNAL_COLUMNS)
+    for col in SIGNAL_COLUMNS:
+        if col not in df.columns:
+            df[col] = ""
+    df = df[SIGNAL_COLUMNS].copy()
+    df["status"] = df["status"].replace("", "OPEN")
+    return df
+
+
+def _write_signals_df(df: pd.DataFrame, path: Path = SIGNALS_LOG_PATH) -> None:
+    path.parent.mkdir(parents=True, exist_ok=True)
+    out = df[SIGNAL_COLUMNS].copy() if not df.empty else pd.DataFrame(columns=SIGNAL_COLUMNS)
+    out.to_csv(path, index=False, quoting=csv.QUOTE_MINIMAL)
 
 
 def _estimate_nse_bse_round_trip_cost(
     entry_price: float,
     exit_price: float,
     qty: int,
-    instrument_type: str = "EQUITY_MIS",
-    exchange: str = "NSE",
-    slippage_bps_per_side: float = 5.0,
-) -> dict:
-    q = max(int(qty or 0), 0)
-    if q <= 0 or entry_price <= 0 or exit_price <= 0:
-        return {
-            "slippage_cost": 0.0,
-            "brokerage": 0.0,
-            "stt": 0.0,
-            "exchange_txn": 0.0,
-            "sebi_fee": 0.0,
-            "stamp_duty": 0.0,
-            "gst": 0.0,
-            "total_costs": 0.0,
-        }
+    segment: str = "EQUITY",
+) -> float:
+    e_px = max(_safe_float(entry_price) or 0.0, 0.0)
+    x_px = max(_safe_float(exit_price) or 0.0, 0.0)
+    q = max(_safe_int(qty, 0), 0)
+    if q <= 0 or (e_px <= 0.0 and x_px <= 0.0):
+        return 0.0
 
-    slip_rate = max(float(slippage_bps_per_side), 0.0) / 10000.0
-    slippage_cost = (entry_price * slip_rate + exit_price * slip_rate) * q
+    turnover = (e_px * q) + (x_px * q)
+    seg = (segment or "EQUITY").upper()
 
-    buy_turnover = entry_price * q
-    sell_turnover = exit_price * q
-    total_turnover = buy_turnover + sell_turnover
-
-    inst = str(instrument_type or "EQUITY_MIS").upper()
-    exch = str(exchange or "NSE").upper()
-
-    brokerage = min(20.0, buy_turnover * 0.0003) + min(20.0, sell_turnover * 0.0003)
-
-    if "OPT" in inst or "OPTION" in inst:
-        stt = sell_turnover * 0.0010
-        exch_rate = 0.0003503 if exch == "NSE" else 0.000325
-        stamp_duty = buy_turnover * 0.00003
+    if "OPT" in seg or "INDEX" in seg:
+        # Approximate round-trip options transaction/exchange/STT/SEBI/stamp cost estimate
+        stt_rate = 0.000625
+        exchange_rate = 0.00053
+        sebi_rate = 10.0 / 10_000_000.0
+        stamp_rate = 0.00003
+        gst_rate = 0.18
+        brokerage = 40.0
     else:
-        stt = sell_turnover * 0.00025
-        exch_rate = 0.0000297 if exch == "NSE" else 0.0000375
-        stamp_duty = buy_turnover * 0.00003
+        # Approximate round-trip equity intraday/delivery cost estimate
+        stt_rate = 0.00025
+        exchange_rate = 0.0000325
+        sebi_rate = 10.0 / 10_000_000.0
+        stamp_rate = 0.00003
+        gst_rate = 0.18
+        brokerage = min(40.0, max(0.0, turnover * 0.0006))
 
-    exchange_txn = total_turnover * exch_rate
-    sebi_fee = total_turnover * 1e-6
-    gst = 0.18 * (brokerage + exchange_txn + sebi_fee)
-
-    total_costs = round(
-        slippage_cost + brokerage + stt + exchange_txn + sebi_fee + stamp_duty + gst,
-        2,
-    )
-    return {
-        "slippage_cost": round(slippage_cost, 2),
-        "brokerage": round(brokerage, 2),
-        "stt": round(stt, 2),
-        "exchange_txn": round(exchange_txn, 2),
-        "sebi_fee": round(sebi_fee, 2),
-        "stamp_duty": round(stamp_duty, 2),
-        "gst": round(gst, 2),
-        "total_costs": total_costs,
-    }
+    statutory_and_txn = turnover * (stt_rate + exchange_rate + sebi_rate + stamp_rate)
+    gst = gst_rate * (brokerage + (turnover * exchange_rate))
+    total_cost = brokerage + statutory_and_txn + gst
+    return round(float(total_cost), 2)
 
 
-def ensure_log_file(log_path: Path = DEFAULT_LOG_PATH) -> Path:
-    path = Path(log_path)
-    if not path.parent.exists() and str(path.parent) not in ("", "."):
-        path.parent.mkdir(parents=True, exist_ok=True)
-    if not path.exists():
-        with path.open("w", newline="", encoding="utf-8") as f:
-            writer = csv.DictWriter(f, fieldnames=FIELDNAMES)
-            writer.writeheader()
-    return path
+def log_signals(payload: dict[str, Any], path: Path = SIGNALS_LOG_PATH) -> int:
+    data = payload or {}
+    now_ist = dt.datetime.now(IST)
+    ts_str = now_ist.strftime("%Y-%m-%d %H:%M:%S IST")
+    session_date = str(data.get("session_date") or now_ist.date().isoformat())
+    mode = str(data.get("mode") or "RUN").upper()
 
+    buckets = [
+        ("INDEX", data.get("index_trades") or []),
+        ("OPT_BULL", data.get("options_bullish") or (data.get("setups") or {}).get("bullish") or []),
+        ("OPT_BEAR", data.get("options_bearish") or (data.get("setups") or {}).get("bearish") or []),
+        ("EQ_INTRA", data.get("equity_intraday") or []),
+    ]
 
-def _read_log_safe(path: Path) -> pd.DataFrame:
-    if not path.exists() or path.stat().st_size == 0:
-        return pd.DataFrame(columns=FIELDNAMES)
-    df = pd.read_csv(
-        path,
-        dtype=str,
-        engine="python",
-        on_bad_lines="skip",
-    ).fillna("")
-    for col in FIELDNAMES:
-        if col not in df.columns:
-            df[col] = ""
-    return df[FIELDNAMES]
+    existing_df = _read_signals_df(path)
+    existing_ids = set(existing_df["signal_id"].astype(str).tolist()) if not existing_df.empty else set()
 
+    new_rows: list[dict[str, str]] = []
+    for category, items in buckets:
+        for item in items:
+            if not isinstance(item, dict):
+                continue
+            sym = str(item.get("symbol") or "").strip().upper()
+            side = str(item.get("side") or "").strip().upper()
+            entry = _safe_float(item.get("entry") if item.get("entry") is not None else item.get("close"))
+            sl = _safe_float(item.get("stop_loss"))
+            t1 = _safe_float(item.get("target_1"))
+            t2 = _safe_float(item.get("target_2"))
+            oi_t = _safe_float(item.get("oi_target"))
+            qty = _safe_int(item.get("qty"), 0)
 
-def log_signals(
-    payload: dict,
-    log_path: Path = DEFAULT_LOG_PATH,
-    session_date: str | None = None,
-) -> int:
-    path = ensure_log_file(log_path)
-    now_ist = _ist_now()
-    sess_day = _normalize_date_str(session_date) or now_ist.date().isoformat()
-    logged_ts = now_ist.isoformat()
-    mode = str((payload or {}).get("mode") or "BTST").upper()
+            if not sym or entry is None:
+                continue
 
-    rows_to_add: list[dict] = []
+            sig_id = f"{session_date}|{mode}|{category}|{sym}|{side}|{entry:.2f}"
+            if sig_id in existing_ids:
+                continue
+            existing_ids.add(sig_id)
 
-    for item in (payload or {}).get("equity_intraday") or []:
-        action = str(item.get("action") or "")
-        is_short = "SELL" in action.upper() or "SHORT" in action.upper()
-        side = "SHORT" if is_short else "LONG"
-        entry = float(item.get("entry") or 0.0)
-        sl = float(item.get("stop_loss") or 0.0)
-        t1 = float(item.get("target_1") or 0.0)
-        t2 = float(item.get("target_2") or 0.0)
-        qty = int(item.get("qty") or 0)
-        sym = str(item.get("symbol") or "").strip()
-        if not sym or entry <= 0 or qty <= 0:
-            continue
-        sig_id = f"{sess_day}-{mode}-EQ-{sym}-{side}"
-        rows_to_add.append({
-            "signal_id": sig_id,
-            "logged_at_ist": logged_ts,
-            "session_date": sess_day,
-            "mode": mode,
-            "symbol": sym,
-            "instrument_type": "EQUITY_MIS",
-            "side": side,
-            "entry": round(entry, 2),
-            "stop_loss": round(sl, 2) if sl > 0 else "",
-            "target_1": round(t1, 2) if t1 > 0 else "",
-            "target_2": round(t2, 2) if t2 > 0 else "",
-            "qty": qty,
-            "status": "OPEN",
-            "exit_date": "",
-            "exit_price": "",
-            "gross_pnl": "",
-            "total_costs": "",
-            "net_pnl": "",
-            "r_multiple": "",
-            "notes": item.get("sizing_status") or "",
-        })
+            new_rows.append(
+                _normalize_row(
+                    {
+                        "signal_id": sig_id,
+                        "timestamp_ist": ts_str,
+                        "session_date": session_date,
+                        "mode": mode,
+                        "category": category,
+                        "symbol": sym,
+                        "sector": str(item.get("sector") or "").strip(),
+                        "side": side,
+                        "entry": f"{entry:.2f}",
+                        "stop_loss": "" if sl is None else f"{sl:.2f}",
+                        "target_1": "" if t1 is None else f"{t1:.2f}",
+                        "target_2": "" if t2 is None else f"{t2:.2f}",
+                        "oi_target": "" if oi_t is None else f"{oi_t:.2f}",
+                        "qty": str(qty) if qty > 0 else "",
+                        "status": "OPEN",
+                        "exit_price": "",
+                        "exit_date": "",
+                        "gross_pnl": "",
+                        "est_charges": "",
+                        "net_pnl": "",
+                    }
+                )
+            )
 
-    opt_items = (
-        list((payload or {}).get("index_trades") or [])
-        + list(((payload or {}).get("setups") or {}).get("bullish") or [])
-        + list(((payload or {}).get("setups") or {}).get("bearish") or [])
-    )
+    if new_rows:
+        combined = pd.concat([existing_df, pd.DataFrame(new_rows, columns=SIGNAL_COLUMNS)], ignore_index=True)
+        _write_signals_df(combined, path)
+    elif not path.exists():
+        _write_signals_df(existing_df, path)
 
-    for item in opt_items:
-        sym = str(item.get("symbol") or "").strip()
-        side_raw = str(item.get("side") or "").upper()
-        is_put = "PUT" in side_raw or "PE" in side_raw
-        side = "BUY_PE" if is_put else "BUY_CE"
-        entry = float(item.get("entry") or item.get("close") or 0.0)
-        sl = float(item.get("stop_loss") or 0.0)
-        t1 = float(item.get("target_1") or 0.0)
-        t2 = float(item.get("target_2") or 0.0)
-        plan = item.get("option_plan") or item.get("hedge_plan") or {}
-        if not plan.get("available"):
-            continue
-        lot_size = int(plan.get("lot_size") or 0)
-        if not sym or entry <= 0 or lot_size <= 0:
-            continue
-        sig_id = f"{sess_day}-{mode}-OPT-{sym}-{side}"
-        rows_to_add.append({
-            "signal_id": sig_id,
-            "logged_at_ist": logged_ts,
-            "session_date": sess_day,
-            "mode": mode,
-            "symbol": sym,
-            "instrument_type": "OPTION_PLAN",
-            "side": side,
-            "entry": round(entry, 2),
-            "stop_loss": round(sl, 2) if sl > 0 else "",
-            "target_1": round(t1, 2) if t1 > 0 else "",
-            "target_2": round(t2, 2) if t2 > 0 else "",
-            "qty": lot_size,
-            "status": "OPEN",
-            "exit_date": "",
-            "exit_price": "",
-            "gross_pnl": "",
-            "total_costs": "",
-            "net_pnl": "",
-            "r_multiple": "",
-            "notes": str(plan.get("strategy") or ""),
-        })
-
-    if not rows_to_add:
-        return 0
-
-    existing_df = _read_log_safe(path)
-    existing_ids = set(existing_df["signal_id"].tolist()) if "signal_id" in existing_df.columns else set()
-    fresh_rows = [r for r in rows_to_add if r["signal_id"] not in existing_ids]
-
-    if not fresh_rows:
-        return 0
-
-    with path.open("a", newline="", encoding="utf-8") as f:
-        writer = csv.DictWriter(f, fieldnames=FIELDNAMES)
-        writer.writerows(fresh_rows)
-
-    return len(fresh_rows)
+    return len(new_rows)
+def _prepare_symbol_bars(raw_df: Any) -> pd.DataFrame | None:
+    cleaned = clean_ohlcv(raw_df)
+    if cleaned is None or cleaned.empty:
+        return None
+    df = cleaned.copy()
+    if "Date" in df.columns:
+        df["_date_str"] = df["Date"].astype(str).str[:10]
+    else:
+        df["_date_str"] = pd.to_datetime(df.index, errors="coerce").strftime("%Y-%m-%d")
+    df = df[df["_date_str"].notna() & (df["_date_str"] != "NaT") & (df["_date_str"] != "")]
+    if df.empty:
+        return None
+    df = df.sort_values("_date_str").reset_index(drop=True)
+    return df
 
 
 def evaluate_signals_chronologically(
-    candles_by_symbol: dict[str, pd.DataFrame],
-    log_path: Path = DEFAULT_LOG_PATH,
-    as_of_date: str | None = None,
-    slippage_bps_per_side: float = 5.0,
+    candles_by_symbol: dict[str, Any] | None = None,
+    path: Path = SIGNALS_LOG_PATH,
 ) -> pd.DataFrame:
-    path = ensure_log_file(log_path)
-    df_log = _read_log_safe(path)
-    if df_log.empty:
-        return df_log
+    df = _read_signals_df(path)
+    if df.empty:
+        return df
 
-    cutoff_str = _normalize_date_str(as_of_date)
+    prepared_candles: dict[str, pd.DataFrame] = {}
+    for sym, raw_candles in (candles_by_symbol or {}).items():
+        prep = _prepare_symbol_bars(raw_candles)
+        if prep is not None and not prep.empty:
+            prepared_candles[str(sym).strip().upper()] = prep
 
-    for idx, row in df_log.iterrows():
-        if row.get("status") != "OPEN":
-            continue
-        sym = row.get("symbol", "").strip()
-        sig_date = _normalize_date_str(row.get("session_date"))
-        candles = candles_by_symbol.get(sym)
-        if candles is None or candles.empty or not sig_date:
-            continue
+    # Sort chronologically by session_date, then timestamp_ist, preserving row order
+    df["_orig_idx"] = range(len(df))
+    df = df.sort_values(
+        by=["session_date", "timestamp_ist", "_orig_idx"],
+        kind="mergesort",
+    ).reset_index(drop=True)
 
-        work = clean_ohlcv(candles, min_bars=1)
-        if work is None:
-            continue
-
-        future_bars = work[work["Date"] > sig_date]
-        if cutoff_str:
-            future_bars = future_bars[future_bars["Date"] <= cutoff_str]
-        if future_bars.empty:
+    for idx, row in df.iterrows():
+        status = str(row.get("status") or "OPEN").strip().upper()
+        if status in {"CLOSED_TP1", "CLOSED_TP2", "CLOSED_SL", "CLOSED"}:
             continue
 
-        entry = float(row.get("entry") or 0.0)
-        sl = float(row.get("stop_loss") or 0.0)
-        t1 = float(row.get("target_1") or 0.0)
-        qty = int(float(row.get("qty") or 0))
-        side = str(row.get("side") or "LONG").upper()
-        inst_type = str(row.get("instrument_type") or "EQUITY_MIS").upper()
-        is_short = side in {"SHORT", "BUY_PE"}
+        sym = str(row.get("symbol") or "").strip().upper()
+        bars = prepared_candles.get(sym)
+        if bars is None or bars.empty:
+            continue
 
-        risk_per_unit = abs(entry - sl) if sl > 0 else 0.0
-        exit_price = None
-        exit_date = ""
-        new_status = "OPEN"
+        entry = _safe_float(row.get("entry"))
+        sl = _safe_float(row.get("stop_loss"))
+        t1 = _safe_float(row.get("target_1"))
+        t2 = _safe_float(row.get("target_2"))
+        if entry is None or entry <= 0.0:
+            continue
 
-        for _, bar in future_bars.iterrows():
-            b_date = str(bar["Date"])
-            b_high = float(bar["High"])
-            b_low = float(bar["Low"])
-            b_close = float(bar["Close"])
+        side = str(row.get("side") or "").strip().upper()
+        is_bull = "BULL" in side or "LONG" in side or "BUY" in side or side.endswith("CE")
 
-            if not is_short:
-                hit_sl = (sl > 0) and (b_low <= sl)
-                hit_t1 = (t1 > 0) and (b_high >= t1)
+        sig_date = str(row.get("session_date") or "").strip()[:10]
+        sub_bars = bars[bars["_date_str"] >= sig_date] if sig_date else bars
+        if sub_bars.empty:
+            continue
+
+        exit_price: float | None = None
+        exit_date: str = ""
+        new_status: str | None = None
+
+        for _, bar in sub_bars.iterrows():
+            b_date = str(bar.get("_date_str") or "")
+            high = _safe_float(bar.get("High"))
+            low = _safe_float(bar.get("Low"))
+            if high is None or low is None:
+                continue
+
+            if is_bull:
+                hit_sl = sl is not None and low <= sl
+                hit_t2 = t2 is not None and high >= t2
+                hit_t1 = t1 is not None and high >= t1
+                if hit_sl and hit_t1:
+                    # Conservative same-bar stop-first rule when stop and target overlap
+                    exit_price = sl
+                    exit_date = b_date
+                    new_status = "CLOSED_SL"
+                    break
                 if hit_sl:
-                    exit_price, exit_date, new_status = sl, b_date, "STOP_HIT"
+                    exit_price = sl
+                    exit_date = b_date
+                    new_status = "CLOSED_SL"
+                    break
+                if hit_t2:
+                    exit_price = t2
+                    exit_date = b_date
+                    new_status = "CLOSED_TP2"
                     break
                 if hit_t1:
-                    exit_price, exit_date, new_status = t1, b_date, "TARGET_1_HIT"
+                    exit_price = t1
+                    exit_date = b_date
+                    new_status = "CLOSED_TP1"
                     break
             else:
-                hit_sl = (sl > 0) and (b_high >= sl)
-                hit_t1 = (t1 > 0) and (b_low <= t1)
+                hit_sl = sl is not None and high >= sl
+                hit_t2 = t2 is not None and low <= t2
+                hit_t1 = t1 is not None and low <= t1
+                if hit_sl and hit_t1:
+                    exit_price = sl
+                    exit_date = b_date
+                    new_status = "CLOSED_SL"
+                    break
                 if hit_sl:
-                    exit_price, exit_date, new_status = sl, b_date, "STOP_HIT"
+                    exit_price = sl
+                    exit_date = b_date
+                    new_status = "CLOSED_SL"
+                    break
+                if hit_t2:
+                    exit_price = t2
+                    exit_date = b_date
+                    new_status = "CLOSED_TP2"
                     break
                 if hit_t1:
-                    exit_price, exit_date, new_status = t1, b_date, "TARGET_1_HIT"
+                    exit_price = t1
+                    exit_date = b_date
+                    new_status = "CLOSED_TP1"
                     break
 
-            exit_price = b_close
-            exit_date = b_date
-
-        if new_status == "OPEN" and exit_price is not None and len(future_bars) >= 3:
-            new_status = "TIME_EXIT"
-
-        if new_status != "OPEN" and exit_price is not None and entry > 0 and qty > 0:
-            move_per_unit = (entry - exit_price) if is_short else (exit_price - entry)
-            gross_pnl = round(move_per_unit * qty, 2)
-            costs = _estimate_nse_bse_round_trip_cost(
+        if new_status is not None and exit_price is not None:
+            qty = _safe_int(row.get("qty"), 1)
+            eff_qty = qty if qty > 0 else 1
+            gross = ((exit_price - entry) * eff_qty) if is_bull else ((entry - exit_price) * eff_qty)
+            charges = _estimate_nse_bse_round_trip_cost(
                 entry_price=entry,
                 exit_price=exit_price,
-                qty=qty,
-                instrument_type=inst_type,
-                slippage_bps_per_side=slippage_bps_per_side,
-            )["total_costs"]
-            net_pnl = round(gross_pnl - costs, 2)
-            r_mult = round(move_per_unit / risk_per_unit, 2) if risk_per_unit > 0 else ""
+                qty=eff_qty,
+                segment=str(row.get("category") or "EQUITY"),
+            )
+            net = gross - charges
 
-            df_log.at[idx, "status"] = new_status
-            df_log.at[idx, "exit_date"] = exit_date
-            df_log.at[idx, "exit_price"] = round(float(exit_price), 2)
-            df_log.at[idx, "gross_pnl"] = f"{gross_pnl:.2f}"
-            df_log.at[idx, "total_costs"] = f"{costs:.2f}"
-            df_log.at[idx, "net_pnl"] = f"{net_pnl:.2f}"
-            df_log.at[idx, "r_multiple"] = "" if r_mult == "" else f"{r_mult:.2f}"
+            df.at[idx, "status"] = new_status
+            df.at[idx, "exit_price"] = f"{exit_price:.2f}"
+            df.at[idx, "exit_date"] = exit_date
+            df.at[idx, "gross_pnl"] = f"{gross:.2f}"
+            df.at[idx, "est_charges"] = f"{charges:.2f}"
+            df.at[idx, "net_pnl"] = f"{net:.2f}"
 
-    df_log.to_csv(path, index=False)
-    return df_log
+    df = df.sort_values("_orig_idx", kind="mergesort").drop(columns=["_orig_idx"]).reset_index(drop=True)
+    _write_signals_df(df, path)
+    return df
 
 
-def walk_forward_summary(
-    log_path: Path = DEFAULT_LOG_PATH,
-    min_sample_size: int = MIN_RELIABLE_SAMPLE_SIZE,
-) -> dict:
-    path = ensure_log_file(log_path)
-    df = _read_log_safe(path)
-    closed_statuses = {"TARGET_1_HIT", "STOP_HIT", "TIME_EXIT"}
-    closed = df[df["status"].isin(closed_statuses)].copy() if not df.empty else pd.DataFrame()
-
-    n_closed = len(closed)
-    low_sample_warning = n_closed < int(min_sample_size)
-
-    if n_closed == 0:
+def walk_forward_summary(path: Path = SIGNALS_LOG_PATH, min_sample_size: int = 20) -> dict[str, Any]:
+    df = _read_signals_df(path)
+    total_signals = int(len(df))
+    if df.empty:
         return {
+            "total_signals": 0,
+            "open_signals": 0,
             "closed_trades": 0,
+            "winning_trades": 0,
+            "losing_trades": 0,
             "net_win_rate_pct": None,
             "total_gross_pnl": 0.0,
-            "total_costs": 0.0,
+            "total_est_charges": 0.0,
             "total_net_pnl": 0.0,
-            "avg_r_multiple": None,
-            "max_drawdown_net_pnl": 0.0,
-            "statistically_reliable": False,
+            "min_sample_size": min_sample_size,
+            "low_sample": True,
             "sample_warning": (
-                f"LOW SAMPLE WARNING: 0 closed post-cost trades logged (< {min_sample_size} minimum). "
-                "Do not claim win rate or accuracy."
+                f"Low sample size (0 closed trades vs {min_sample_size} minimum): "
+                "metrics are preliminary and unverified for statistical reliability."
             ),
         }
 
-    closed["net_pnl_num"] = pd.to_numeric(closed["net_pnl"], errors="coerce").fillna(0.0)
-    closed["gross_pnl_num"] = pd.to_numeric(closed["gross_pnl"], errors="coerce").fillna(0.0)
-    closed["costs_num"] = pd.to_numeric(closed["total_costs"], errors="coerce").fillna(0.0)
-    closed["r_num"] = pd.to_numeric(closed["r_multiple"], errors="coerce")
+    closed_mask = df["status"].astype(str).str.upper().str.startswith("CLOSED")
+    open_count = int((~closed_mask).sum())
+    closed_df = df[closed_mask].copy()
+    closed_count = int(len(closed_df))
 
-    wins = int((closed["net_pnl_num"] > 0).sum())
-    win_rate = round((wins / n_closed) * 100.0, 2)
-    total_gross = round(float(closed["gross_pnl_num"].sum()), 2)
-    total_costs = round(float(closed["costs_num"].sum()), 2)
-    total_net = round(float(closed["net_pnl_num"].sum()), 2)
+    net_pnls = closed_df["net_pnl"].apply(_safe_float).dropna()
+    gross_pnls = closed_df["gross_pnl"].apply(_safe_float).dropna()
+    charges_vals = closed_df["est_charges"].apply(_safe_float).dropna()
 
-    valid_r = closed["r_num"].dropna()
-    avg_r = round(float(valid_r.mean()), 2) if not valid_r.empty else None
+    wins = int((net_pnls > 0.0).sum())
+    losses = int((net_pnls <= 0.0).sum())
+    win_rate = round((wins / len(net_pnls)) * 100.0, 2) if len(net_pnls) > 0 else None
 
-    equity_curve = closed["net_pnl_num"].cumsum()
-    equity_with_zero = pd.concat([pd.Series([0.0]), equity_curve.reset_index(drop=True)], ignore_index=True)
-    running_peak = equity_with_zero.cummax()
-    drawdown = equity_with_zero - running_peak
-    max_dd = round(float(drawdown.min()), 2)
-
-    warning_msg = (
-        f"LOW SAMPLE WARNING: Only {n_closed} closed post-cost trades logged (minimum {min_sample_size} recommended before drawing statistical conclusions)."
-        if low_sample_warning
-        else "Sample size meets minimum threshold; interpret results strictly out-of-sample after transaction costs."
+    low_sample = closed_count < min_sample_size
+    sample_warning = (
+        f"Low sample size ({closed_count} closed trades < {min_sample_size} minimum): "
+        "results have limited statistical confidence and do not represent guaranteed performance."
+        if low_sample
+        else ""
     )
 
     return {
-        "closed_trades": n_closed,
+        "total_signals": total_signals,
+        "open_signals": open_count,
+        "closed_trades": closed_count,
+        "winning_trades": wins,
+        "losing_trades": losses,
         "net_win_rate_pct": win_rate,
-        "total_gross_pnl": total_gross,
-        "total_costs": total_costs,
-        "total_net_pnl": total_net,
-        "avg_r_multiple": avg_r,
-        "max_drawdown_net_pnl": max_dd,
-        "statistically_reliable": not low_sample_warning,
-        "sample_warning": warning_msg,
+        "total_gross_pnl": round(float(gross_pnls.sum()), 2) if len(gross_pnls) else 0.0,
+        "total_est_charges": round(float(charges_vals.sum()), 2) if len(charges_vals) else 0.0,
+        "total_net_pnl": round(float(net_pnls.sum()), 2) if len(net_pnls) else 0.0,
+        "min_sample_size": min_sample_size,
+        "low_sample": low_sample,
+        "sample_warning": sample_warning,
     }
-    
+
+
+if __name__ == "__main__":
+    import tempfile
+
+    with tempfile.TemporaryDirectory() as tmpdir:
+        test_csv = Path(tmpdir) / "signals_log.csv"
+        sample_df = pd.DataFrame(
+            [
+                {
+                    "Date": "2026-11-20",
+                    "Open": 100.0,
+                    "High": 102.0,
+                    "Low": 99.0,
+                    "Close": 101.0,
+                    "Volume": 100000,
+                }
+            ]
+        )
+        sample_payload = {
+            "session_date": "2026-11-20",
+            "mode": "MORNING",
+            "eq_intraday": [
+                {
+                    "symbol": "TESTSYM",
+                    "sector": "TEST",
+                    "side": "BULLISH",
+                    "entry": 100.0,
+                    "stop_loss": 98.0,
+                    "target_1": 103.0,
+                    "target_2": 105.0,
+                    "qty": 1,
+                }
+            ],
+        }
+        log_signals(sample_payload, path=test_csv)
+        evaluate_signals_chronologically(candles_by_symbol={"TESTSYM": sample_df}, path=test_csv)
+        summary = walk_forward_summary(path=test_csv)
+        print("Smoke check passed. Summary:", summary)
