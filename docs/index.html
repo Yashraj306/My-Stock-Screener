@@ -398,7 +398,7 @@
     <section class="wf-banner" id="wfBanner"></section>
   </main>
   <script>
-    const ENDPOINT_STORAGE_KEY = 'mss_live_run_endpoint_v1';
+    const GH_CFG_KEY = 'mss_gh_dispatch_cfg_v1';
     let currentPayload = null;
     let activeTab = 'ALL';
     let selectedFile = 'data/latest.json';
@@ -424,6 +424,21 @@
       return 'neu';
     };
 
+    function getGhConfig() {
+      try {
+        const raw = JSON.parse(localStorage.getItem(GH_CFG_KEY) || '{}');
+        return {
+          owner: (raw.owner || 'Yashraj306').trim(),
+          repo: (raw.repo || 'My-Stock-Screener').trim(),
+          workflow: (raw.workflow || 'screener.yml').trim(),
+          ref: (raw.ref || 'main').trim(),
+          token: (raw.token || '').trim(),
+        };
+      } catch {
+        return { owner: 'Yashraj306', repo: 'My-Stock-Screener', workflow: 'screener.yml', ref: 'main', token: '' };
+      }
+    }
+
     function setRunStatus(msg, badgeType = 'st-stale', badgeLabel = 'SNAPSHOT') {
       document.getElementById('runStatusText').textContent = msg;
       const b = document.getElementById('freshnessBadge');
@@ -446,13 +461,13 @@
         return;
       }
       const ageMin = Math.max(0, Math.round((Date.now() - parsed) / 60000));
-      if (ageMin <= 15) {
-        setRunStatus(`Snapshot age: ${ageMin} min (${genRaw})`, 'st-fresh', 'RECENT DATA');
+      if (ageMin <= 5) {
+        setRunStatus(`Snapshot age: ${ageMin} min (${genRaw})`, 'st-fresh', 'FRESH RUN');
       } else if (ageMin <= 1440) {
-        setRunStatus(`Snapshot age: ${ageMin} min (${genRaw}) — not tick-by-tick live`, 'st-stale', `${ageMin}M OLD`);
+        setRunStatus(`Snapshot age: ${ageMin} min (${genRaw}) — batch snapshot`, 'st-stale', `${ageMin}M OLD`);
       } else {
         const hrs = Math.round(ageMin / 60);
-        setRunStatus(`Snapshot is ${hrs}h old (${genRaw}) — market closed or batch run pending`, 'st-stale', 'STALE / CLOSED');
+        setRunStatus(`Snapshot is ${hrs}h old (${genRaw}) — market closed or run pending`, 'st-stale', 'STALE / CLOSED');
       }
     }
 
@@ -527,14 +542,62 @@
         currentPayload = data;
         renderDashboard(data);
         evaluateFreshness(data);
+        return data;
       } catch (err) {
         setRunStatus(`Failed to load ${filePath}: ${err.message}`, 'st-err', 'FETCH ERROR');
         document.getElementById('contentArea').innerHTML = `
           <div class="empty-box">
             <h3>Data snapshot not found (${esc(filePath)})</h3>
-            <p style="margin-top:6px;">Run the screener workflow or configure a live run endpoint to generate <code>docs/data/latest.json</code>.</p>
+            <p style="margin-top:6px;">Trigger the workflow or run <code>screener.py</code> to generate <code>docs/data/latest.json</code>.</p>
           </div>`;
+        return null;
       }
+    }
+
+    async function dispatchGitHubWorkflow(cfg) {
+      const modeVal = (currentPayload && currentPayload.mode) || 'BTST';
+      const url = `https://api.github.com/repos/${encodeURIComponent(cfg.owner)}/${encodeURIComponent(cfg.repo)}/actions/workflows/${encodeURIComponent(cfg.workflow)}/dispatches`;
+      const res = await fetch(url, {
+        method: 'POST',
+        headers: {
+          'Authorization': `Bearer ${cfg.token}`,
+          'Accept': 'application/vnd.github+json',
+          'Content-Type': 'application/json',
+        },
+        body: JSON.stringify({
+          ref: cfg.ref || 'main',
+          inputs: { mode: modeVal },
+        }),
+      });
+      if (!res.ok) {
+        const errTxt = await res.text().catch(() => '');
+        throw new Error(`GitHub Dispatch HTTP ${res.status}: ${errTxt.slice(0, 120)}`);
+      }
+    }
+
+    async function pollUntilLatestUpdated(prevStamp, maxWaitMs = 120000) {
+      const start = Date.now();
+      const targetFile = 'data/latest.json';
+      while ((Date.now() - start) < maxWaitMs) {
+        await new Promise((r) => setTimeout(r, 2500));
+        try {
+          const fresh = await fetchJsonNoCache(targetFile);
+          const newStamp = String(fresh.generated_at_ist || fresh.timestamp || '');
+          if (newStamp && newStamp !== prevStamp) {
+            selectedFile = targetFile;
+            await loadManifest();
+            currentPayload = fresh;
+            renderDashboard(fresh);
+            evaluateFreshness(fresh);
+            return true;
+          }
+          const elapsedSec = Math.round((Date.now() - start) / 1000);
+          setRunStatus(`Workflow running... waiting for updated snapshot (${elapsedSec}s)`, 'st-stale', 'RUNNING');
+        } catch {
+          // Ignore transient fetch error while commit is pushing
+        }
+      }
+      return false;
     }
 
     async function triggerRefreshAndRun() {
@@ -544,30 +607,27 @@
       btn.disabled = true;
       btn.textContent = '↻ Running...';
 
-      const endpoint = (localStorage.getItem(ENDPOINT_STORAGE_KEY) || '').trim();
+      const prevStamp = currentPayload ? String(currentPayload.generated_at_ist || currentPayload.timestamp || '') : '';
+      const cfg = getGhConfig();
+
       try {
-        if (endpoint) {
-          setRunStatus('Triggering remote screener run...', 'st-stale', 'RUNNING');
-          const modeVal = (currentPayload && currentPayload.mode) || 'BTST';
-          const resp = await fetch(endpoint, {
-            method: 'POST',
-            headers: { 'Content-Type': 'application/json' },
-            body: JSON.stringify({ action: 'run_screener', mode: modeVal, requested_at: new Date().toISOString() }),
-          });
-          if (!resp.ok) {
-            setRunStatus(`Endpoint returned HTTP ${resp.status}; reading latest available snapshot.`, 'st-err', 'RUN WARNING');
-          } else {
-            setRunStatus('Remote run accepted; waiting briefly for snapshot update...', 'st-stale', 'SYNCING');
-            await new Promise((r) => setTimeout(r, 1500));
+        if (cfg.token) {
+          setRunStatus(`Dispatching ${cfg.owner}/${cfg.repo} (${cfg.workflow})...`, 'st-stale', 'DISPATCHING');
+          await dispatchGitHubWorkflow(cfg);
+          setRunStatus('Workflow dispatched; polling for fresh data...', 'st-stale', 'RUNNING');
+          const updated = await pollUntilLatestUpdated(prevStamp, 120000);
+          if (!updated) {
+            await loadManifest();
+            await loadSnapshot(selectedFile, false);
+            setRunStatus('Workflow still running or no new timestamp yet; showing latest available data.', 'st-stale', 'PENDING');
           }
         } else {
-          setRunStatus('Refreshing latest snapshot from data store...', 'st-stale', 'REFRESHING');
+          setRunStatus('No GitHub token saved; refreshing latest JSON snapshot...', 'st-stale', 'REFRESHING');
+          await loadManifest();
+          await loadSnapshot(selectedFile, false);
         }
-
-        await loadManifest();
-        await loadSnapshot(selectedFile, false);
       } catch (err) {
-        setRunStatus(`Run/refresh error: ${err.message}`, 'st-err', 'ERROR');
+        setRunStatus(err.message, 'st-err', 'RUN ERROR');
       } finally {
         isRefreshing = false;
         btn.disabled = false;
@@ -757,10 +817,10 @@
         btn.textContent = 'Auto-Sync: OFF';
       } else {
         btn.classList.add('active');
-        btn.textContent = 'Auto-Sync: 15s';
+        btn.textContent = 'Auto-Sync: 10s';
         autoSyncTimer = setInterval(() => {
           loadSnapshot(selectedFile, false);
-        }, 15000);
+        }, 10000);
       }
     }
 
@@ -770,22 +830,27 @@
 
     document.getElementById('endpointToggleBtn').addEventListener('click', () => {
       const drawer = document.getElementById('endpointDrawer');
-      document.getElementById('runEndpointInput').value = localStorage.getItem(ENDPOINT_STORAGE_KEY) || '';
+      const cfg = getGhConfig();
+      const existingInput = document.getElementById('runEndpointInput');
+      if (existingInput) existingInput.value = cfg.token;
       drawer.classList.toggle('open');
     });
 
     document.getElementById('saveEndpointBtn').addEventListener('click', () => {
-      const val = document.getElementById('runEndpointInput').value.trim();
-      if (val) localStorage.setItem(ENDPOINT_STORAGE_KEY, val);
-      else localStorage.removeItem(ENDPOINT_STORAGE_KEY);
+      const tokenVal = (document.getElementById('runEndpointInput').value || '').trim();
+      const cfg = getGhConfig();
+      cfg.token = tokenVal;
+      localStorage.setItem(GH_CFG_KEY, JSON.stringify(cfg));
       document.getElementById('endpointDrawer').classList.remove('open');
-      setRunStatus(val ? 'Live run endpoint saved.' : 'Using static JSON refresh only.', 'st-stale', 'CONFIGURED');
+      setRunStatus(tokenVal ? 'GitHub workflow dispatch token saved locally.' : 'Token cleared; static JSON refresh active.', 'st-stale', 'CONFIGURED');
     });
 
     document.getElementById('clearEndpointBtn').addEventListener('click', () => {
-      localStorage.removeItem(ENDPOINT_STORAGE_KEY);
+      const cfg = getGhConfig();
+      cfg.token = '';
+      localStorage.setItem(GH_CFG_KEY, JSON.stringify(cfg));
       document.getElementById('runEndpointInput').value = '';
-      setRunStatus('Live run endpoint cleared; using static JSON refresh.', 'st-stale', 'STATIC MODE');
+      setRunStatus('Token cleared; using static JSON refresh.', 'st-stale', 'STATIC MODE');
     });
 
     document.getElementById('searchInput').addEventListener('input', () => currentPayload && renderDashboard(currentPayload));
