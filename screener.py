@@ -1,9 +1,12 @@
-&import datetime as dt
+import datetime as dt
 import inspect
+import json
 import logging
 import os
+import tempfile
 import warnings
 from concurrent.futures import ThreadPoolExecutor
+from pathlib import Path
 from urllib.parse import quote
 
 import pandas as pd
@@ -49,6 +52,13 @@ UPSTOX_ACCESS_TOKEN = (
 ).strip()
 UPSTOX_BASE_V2 = "https://api.upstox.com/v2"
 
+_YF_CACHE_DIR = os.path.join(tempfile.gettempdir(), "py-yfinance")
+os.makedirs(_YF_CACHE_DIR, exist_ok=True)
+try:
+    yf.set_tz_cache_location(_YF_CACHE_DIR)
+except Exception:
+    pass
+
 YF_SYMBOL_MAP = {
     "NIFTY": "^NSEI",
     "BANKNIFTY": "^NSEBANK",
@@ -63,6 +73,18 @@ _WARNED_YF_COUNT = 0
 
 def _yf_ticker(sym: str) -> str:
     return YF_SYMBOL_MAP.get(sym, f"{sym}.NS")
+
+
+def _clean_yf_duplicates(df: pd.DataFrame | None) -> pd.DataFrame | None:
+    if df is None or df.empty:
+        return None
+    out = df.copy()
+    if isinstance(out.columns, pd.MultiIndex):
+        out.columns = [str(c[0]) for c in out.columns]
+    out = out.loc[:, ~out.columns.duplicated()]
+    if out.index.duplicated().any():
+        out = out[~out.index.duplicated(keep="last")]
+    return out
 
 
 def _compute_cumulative_vwap(df: pd.DataFrame) -> float | None:
@@ -133,18 +155,6 @@ def _fetch_upstox_1y(instrument_key: str) -> pd.DataFrame | None:
         return None
 
 
-def _clean_yf_duplicates(df: pd.DataFrame | None) -> pd.DataFrame | None:
-    if df is None or df.empty:
-        return None
-    out = df.copy()
-    if isinstance(out.columns, pd.MultiIndex):
-        out.columns = [str(c[0]) for c in out.columns]
-    out = out.loc[:, ~out.columns.duplicated()]
-    if out.index.duplicated().any():
-        out = out[~out.index.duplicated(keep="last")]
-    return out
-
-
 def _fetch_yf_1y(symbol: str) -> pd.DataFrame | None:
     global _WARNED_YF_COUNT
     ticker = _yf_ticker(symbol)
@@ -169,16 +179,15 @@ def _fetch_yf_1y(symbol: str) -> pd.DataFrame | None:
         if norm2 is not None and len(norm2) >= 20:
             return norm2
 
-        if _WARNED_YF_COUNT < 3:
+        if _WARNED_YF_COUNT < 5:
             _WARNED_YF_COUNT += 1
             logging.warning("YF %s returned empty/insufficient data", ticker)
         return None
     except Exception as exc:
-        if _WARNED_YF_COUNT < 3:
+        if _WARNED_YF_COUNT < 5:
             _WARNED_YF_COUNT += 1
             logging.warning("YF %s err: %s", ticker, exc)
         return None
-
 
 
 def load_candles_1y() -> tuple[dict[str, pd.DataFrame], str]:
@@ -519,6 +528,67 @@ def _build_index_trades(candles: dict[str, pd.DataFrame]) -> list[dict]:
     return trades
 
 
+def export_web_dashboard_data(payload: dict, base_dir: str = "docs/data") -> None:
+    root = Path(base_dir)
+    history_dir = root / "history"
+    history_dir.mkdir(parents=True, exist_ok=True)
+
+    now_ist = dt.datetime.now(IST)
+    session_date = now_ist.date().isoformat()
+    mode_tag = str(payload.get("mode") or MODE or "RUN").upper()
+
+    enriched = dict(payload)
+    enriched["generated_at_ist"] = now_ist.strftime("%Y-%m-%d %H:%M:%S IST")
+    enriched["session_date"] = session_date
+
+    (root / "latest.json").write_text(
+        json.dumps(enriched, indent=2, default=str),
+        encoding="utf-8",
+    )
+
+    (history_dir / f"{session_date}.json").write_text(
+        json.dumps(enriched, indent=2, default=str),
+        encoding="utf-8",
+    )
+    (history_dir / f"{session_date}_{mode_tag}.json").write_text(
+        json.dumps(enriched, indent=2, default=str),
+        encoding="utf-8",
+    )
+
+    manifest_path = root / "manifest.json"
+    entries = []
+    for f in sorted(history_dir.glob("*.json"), reverse=True):
+        stem = f.stem
+        try:
+            raw = json.loads(f.read_text(encoding="utf-8"))
+            summ = raw.get("summary") or {}
+            entries.append({
+                "id": stem,
+                "file": f"data/history/{f.name}",
+                "date": raw.get("session_date") or stem[:10],
+                "mode": raw.get("mode") or "RUN",
+                "generated_at_ist": raw.get("generated_at_ist") or "",
+                "ideas_count": summ.get("ideas_count", 0),
+                "breadth_tone": summ.get("breadth_tone", "MIXED"),
+                "nifty_spot": summ.get("nifty_spot", "—"),
+                "nifty_chg": summ.get("nifty_chg", "—"),
+            })
+        except Exception:
+            continue
+
+    manifest_path.write_text(
+        json.dumps(
+            {
+                "updated_at_ist": now_ist.strftime("%Y-%m-%d %H:%M:%S IST"),
+                "latest_file": "data/latest.json",
+                "snapshots": entries[:90],
+            },
+            indent=2,
+        ),
+        encoding="utf-8",
+    )
+
+
 def run_screener():
     candles, data_source = load_candles_1y()
     logging.info("Loaded candles for %d symbols using %s", len(candles), data_source)
@@ -667,6 +737,7 @@ def run_screener():
     evaluate_signals_chronologically(candles_by_symbol=candles)
     log_signals(payload)
     payload["walk_forward"] = walk_forward_summary()
+    export_web_dashboard_data(payload)
 
     send_alert(payload)
     logging.info(
