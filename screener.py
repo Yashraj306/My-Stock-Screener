@@ -7,6 +7,7 @@ import tempfile
 import warnings
 from concurrent.futures import ThreadPoolExecutor
 from pathlib import Path
+from typing import Any
 from urllib.parse import quote
 
 import pandas as pd
@@ -232,9 +233,61 @@ def _pick_col(df: pd.DataFrame, candidates: list[str]) -> str | None:
     return None
 
 
-def _serialize_option_chain_rows(chain_df: Any, spot: float, lot_size: int = 1) -> list[dict]:
+def _build_session_guardrails(now_ist: dt.datetime) -> dict:
+    hm = now_ist.hour * 60 + now_ist.minute
+    in_calibration = (9 * 60 + 15) <= hm <= (9 * 60 + 25)
+    after_cutoff = hm >= (14 * 60 + 30)
+    in_optimal_window = (10 * 60) <= hm <= (11 * 60)
+
+    if in_calibration:
+        window_status = "CALIBRATION (9:15–9:25 AM)"
+        window_note = "9:15–9:25 AM calibration phase: observe opening stabilization before placing orders."
+    elif after_cutoff:
+        window_status = "POST-2:30 PM CUTOFF"
+        window_note = "After 2:30 PM cutoff: avoid fresh intraday option buying due to late-session theta decay."
+    elif in_optimal_window:
+        window_status = "OPTIMAL WINDOW (10:00–11:00 AM)"
+        window_note = "10:00–11:00 AM window: Greeks and liquidity typically stabilize after opening range."
+    else:
+        window_status = "STANDARD SESSION"
+        window_note = "Check WTT/WTB shift %, EOS/EOR levels, and implied volatility before entry."
+
+    return {
+        "window_status": window_status,
+        "window_note": window_note,
+        "in_calibration": in_calibration,
+        "after_cutoff": after_cutoff,
+        "in_optimal_window": in_optimal_window,
+        "rules": [
+            "9:15–9:25 AM: Initial calibration window; verify strike & OI stabilization.",
+            "2:30 PM onwards: Cutoff rule for fresh intraday option buying & late-session risk.",
+            "WTT / WTB: Secondary strike ratio approaching 100% signals structural shift; reversal if ratio decays.",
+            "Dynamic SL: Anchor stop-loss to option structure/invalidations rather than fixed arbitrary points.",
+        ],
+    }
+
+
+def _build_option_chain_analytics(chain_df: Any, spot: float, lot_size: int = 1) -> dict:
     if chain_df is None or getattr(chain_df, "empty", True):
-        return []
+        return {
+            "rows": [],
+            "strong_support": None,
+            "weak_support": None,
+            "strong_resistance": None,
+            "weak_resistance": None,
+            "support_shift": "STRONG",
+            "resistance_shift": "STRONG",
+            "support_shift_pct": 0.0,
+            "resistance_shift_pct": 0.0,
+            "sentiment_state": "NEUTRAL / NO CHAIN",
+            "eos": None,
+            "eor": None,
+            "eos_minus_1": None,
+            "eos_plus_1": None,
+            "eor_minus_1": None,
+            "eor_plus_1": None,
+        }
+
     df = chain_df.copy()
     strike_col = _pick_col(df, ["strike", "strike_price", "strikePrice"])
     ce_oi_col = _pick_col(df, ["ce_oi", "call_oi", "ceOi", "oi_ce"])
@@ -247,7 +300,24 @@ def _serialize_option_chain_rows(chain_df: Any, spot: float, lot_size: int = 1) 
     pe_vol_col = _pick_col(df, ["pe_vol", "pe_volume", "put_volume", "peVol"])
 
     if not strike_col:
-        return []
+        return {
+            "rows": [],
+            "strong_support": None,
+            "weak_support": None,
+            "strong_resistance": None,
+            "weak_resistance": None,
+            "support_shift": "STRONG",
+            "resistance_shift": "STRONG",
+            "support_shift_pct": 0.0,
+            "resistance_shift_pct": 0.0,
+            "sentiment_state": "NEUTRAL / NO CHAIN",
+            "eos": None,
+            "eor": None,
+            "eos_minus_1": None,
+            "eos_plus_1": None,
+            "eor_minus_1": None,
+            "eor_plus_1": None,
+        }
 
     eff_lot = max(int(lot_size or 1), 1)
     rows: list[dict] = []
@@ -288,7 +358,7 @@ def _serialize_option_chain_rows(chain_df: Any, spot: float, lot_size: int = 1) 
 
         rows.append({
             "strike": round(strike, 2),
-            "is_atm": abs(strike - spot) <= max(spot * 0.006, 25.0),
+            "is_atm": False,
             "ce_oi": int(round(ce_oi)),
             "pe_oi": int(round(pe_oi)),
             "ce_chg_oi": int(round(ce_chg)),
@@ -301,45 +371,141 @@ def _serialize_option_chain_rows(chain_df: Any, spot: float, lot_size: int = 1) 
             "pe_ltp": round(pe_ltp, 2),
             "ce_vol": int(round(ce_vol)),
             "pe_vol": int(round(pe_vol)),
+            "pe_strength_pct": 0.0,
+            "ce_strength_pct": 0.0,
         })
 
     rows.sort(key=lambda x: x["strike"])
+    if not rows:
+        return {
+            "rows": [],
+            "strong_support": None,
+            "weak_support": None,
+            "strong_resistance": None,
+            "weak_resistance": None,
+            "support_shift": "STRONG",
+            "resistance_shift": "STRONG",
+            "support_shift_pct": 0.0,
+            "resistance_shift_pct": 0.0,
+            "sentiment_state": "NEUTRAL",
+            "eos": None,
+            "eor": None,
+            "eos_minus_1": None,
+            "eos_plus_1": None,
+            "eor_minus_1": None,
+            "eor_plus_1": None,
+        }
 
-    # Identify Strong Support (Max PE OI), Weak Support (2nd Max PE OI or high PE OI surge),
-    # Strong Resistance (Max CE OI), Weak Resistance (2nd Max CE OI or high CE OI surge)
-    if rows:
-        sorted_pe = sorted(rows, key=lambda x: x["pe_oi"], reverse=True)
-        sorted_ce = sorted(rows, key=lambda x: x["ce_oi"], reverse=True)
-        strong_sup_strike = sorted_pe[0]["strike"] if sorted_pe and sorted_pe[0]["pe_oi"] > 0 else None
-        weak_sup_strike = sorted_pe[1]["strike"] if len(sorted_pe) > 1 and sorted_pe[1]["pe_oi"] > 0 else None
-        strong_res_strike = sorted_ce[0]["strike"] if sorted_ce and sorted_ce[0]["ce_oi"] > 0 else None
-        weak_res_strike = sorted_ce[1]["strike"] if len(sorted_ce) > 1 and sorted_ce[1]["ce_oi"] > 0 else None
+    closest_idx = min(range(len(rows)), key=lambda i: abs(rows[i]["strike"] - spot))
+    rows[closest_idx]["is_atm"] = True
 
-        for r in rows:
-            st = r["strike"]
-            role = "NEUTRAL"
-            impact = "Balanced OI activity; watch breakout/breakdown around ATM."
-            if st == strong_sup_strike:
-                role = "STRONG_SUPPORT"
-                impact = f"Strong Put base ({r['pe_chg_pct']:+.1f}% OI chg): key downside cushion/floor."
-            elif st == strong_res_strike:
-                role = "STRONG_RESISTANCE"
-                impact = f"Strong Call wall ({r['ce_chg_pct']:+.1f}% OI chg): major upside hurdle/supply."
-            elif st == weak_sup_strike or (r["pe_chg_oi"] > 0 and r["pe_chg_pct"] >= 20.0):
-                role = "WEAK_SUPPORT"
-                impact = f"Developing/Weak Support ({r['pe_chg_oi']:+,} OI / {r['pe_chg_pct']:+.1f}%): secondary floor; if PE unwinds, price can slip."
-            elif st == weak_res_strike or (r["ce_chg_oi"] > 0 and r["ce_chg_pct"] >= 20.0):
-                role = "WEAK_RESISTANCE"
-                impact = f"Developing/Weak Resistance ({r['ce_chg_oi']:+,} OI / {r['ce_chg_pct']:+.1f}%): secondary ceiling; breakout here can trigger short covering."
-            elif r["pe_chg_oi"] < 0 and abs(r["pe_chg_pct"]) >= 15.0:
-                impact = f"Put Unwinding ({r['pe_chg_pct']:+.1f}%): support losing strength below {st}."
-            elif r["ce_chg_oi"] < 0 and abs(r["ce_chg_pct"]) >= 15.0:
-                impact = f"Call Unwinding ({r['ce_chg_pct']:+.1f}%): resistance easing above {st}."
+    strike_step = 50.0
+    if len(rows) >= 2:
+        diffs = [round(rows[i + 1]["strike"] - rows[i]["strike"], 2) for i in range(len(rows) - 1) if rows[i + 1]["strike"] > rows[i]["strike"]]
+        if diffs:
+            strike_step = float(pd.Series(diffs).median())
 
-            r["zone_role"] = role
-            r["impact_note"] = impact
+    max_pe_row = max(rows, key=lambda x: x["pe_oi"])
+    max_ce_row = max(rows, key=lambda x: x["ce_oi"])
+    strong_sup = max_pe_row["strike"] if max_pe_row["pe_oi"] > 0 else None
+    strong_res = max_ce_row["strike"] if max_ce_row["ce_oi"] > 0 else None
 
-    return rows
+    base_pe = max(float(max_pe_row["pe_oi"]), 1.0)
+    base_ce = max(float(max_ce_row["ce_oi"]), 1.0)
+
+    for r in rows:
+        r["pe_strength_pct"] = round((r["pe_oi"] / base_pe) * 100.0, 1) if max_pe_row["pe_oi"] > 0 else 0.0
+        r["ce_strength_pct"] = round((r["ce_oi"] / base_ce) * 100.0, 1) if max_ce_row["ce_oi"] > 0 else 0.0
+
+    other_pe = [r for r in rows if r["strike"] != strong_sup and r["pe_oi"] > 0]
+    weak_sup_row = max(other_pe, key=lambda x: x["pe_oi"]) if other_pe else None
+    weak_sup = weak_sup_row["strike"] if weak_sup_row else None
+    sup_shift_pct = weak_sup_row["pe_strength_pct"] if weak_sup_row else 0.0
+
+    support_shift = "STRONG"
+    if weak_sup is not None and strong_sup is not None and sup_shift_pct >= 65.0:
+        if weak_sup > strong_sup:
+            support_shift = "WTT"
+        elif weak_sup < strong_sup:
+            support_shift = "WTB"
+
+    other_ce = [r for r in rows if r["strike"] != strong_res and r["ce_oi"] > 0]
+    weak_res_row = max(other_ce, key=lambda x: x["ce_oi"]) if other_ce else None
+    weak_res = weak_res_row["strike"] if weak_res_row else None
+    res_shift_pct = weak_res_row["ce_strength_pct"] if weak_res_row else 0.0
+
+    resistance_shift = "STRONG"
+    if weak_res is not None and strong_res is not None and res_shift_pct >= 65.0:
+        if weak_res > strong_res:
+            resistance_shift = "WTT"
+        elif weak_res < strong_res:
+            resistance_shift = "WTB"
+
+    sup_ltp = float(max_pe_row["pe_ltp"] or 0.0)
+    res_ltp = float(max_ce_row["ce_ltp"] or 0.0)
+    eos = round(strong_sup - sup_ltp, 2) if strong_sup is not None else None
+    eor = round(strong_res + res_ltp, 2) if strong_res is not None else None
+
+    eos_minus_1 = round(eos - strike_step, 2) if eos is not None else None
+    eos_plus_1 = round(eos + strike_step, 2) if eos is not None else None
+    eor_minus_1 = round(eor - strike_step, 2) if eor is not None else None
+    eor_plus_1 = round(eor + strike_step, 2) if eor is not None else None
+
+    for r in rows:
+        st = r["strike"]
+        role = "NEUTRAL"
+        impact = "Balanced strike flow; monitor OI buildup around spot."
+
+        if strong_sup is not None and st == strong_sup:
+            role = "STRONG_SUPPORT"
+            impact = f"Strong Support ({r['pe_chg_pct']:+.1f}% OI chg, {r['pe_contracts']:+,} cntr): primary floor; EOS ~ {eos}."
+        elif strong_res is not None and st == strong_res:
+            role = "STRONG_RESISTANCE"
+            impact = f"Strong Resistance ({r['ce_chg_pct']:+.1f}% OI chg, {r['ce_contracts']:+,} cntr): primary ceiling; EOR ~ {eor}."
+        elif weak_sup is not None and st == weak_sup and r["pe_strength_pct"] >= 65.0:
+            role = "WEAK_SUPPORT"
+            dir_lbl = "WTT (upward shift)" if st > (strong_sup or st) else "WTB (downward shift)"
+            impact = f"Weak Support / {dir_lbl} at {r['pe_strength_pct']:.1f}% of peak ({r['pe_chg_oi']:+,} OI): watch 100% shift or unwind."
+        elif weak_res is not None and st == weak_res and r["ce_strength_pct"] >= 65.0:
+            role = "WEAK_RESISTANCE"
+            dir_lbl = "WTT (upward shift)" if st > (strong_res or st) else "WTB (downward shift)"
+            impact = f"Weak Resistance / {dir_lbl} at {r['ce_strength_pct']:.1f}% of peak ({r['ce_chg_oi']:+,} OI): watch breakout or shift."
+        elif r["pe_chg_oi"] < 0 and abs(r["pe_chg_pct"]) >= 15.0:
+            impact = f"Put unwinding ({r['pe_chg_pct']:+.1f}%): support weakening near {st}."
+        elif r["ce_chg_oi"] < 0 and abs(r["ce_chg_pct"]) >= 15.0:
+            impact = f"Call unwinding ({r['ce_chg_pct']:+.1f}%): resistance easing near {st}."
+
+        r["zone_role"] = role
+        r["impact_note"] = impact
+
+    if support_shift == "WTT" and resistance_shift in {"WTT", "STRONG"}:
+        sentiment_state = "BULLISH / WTT PRESSURE"
+    elif support_shift == "WTB" or resistance_shift == "WTB":
+        sentiment_state = "BEARISH / WTB PRESSURE"
+    elif support_shift != "STRONG" and resistance_shift != "STRONG" and support_shift != resistance_shift:
+        sentiment_state = "STATE OF CONFUSION (SOC)"
+    else:
+        sentiment_state = "RANGE-BOUND (EOS–EOR)"
+
+    return {
+        "rows": rows,
+        "strong_support": strong_sup,
+        "weak_support": weak_sup,
+        "strong_resistance": strong_res,
+        "weak_resistance": weak_res,
+        "support_shift": support_shift,
+        "resistance_shift": resistance_shift,
+        "support_shift_pct": sup_shift_pct,
+        "resistance_shift_pct": res_shift_pct,
+        "sentiment_state": sentiment_state,
+        "strike_step": strike_step,
+        "eos": eos,
+        "eor": eor,
+        "eos_minus_1": eos_minus_1,
+        "eos_plus_1": eos_plus_1,
+        "eor_minus_1": eor_minus_1,
+        "eor_plus_1": eor_plus_1,
+    }
 def _compute_oi_target(chain_summary: dict | None, entry: float, is_bull: bool) -> float | None:
     if not chain_summary or entry <= 0:
         return None
@@ -416,6 +582,7 @@ def _build_entry_and_rationale(
     chg_pct: float,
     rs_score: float,
     chain_summary: dict | None,
+    chain_analytics: dict | None = None,
 ) -> dict:
     atr_safe = max(float(atr_val or 0.0), 0.05)
     anchor = float(vwap) if (vwap is not None and float(vwap) > 0) else ema20
@@ -448,12 +615,17 @@ def _build_entry_and_rationale(
     if chain_summary and chain_summary.get("oi_build_up"):
         oi_txt = f" OI: {chain_summary.get('oi_build_up')} (PCR {chain_summary.get('pcr')})."
 
+    ca = chain_analytics or {}
+    lvl_txt = ""
+    if ca.get("eos") is not None or ca.get("eor") is not None:
+        lvl_txt = f" EOS {ca.get('eos')} / EOR {ca.get('eor')} [{ca.get('sentiment_state')}]."
+
     vwap_txt = f"VWAP {vwap:.2f}" if (vwap is not None and vwap > 0) else "VWAP N/A"
     dir_txt = "Bullish alignment" if is_bull else "Bearish alignment"
     why_trade = (
         f"{dir_txt} ({chg_pct:+.2f}%), {'above' if close >= ema20 else 'below'} EMA20 ({ema20:.2f}), "
         f"{vwap_txt}, RSI {rsi:.1f}, Vol {vol_ratio:.2f}x, "
-        f"RS vs Nifty {rs_score:+.2f}% in {sector}.{oi_txt}"
+        f"RS vs Nifty {rs_score:+.2f}% in {sector}.{oi_txt}{lvl_txt}"
     )
 
     return {
@@ -515,7 +687,7 @@ def _build_stock_setup(sym: str, ind: dict, rs_info: dict, is_bull: bool, chain_
         prefer_spread=True,
     )
     lot_sz = int(opt_plan.get("lot_size") or LOT_SIZES.get(sym, 1) or 1)
-    chain_rows = _serialize_option_chain_rows(chain_df, spot=close, lot_size=lot_sz)
+    chain_analytics = _build_option_chain_analytics(chain_df, spot=close, lot_size=lot_sz)
 
     rs_score = float((rs_info or {}).get("rs_score") or 0.0)
     sector = SECTOR_MAP.get(sym, "OTHER")
@@ -531,6 +703,7 @@ def _build_stock_setup(sym: str, ind: dict, rs_info: dict, is_bull: bool, chain_
         chg_pct=chg_pct,
         rs_score=rs_score,
         chain_summary=chain_summary,
+        chain_analytics=chain_analytics,
     )
 
     base_score = float(ind.get("bull_score" if is_bull else "bear_score") or 50.0)
@@ -560,7 +733,8 @@ def _build_stock_setup(sym: str, ind: dict, rs_info: dict, is_bull: bool, chain_
         "score": adj_score,
         "history_label": ind.get("history_label", "1y"),
         "chain_summary": chain_summary,
-        "option_chain": chain_rows,
+        "chain_analytics": chain_analytics,
+        "option_chain": chain_analytics.get("rows", []),
         "option_expiry": expiry,
         "option_plan": opt_plan,
         **rationale,
@@ -613,7 +787,7 @@ def _build_index_trades(candles: dict[str, pd.DataFrame]) -> list[dict]:
         oi_target = _compute_oi_target(chain_summary, spot, is_bull=is_bull)
 
         lot_size = int(plan.get("lot_size") or LOT_SIZES.get(idx_sym, 1) or 1)
-        chain_rows = _serialize_option_chain_rows(chain_df, spot=spot, lot_size=lot_size)
+        chain_analytics = _build_option_chain_analytics(chain_df, spot=spot, lot_size=lot_size)
         max_loss_lot = plan.get("max_loss_lot")
         sizing_status = "CAPITAL NOT CONFIGURED" if not CAPITAL_CONFIGURED else "1 Lot Risk Cap"
 
@@ -629,6 +803,7 @@ def _build_index_trades(candles: dict[str, pd.DataFrame]) -> list[dict]:
             chg_pct=chg_pct,
             rs_score=0.0,
             chain_summary=chain_summary,
+            chain_analytics=chain_analytics,
         )
 
         trades.append({
@@ -651,7 +826,8 @@ def _build_index_trades(candles: dict[str, pd.DataFrame]) -> list[dict]:
             "max_risk": max_loss_lot,
             "sizing_status": sizing_status,
             "chain_summary": chain_summary,
-            "option_chain": chain_rows,
+            "chain_analytics": chain_analytics,
+            "option_chain": chain_analytics.get("rows", []),
             "option_expiry": expiry,
             "option_plan": plan,
             **rationale,
@@ -671,6 +847,7 @@ def export_web_dashboard_data(payload: dict, base_dir: str = "docs/data") -> Non
     enriched = dict(payload)
     enriched["generated_at_ist"] = now_ist.strftime("%Y-%m-%d %H:%M:%S IST")
     enriched["session_date"] = session_date
+    enriched["session_guardrails"] = _build_session_guardrails(now_ist)
 
     (root / "latest.json").write_text(
         json.dumps(enriched, indent=2, default=str),
@@ -858,7 +1035,7 @@ def run_screener():
             "bullish": options_bullish,
             "bearish": options_bearish,
         },
-        "options_bullish": options_bullish,
+         "options_bullish": options_bullish,
         "options_bearish": options_bearish,
         "equity_intraday": equity_intraday,
         "intraday_bullish": intraday_bullish,
