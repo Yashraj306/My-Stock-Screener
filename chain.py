@@ -2,12 +2,20 @@ import pandas as pd
 
 
 def analyze_chain(chain_df: pd.DataFrame | None, spot: float = 0.0) -> dict:
+    empty_out = {
+        "chain_available": False,
+        "pcr": None,
+        "support_strike": None,
+        "resistance_strike": None,
+        "max_pain": None,
+        "oi_build_up": "Chain Unavailable",
+    }
     if chain_df is None or getattr(chain_df, "empty", True):
-        return {}
+        return empty_out
 
     df = chain_df.copy()
     if "strike" not in df.columns:
-        return {}
+        return empty_out
 
     for col in ["strike", "ce_oi", "pe_oi", "ce_prev_oi", "pe_prev_oi", "ce_ltp", "pe_ltp"]:
         if col not in df.columns:
@@ -16,19 +24,28 @@ def analyze_chain(chain_df: pd.DataFrame | None, spot: float = 0.0) -> dict:
 
     df = df[df["strike"] > 0].sort_values("strike").reset_index(drop=True)
     if df.empty:
-        return {}
+        return empty_out
 
     total_ce_oi = float(df["ce_oi"].sum())
     total_pe_oi = float(df["pe_oi"].sum())
+    if total_ce_oi <= 0.0 and total_pe_oi <= 0.0:
+        return {
+            "chain_available": False,
+            "pcr": None,
+            "support_strike": None,
+            "resistance_strike": None,
+            "max_pain": None,
+            "oi_build_up": "No Active OI",
+        }
+
     pcr = round(total_pe_oi / total_ce_oi, 2) if total_ce_oi > 0 else None
 
     sup_row = df.loc[df["pe_oi"].idxmax()] if total_pe_oi > 0 else None
     res_row = df.loc[df["ce_oi"].idxmax()] if total_ce_oi > 0 else None
 
-    support_strike = float(sup_row["strike"]) if sup_row is not None else None
-    resistance_strike = float(res_row["strike"]) if res_row is not None else None
+    support_strike = float(sup_row["strike"]) if sup_row is not None and float(sup_row["pe_oi"]) > 0 else None
+    resistance_strike = float(res_row["strike"]) if res_row is not None and float(res_row["ce_oi"]) > 0 else None
 
-    # Max Pain calculation: strike minimizing total intrinsic option payout
     strikes = df["strike"].tolist()
     min_pain = None
     max_pain_strike = None
@@ -57,6 +74,7 @@ def analyze_chain(chain_df: pd.DataFrame | None, spot: float = 0.0) -> dict:
     fmt_s = lambda v: int(v) if v is not None and float(v).is_integer() else (round(float(v), 2) if v is not None else None)
 
     return {
+        "chain_available": True,
         "pcr": pcr,
         "support_strike": fmt_s(support_strike),
         "resistance_strike": fmt_s(resistance_strike),
