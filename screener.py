@@ -268,25 +268,26 @@ def _build_session_guardrails(now_ist: dt.datetime) -> dict:
 
 
 def _build_option_chain_analytics(chain_df: Any, spot: float, lot_size: int = 1) -> dict:
+    empty_res = {
+        "rows": [],
+        "strong_support": None,
+        "weak_support": None,
+        "strong_resistance": None,
+        "weak_resistance": None,
+        "support_shift": "STRONG",
+        "resistance_shift": "STRONG",
+        "support_shift_pct": 0.0,
+        "resistance_shift_pct": 0.0,
+        "sentiment_state": "NEUTRAL / NO CHAIN",
+        "eos": None,
+        "eor": None,
+        "eos_minus_1": None,
+        "eos_plus_1": None,
+        "eor_minus_1": None,
+        "eor_plus_1": None,
+    }
     if chain_df is None or getattr(chain_df, "empty", True):
-        return {
-            "rows": [],
-            "strong_support": None,
-            "weak_support": None,
-            "strong_resistance": None,
-            "weak_resistance": None,
-            "support_shift": "STRONG",
-            "resistance_shift": "STRONG",
-            "support_shift_pct": 0.0,
-            "resistance_shift_pct": 0.0,
-            "sentiment_state": "NEUTRAL / NO CHAIN",
-            "eos": None,
-            "eor": None,
-            "eos_minus_1": None,
-            "eos_plus_1": None,
-            "eor_minus_1": None,
-            "eor_plus_1": None,
-        }
+        return empty_res
 
     df = chain_df.copy()
     strike_col = _pick_col(df, ["strike", "strike_price", "strikePrice"])
@@ -300,24 +301,7 @@ def _build_option_chain_analytics(chain_df: Any, spot: float, lot_size: int = 1)
     pe_vol_col = _pick_col(df, ["pe_vol", "pe_volume", "put_volume", "peVol"])
 
     if not strike_col:
-        return {
-            "rows": [],
-            "strong_support": None,
-            "weak_support": None,
-            "strong_resistance": None,
-            "weak_resistance": None,
-            "support_shift": "STRONG",
-            "resistance_shift": "STRONG",
-            "support_shift_pct": 0.0,
-            "resistance_shift_pct": 0.0,
-            "sentiment_state": "NEUTRAL / NO CHAIN",
-            "eos": None,
-            "eor": None,
-            "eos_minus_1": None,
-            "eos_plus_1": None,
-            "eor_minus_1": None,
-            "eor_plus_1": None,
-        }
+        return empty_res
 
     eff_lot = max(int(lot_size or 1), 1)
     rows: list[dict] = []
@@ -377,24 +361,7 @@ def _build_option_chain_analytics(chain_df: Any, spot: float, lot_size: int = 1)
 
     rows.sort(key=lambda x: x["strike"])
     if not rows:
-        return {
-            "rows": [],
-            "strong_support": None,
-            "weak_support": None,
-            "strong_resistance": None,
-            "weak_resistance": None,
-            "support_shift": "STRONG",
-            "resistance_shift": "STRONG",
-            "support_shift_pct": 0.0,
-            "resistance_shift_pct": 0.0,
-            "sentiment_state": "NEUTRAL",
-            "eos": None,
-            "eor": None,
-            "eos_minus_1": None,
-            "eos_plus_1": None,
-            "eor_minus_1": None,
-            "eor_plus_1": None,
-        }
+        return empty_res
 
     closest_idx = min(range(len(rows)), key=lambda i: abs(rows[i]["strike"] - spot))
     rows[closest_idx]["is_atm"] = True
@@ -487,8 +454,12 @@ def _build_option_chain_analytics(chain_df: Any, spot: float, lot_size: int = 1)
     else:
         sentiment_state = "RANGE-BOUND (EOS–EOR)"
 
+    start_i = max(0, closest_idx - 15)
+    end_i = min(len(rows), closest_idx + 16)
+    trimmed_rows = rows[start_i:end_i]
+
     return {
-        "rows": rows,
+        "rows": trimmed_rows,
         "strong_support": strong_sup,
         "weak_support": weak_sup,
         "strong_resistance": strong_res,
@@ -507,7 +478,11 @@ def _build_option_chain_analytics(chain_df: Any, spot: float, lot_size: int = 1)
         "eor_plus_1": eor_plus_1,
     }
 def _compute_oi_target(chain_summary: dict | None, entry: float, is_bull: bool) -> float | None:
-    if not chain_summary or entry <= 0:
+    if not chain_summary or not chain_summary.get("chain_available") or entry <= 0:
+        return None
+    sup = chain_summary.get("support_strike")
+    res = chain_summary.get("resistance_strike")
+    if sup is not None and res is not None and float(sup) == float(res):
         return None
     candidates = []
     for key in ("resistance_strike", "support_strike", "max_pain"):
@@ -594,22 +569,30 @@ def _build_entry_and_rationale(
         best_high = round(max(anchor, close - 0.35 * atr_safe), 2)
         if best_low > best_high:
             best_low, best_high = best_high, best_low
+        if overextended:
+            extension_status = "EXTENDED / NEAR TOP (Pullback Risk)"
+            entry_action = "WAIT FOR RETRACEMENT"
+        elif dist_from_anchor_atr > 1.1:
+            extension_status = "MODERATELY STRETCHED UP"
+            entry_action = "PREFER PULLBACK TO BEST ZONE"
+        else:
+            extension_status = "HEALTHY / IN-ZONE"
+            entry_action = "IMMEDIATE OR BEST ZONE"
     else:
         overextended = (rsi <= 25.0) or (chg_pct <= -3.5) or (close < anchor and dist_from_anchor_atr >= 2.0)
         best_low = round(min(anchor, close + 0.35 * atr_safe), 2)
         best_high = round(min(max(anchor, close) + 0.25 * atr_safe, close + 1.0 * atr_safe), 2)
         if best_low > best_high:
             best_low, best_high = best_high, best_low
-
-    if overextended:
-        extension_status = "EXTENDED / NEAR TOP (Pullback Risk)"
-        entry_action = "WAIT FOR RETRACEMENT"
-    elif dist_from_anchor_atr > 1.1:
-        extension_status = "MODERATELY STRETCHED"
-        entry_action = "PREFER PULLBACK TO BEST ZONE"
-    else:
-        extension_status = "HEALTHY / IN-ZONE"
-        entry_action = "IMMEDIATE OR BEST ZONE"
+        if overextended:
+            extension_status = "EXTENDED DOWN / BOUNCE RISK"
+            entry_action = "WAIT FOR BOUNCE RETRACEMENT"
+        elif dist_from_anchor_atr > 1.1:
+            extension_status = "MODERATELY STRETCHED DOWN"
+            entry_action = "PREFER BOUNCE TO BEST ZONE"
+        else:
+            extension_status = "HEALTHY / IN-ZONE"
+            entry_action = "IMMEDIATE OR BEST ZONE"
 
     oi_txt = ""
     if chain_summary and chain_summary.get("oi_build_up"):
@@ -1035,7 +1018,7 @@ def run_screener():
             "bullish": options_bullish,
             "bearish": options_bearish,
         },
-         "options_bullish": options_bullish,
+        "options_bullish": options_bullish,
         "options_bearish": options_bearish,
         "equity_intraday": equity_intraday,
         "intraday_bullish": intraday_bullish,
