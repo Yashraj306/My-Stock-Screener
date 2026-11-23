@@ -3,23 +3,22 @@
 <head>
   <meta charset="UTF-8" />
   <meta name="viewport" content="width=device-width, initial-scale=1.0" />
-  <title>Quant &amp; Hedging Desk — Institutional Execution &amp; Option Chain Terminal</title>
+  <title>Quant &amp; Hedging Desk — Institutional Market Intelligence &amp; Option Chain</title>
   <link rel="preconnect" href="https://fonts.googleapis.com">
   <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
   <link href="https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600;700;800&family=JetBrains+Mono:wght@400;500;600;700&display=swap" rel="stylesheet">
   <style>
     :root {
-      --bg: #070b12;
-      --surface: #0e1522;
-      --surface-2: #141e30;
-      --surface-3: #1a273d;
-      --border: #22324d;
-      --border-soft: rgba(34, 50, 77, 0.65);
-      --text: #f1f5f9;
+      --bg: #060a12;
+      --surface: #0d1422;
+      --surface-2: #131d30;
+      --surface-3: #19263e;
+      --border: #223454;
+      --border-soft: rgba(34, 52, 84, 0.62);
+      --text: #f8fafc;
       --muted: #94a3b8;
-      --muted-2: #64748b;
       --accent: #38bdf8;
-      --accent-2: #818cf8;
+      --accent-indigo: #818cf8;
       --bull: #10b981;
       --bull-bg: rgba(16, 185, 129, 0.14);
       --bear: #f43f5e;
@@ -33,8 +32,9 @@
 
     body {
       background:
-        radial-gradient(ellipse 900px 420px at 85% -5%, rgba(56, 189, 248, 0.11), transparent 65%),
-        radial-gradient(ellipse 700px 380px at 10% 0%, rgba(16, 185, 129, 0.07), transparent 60%),
+        radial-gradient(ellipse 980px 440px at 88% -8%, rgba(56, 189, 248, 0.14), transparent 62%),
+        radial-gradient(ellipse 760px 400px at 8% 0%, rgba(129, 140, 248, 0.10), transparent 58%),
+        radial-gradient(ellipse 640px 320px at 50% 100%, rgba(16, 185, 129, 0.06), transparent 65%),
         var(--bg);
       color: var(--text);
       font-family: 'Inter', system-ui, -apple-system, sans-serif;
@@ -49,13 +49,13 @@
     .neu { color: var(--warn); }
     .muted { color: var(--muted); }
 
-    /* Sticky Institutional Topbar */
+    /* Investor Topbar */
     .topbar {
       position: sticky;
       top: 0;
       z-index: 50;
-      backdrop-filter: blur(14px);
-      background: rgba(7, 11, 18, 0.88);
+      backdrop-filter: blur(16px);
+      background: rgba(6, 10, 18, 0.9);
       border-bottom: 1px solid var(--border);
       padding: 11px 22px;
       display: flex;
@@ -66,32 +66,31 @@
     }
 
     .brand { display: flex; align-items: center; gap: 12px; }
-    .pulse-ring {
-      position: relative;
+    .pulse-dot {
       width: 11px;
       height: 11px;
       border-radius: 50%;
       background: var(--bull);
-      box-shadow: 0 0 0 4px rgba(16, 185, 129, 0.2);
+      box-shadow: 0 0 0 4px rgba(16, 185, 129, 0.22), 0 0 14px rgba(16, 185, 129, 0.65);
       flex-shrink: 0;
     }
-    .brand h1 { font-size: 1rem; font-weight: 800; letter-spacing: -0.01em; display: flex; align-items: center; gap: 8px; }
-    .mode-chip {
-      font-size: 0.68rem;
-      font-weight: 700;
-      padding: 2px 7px;
+    .brand h1 { font-size: 1rem; font-weight: 800; letter-spacing: -0.015em; display: flex; align-items: center; gap: 8px; flex-wrap: wrap; }
+    .mode-badge {
+      font-size: 0.67rem;
+      font-weight: 800;
+      padding: 2px 8px;
       border-radius: 999px;
-      letter-spacing: 0.04em;
-      border: 1px solid rgba(56, 189, 248, 0.4);
-      background: rgba(56, 189, 248, 0.14);
-      color: #7dd3fc;
+      letter-spacing: 0.05em;
+      border: 1px solid rgba(56, 189, 248, 0.45);
+      background: linear-gradient(135deg, rgba(56, 189, 248, 0.18), rgba(129, 140, 248, 0.18));
+      color: #bae6fd;
     }
-    .mode-chip.btst {
-      border-color: rgba(245, 158, 11, 0.45);
-      background: rgba(245, 158, 11, 0.15);
-      color: #fcd34d;
+    .mode-badge.btst {
+      border-color: rgba(245, 158, 11, 0.5);
+      background: linear-gradient(135deg, rgba(245, 158, 11, 0.2), rgba(244, 63, 94, 0.12));
+      color: #fde68a;
     }
-    .brand small { display: block; color: var(--muted); font-size: 0.74rem; margin-top: 1px; }
+    .brand small { display: block; color: var(--muted); font-size: 0.73rem; margin-top: 1px; }
 
     .controls { display: flex; flex-wrap: wrap; align-items: center; gap: 8px; }
 
@@ -107,9 +106,9 @@
       border: 1px solid transparent;
       background: transparent;
       color: var(--muted);
-      padding: 5px 11px;
+      padding: 5px 10px;
       border-radius: 7px;
-      font-size: 0.75rem;
+      font-size: 0.74rem;
       font-weight: 700;
       cursor: pointer;
       transition: all 0.15s ease;
@@ -118,7 +117,7 @@
     .seg-btn.active-latest { background: rgba(16, 185, 129, 0.16); border-color: rgba(16, 185, 129, 0.5); color: #6ee7b7; }
     .seg-btn.active-morning { background: rgba(56, 189, 248, 0.18); border-color: rgba(56, 189, 248, 0.55); color: #7dd3fc; }
     .seg-btn.active-btst { background: rgba(245, 158, 11, 0.18); border-color: rgba(245, 158, 11, 0.55); color: #fcd34d; }
-    .seg-btn.active-view { background: var(--surface-3); border-color: rgba(56, 189, 248, 0.4); color: #e2e8f0; }
+    .seg-btn.active-view { background: var(--surface-3); border-color: rgba(129, 140, 248, 0.5); color: #e0e7ff; }
     .seg-btn:disabled { opacity: 0.35; cursor: not-allowed; }
 
     select, input[type="search"], button.btn-ghost {
@@ -126,17 +125,15 @@
       color: var(--text);
       border: 1px solid var(--border);
       border-radius: 8px;
-      padding: 7px 11px;
-      font-size: 0.8rem;
+      padding: 6px 10px;
+      font-size: 0.78rem;
       font-family: inherit;
       outline: none;
       cursor: pointer;
       transition: border-color 0.15s ease, background 0.15s ease;
     }
-    input[type="search"] { cursor: text; min-width: 190px; }
+    input[type="search"] { cursor: text; min-width: 185px; }
     select:hover, input[type="search"]:hover, button.btn-ghost:hover { border-color: var(--accent); }
-    input[type="search"]:focus, select:focus { border-color: var(--accent); box-shadow: 0 0 0 2px rgba(56, 189, 248, 0.15); }
-
     button.btn-ghost.live-on {
       border-color: rgba(16, 185, 129, 0.55);
       background: rgba(16, 185, 129, 0.12);
@@ -144,25 +141,43 @@
       font-weight: 600;
     }
     button.btn-primary {
-      background: linear-gradient(135deg, #0284c7, #1d4ed8);
-      border: 1px solid rgba(56, 189, 248, 0.6);
+      background: linear-gradient(135deg, #0ea5e9, #4f46e5);
+      border: 1px solid rgba(125, 211, 252, 0.55);
       color: #fff;
       border-radius: 8px;
-      padding: 7px 13px;
-      font-size: 0.8rem;
+      padding: 6px 13px;
+      font-size: 0.78rem;
       font-weight: 700;
       cursor: pointer;
-      transition: transform 0.12s ease, filter 0.15s ease;
+      box-shadow: 0 4px 16px rgba(14, 165, 233, 0.22);
     }
-    button.btn-primary:hover { filter: brightness(1.08); }
-    button.btn-primary:active { transform: scale(0.98); }
 
     .container { max-width: 1460px; margin: 0 auto; padding: 18px 22px 60px; }
 
-    /* Session Guardrail & Risk Strip */
+    /* Pitch Architecture Banner */
+    .pitch-strip {
+      display: grid;
+      grid-template-columns: repeat(4, 1fr);
+      gap: 10px;
+      margin-bottom: 14px;
+    }
+    .pitch-card {
+      background: linear-gradient(145deg, rgba(19, 29, 48, 0.92), rgba(13, 20, 34, 0.95));
+      border: 1px solid var(--border);
+      border-radius: 11px;
+      padding: 10px 13px;
+      display: flex;
+      flex-direction: column;
+      gap: 3px;
+    }
+    .pitch-k { font-size: 0.66rem; font-weight: 800; text-transform: uppercase; letter-spacing: 0.06em; color: var(--accent); }
+    .pitch-v { font-size: 0.86rem; font-weight: 700; color: var(--text); }
+    .pitch-s { font-size: 0.71rem; color: var(--muted); }
+
+    /* Guardrails & Risk Row */
     .guardrail-bar {
       display: grid;
-      grid-template-columns: 1.4fr 1fr;
+      grid-template-columns: 1.35fr 1fr;
       gap: 12px;
       margin-bottom: 14px;
     }
@@ -170,17 +185,17 @@
       background: var(--surface);
       border: 1px solid var(--border);
       border-radius: 12px;
-      padding: 11px 15px;
+      padding: 12px 15px;
       display: flex;
       flex-direction: column;
-      gap: 5px;
+      gap: 6px;
     }
     .guardrail-top { display: flex; align-items: center; justify-content: space-between; gap: 8px; flex-wrap: wrap; }
-    .guardrail-title { font-size: 0.78rem; font-weight: 800; letter-spacing: 0.04em; text-transform: uppercase; color: var(--accent); }
-    .guardrail-copy { font-size: 0.8rem; color: #cbd5e1; }
+    .guardrail-title { font-size: 0.75rem; font-weight: 800; letter-spacing: 0.05em; text-transform: uppercase; color: #7dd3fc; }
+    .guardrail-copy { font-size: 0.79rem; color: #cbd5e1; }
     .rule-chips { display: flex; flex-wrap: wrap; gap: 6px; margin-top: 2px; }
     .rule-chip {
-      font-size: 0.7rem;
+      font-size: 0.69rem;
       padding: 2px 8px;
       border-radius: 6px;
       background: var(--surface-2);
@@ -196,57 +211,63 @@
       overflow-x: auto;
       padding-bottom: 8px;
       margin-bottom: 14px;
-      scrollbar-width: thin;
     }
     .pill {
       white-space: nowrap;
       padding: 5px 11px;
       border-radius: 999px;
-      font-size: 0.74rem;
+      font-size: 0.73rem;
       font-weight: 600;
       border: 1px solid var(--border);
       background: var(--surface);
       color: var(--muted);
       cursor: pointer;
-      transition: all 0.14s ease;
     }
-    .pill:hover { border-color: rgba(56, 189, 248, 0.5); color: var(--text); }
     .pill.active {
-      background: rgba(56, 189, 248, 0.16);
+      background: linear-gradient(135deg, rgba(56, 189, 248, 0.2), rgba(129, 140, 248, 0.2));
       border-color: var(--accent);
-      color: #e0f2fe;
+      color: #f8fafc;
     }
 
-    /* KPI Grid */
+    /* KPI & Breadth Graphic */
     .kpi-grid {
       display: grid;
-      grid-template-columns: repeat(auto-fit, minmax(210px, 1fr));
+      grid-template-columns: repeat(auto-fit, minmax(205px, 1fr));
       gap: 12px;
-      margin-bottom: 16px;
+      margin-bottom: 14px;
     }
     .kpi {
-      background: linear-gradient(180deg, var(--surface) 0%, #0b111c 100%);
+      background: linear-gradient(180deg, var(--surface) 0%, #090f1b 100%);
       border: 1px solid var(--border);
       border-radius: 12px;
       padding: 13px 15px;
       position: relative;
       overflow: hidden;
     }
-    .kpi::after {
+    .kpi::before {
       content: "";
       position: absolute;
       inset: 0 0 auto 0;
-      height: 2px;
-      background: linear-gradient(90deg, rgba(56, 189, 248, 0.45), transparent);
+      height: 2.5px;
+      background: linear-gradient(90deg, var(--accent), var(--accent-indigo));
     }
-    .kpi-label { font-size: 0.7rem; font-weight: 700; text-transform: uppercase; letter-spacing: 0.06em; color: var(--muted); }
-    .kpi-val { font-size: 1.32rem; font-weight: 800; margin-top: 4px; letter-spacing: -0.02em; }
-    .kpi-sub { font-size: 0.75rem; margin-top: 3px; color: var(--muted); }
+    .kpi-label { font-size: 0.69rem; font-weight: 700; text-transform: uppercase; letter-spacing: 0.06em; color: var(--muted); }
+    .kpi-val { font-size: 1.3rem; font-weight: 800; margin-top: 4px; }
+    .kpi-sub { font-size: 0.74rem; margin-top: 3px; color: var(--muted); }
+    .meter-track {
+      margin-top: 7px;
+      height: 6px;
+      border-radius: 999px;
+      background: rgba(244, 63, 94, 0.25);
+      overflow: hidden;
+      display: flex;
+    }
+    .meter-bull { background: linear-gradient(90deg, #059669, #10b981); height: 100%; }
 
-    /* Sub-strip: Global Cues & Sectors */
+    /* Global Cues & Sectors */
     .intel-grid {
       display: grid;
-      grid-template-columns: 1fr 1.4fr;
+      grid-template-columns: 1fr 1.35fr;
       gap: 12px;
       margin-bottom: 16px;
     }
@@ -256,31 +277,21 @@
       border-radius: 12px;
       padding: 12px 14px;
     }
-    .intel-heading { font-size: 0.73rem; font-weight: 800; text-transform: uppercase; letter-spacing: 0.05em; color: var(--muted); margin-bottom: 8px; }
-    .cues-list { display: flex; flex-wrap: wrap; gap: 7px; }
-    .cue-item {
+    .intel-head { display: flex; justify-content: space-between; align-items: center; margin-bottom: 8px; }
+    .intel-heading { font-size: 0.72rem; font-weight: 800; text-transform: uppercase; letter-spacing: 0.05em; color: var(--muted); }
+    .chip-wrap { display: flex; flex-wrap: wrap; gap: 6px; }
+    .data-chip {
       background: var(--surface-2);
       border: 1px solid var(--border-soft);
       border-radius: 8px;
-      padding: 5px 9px;
-      font-size: 0.74rem;
-      display: inline-flex;
-      align-items: center;
-      gap: 6px;
-    }
-    .sector-chips { display: flex; flex-wrap: wrap; gap: 7px; }
-    .sec-chip {
-      background: var(--surface-2);
-      border: 1px solid var(--border-soft);
-      border-radius: 8px;
-      padding: 5px 9px;
-      font-size: 0.74rem;
+      padding: 4px 9px;
+      font-size: 0.73rem;
       display: inline-flex;
       align-items: center;
       gap: 6px;
     }
 
-    /* Filter & Action Bar */
+    /* Filter Bar */
     .filter-bar {
       background: var(--surface);
       border: 1px solid var(--border);
@@ -297,22 +308,21 @@
     .tab {
       padding: 6px 12px;
       border-radius: 8px;
-      font-size: 0.78rem;
+      font-size: 0.77rem;
       font-weight: 700;
       cursor: pointer;
       border: 1px solid transparent;
       background: transparent;
       color: var(--muted);
-      transition: all 0.14s ease;
     }
     .tab:hover { color: var(--text); background: var(--surface-2); }
     .tab.active {
-      background: rgba(56, 189, 248, 0.14);
-      border-color: rgba(56, 189, 248, 0.45);
+      background: rgba(56, 189, 248, 0.15);
+      border-color: rgba(56, 189, 248, 0.5);
       color: #7dd3fc;
     }
 
-    /* Sections & Setup Cards */
+    /* Sections & Cards with Visual Risk-Reward Bar */
     .section-head {
       display: flex;
       align-items: baseline;
@@ -322,30 +332,28 @@
       padding-bottom: 6px;
       border-bottom: 1px solid var(--border-soft);
     }
-    .section-title { font-size: 0.94rem; font-weight: 800; letter-spacing: -0.01em; color: #f8fafc; }
-    .section-sub { font-size: 0.75rem; color: var(--muted); }
+    .section-title { font-size: 0.95rem; font-weight: 800; color: var(--text); }
+    .section-sub { font-size: 0.74rem; color: var(--muted); }
 
     .cards-grid {
       display: grid;
-      grid-template-columns: repeat(auto-fill, minmax(370px, 1fr));
+      grid-template-columns: repeat(auto-fill, minmax(365px, 1fr));
       gap: 14px;
     }
-
     .card {
-      background: linear-gradient(180deg, var(--surface) 0%, #0a101b 100%);
+      background: linear-gradient(175deg, var(--surface) 0%, #090f1b 100%);
       border: 1px solid var(--border);
       border-radius: 14px;
       padding: 15px;
       display: flex;
       flex-direction: column;
-      gap: 11px;
-      transition: border-color 0.15s ease, transform 0.15s ease;
+      gap: 10px;
     }
-    .card:hover { border-color: rgba(56, 189, 248, 0.45); transform: translateY(-1px); }
+    .card:hover { border-color: rgba(56, 189, 248, 0.45); }
 
     .card-top { display: flex; justify-content: space-between; align-items: flex-start; gap: 8px; }
-    .sym { font-size: 1.08rem; font-weight: 800; letter-spacing: -0.01em; }
-    .sub-tags { display: flex; flex-wrap: wrap; align-items: center; gap: 6px; margin-top: 3px; font-size: 0.72rem; color: var(--muted); }
+    .sym { font-size: 1.06rem; font-weight: 800; }
+    .sub-tags { display: flex; flex-wrap: wrap; align-items: center; gap: 5px; margin-top: 3px; font-size: 0.71rem; color: var(--muted); }
     .tag-pill {
       padding: 1px 7px;
       border-radius: 5px;
@@ -356,45 +364,59 @@
     }
 
     .badge {
-      padding: 4px 9px;
+      padding: 4px 8px;
       border-radius: 6px;
-      font-size: 0.7rem;
+      font-size: 0.69rem;
       font-weight: 800;
       letter-spacing: 0.03em;
       white-space: nowrap;
     }
     .badge-bull { background: var(--bull-bg); color: #6ee7b7; border: 1px solid rgba(16,185,129,0.4); }
     .badge-bear { background: var(--bear-bg); color: #fda4af; border: 1px solid rgba(244,63,94,0.4); }
+    .badge-warn { background: var(--warn-bg); color: #fde68a; border: 1px solid rgba(245,158,11,0.4); }
 
     .levels {
       display: grid;
       grid-template-columns: repeat(4, 1fr);
-      gap: 7px;
-      background: rgba(9, 14, 24, 0.78);
+      gap: 6px;
+      background: rgba(7, 11, 19, 0.82);
       border: 1px solid var(--border-soft);
       border-radius: 10px;
-      padding: 9px 10px;
+      padding: 8px 9px;
     }
-    .lvl span { display: block; font-size: 0.65rem; font-weight: 700; color: var(--muted); text-transform: uppercase; letter-spacing: 0.04em; }
-    .lvl strong { font-size: 0.88rem; font-weight: 700; margin-top: 2px; display: block; }
+    .lvl span { display: block; font-size: 0.63rem; font-weight: 700; color: var(--muted); text-transform: uppercase; }
+    .lvl strong { font-size: 0.85rem; font-weight: 700; margin-top: 2px; display: block; }
+
+    /* Visual Risk -> Entry -> Reward Graphic */
+    .rr-visual {
+      background: rgba(19, 29, 48, 0.55);
+      border: 1px solid var(--border-soft);
+      border-radius: 8px;
+      padding: 7px 9px;
+    }
+    .rr-labels { display: flex; justify-content: space-between; font-size: 0.66rem; color: var(--muted); margin-bottom: 4px; }
+    .rr-bar { height: 7px; border-radius: 999px; background: var(--surface-3); overflow: hidden; display: flex; gap: 2px; }
+    .rr-seg-sl { background: var(--bear); height: 100%; }
+    .rr-seg-t1 { background: #38bdf8; height: 100%; }
+    .rr-seg-t2 { background: var(--bull); height: 100%; }
 
     .kv-strip {
       display: grid;
       grid-template-columns: repeat(2, 1fr);
-      gap: 6px 12px;
-      font-size: 0.75rem;
+      gap: 5px 10px;
+      font-size: 0.74rem;
       color: var(--muted);
-      background: rgba(20, 30, 48, 0.45);
+      background: rgba(19, 29, 48, 0.45);
       border-radius: 8px;
       padding: 8px 10px;
     }
     .kv-strip strong { color: #e2e8f0; }
 
     .rationale {
-      font-size: 0.78rem;
+      font-size: 0.77rem;
       color: #cbd5e1;
-      background: rgba(26, 39, 61, 0.5);
-      padding: 9px 11px;
+      background: rgba(25, 38, 62, 0.5);
+      padding: 8px 10px;
       border-radius: 8px;
       border-left: 3px solid var(--accent);
     }
@@ -406,46 +428,35 @@
       border: 1px solid rgba(56, 189, 248, 0.35);
       background: rgba(56, 189, 248, 0.08);
       color: #7dd3fc;
-      font-size: 0.78rem;
+      font-size: 0.77rem;
       font-weight: 700;
       cursor: pointer;
-      transition: background 0.14s ease;
     }
     .chain-btn:hover { background: rgba(56, 189, 248, 0.18); }
 
-    /* Compact Execution Table View */
-    .exec-table-wrap {
-      overflow-x: auto;
-      border-radius: 12px;
-      border: 1px solid var(--border);
-      background: var(--surface);
-    }
-    table.exec-table { width: 100%; border-collapse: collapse; font-size: 0.77rem; }
+    /* Compact Execution Table */
+    .exec-table-wrap { overflow-x: auto; border-radius: 12px; border: 1px solid var(--border); background: var(--surface); }
+    table.exec-table { width: 100%; border-collapse: collapse; font-size: 0.75rem; }
     table.exec-table th {
-      background: #0a101b;
+      background: #090f1b;
       color: var(--muted);
       font-weight: 700;
-      padding: 9px 10px;
+      padding: 8px 9px;
       border-bottom: 1px solid var(--border);
       text-align: left;
       white-space: nowrap;
     }
     table.exec-table th.num, table.exec-table td.num { text-align: right; }
-    table.exec-table td {
-      padding: 8px 10px;
-      border-bottom: 1px solid var(--border-soft);
-      white-space: nowrap;
-    }
-    table.exec-table tr:hover td { background: rgba(56, 189, 248, 0.05); }
+    table.exec-table td { padding: 7px 9px; border-bottom: 1px solid var(--border-soft); white-space: nowrap; }
 
     /* Option Chain Panel */
     .oc-panel {
-      margin-top: 26px;
+      margin-top: 24px;
       background: var(--surface);
-      border: 1px solid #2b4166;
+      border: 1px solid #2b436b;
       border-radius: 16px;
       padding: 18px;
-      box-shadow: 0 20px 50px rgba(0, 0, 0, 0.45);
+      box-shadow: 0 22px 54px rgba(0, 0, 0, 0.48);
     }
     .oc-header {
       display: flex;
@@ -468,55 +479,39 @@
       border: 1px solid var(--border-soft);
       border-radius: 9px;
       padding: 8px 10px;
-      font-size: 0.74rem;
+      font-size: 0.73rem;
     }
-    .struct-box span { display: block; color: var(--muted); font-size: 0.66rem; text-transform: uppercase; font-weight: 700; }
-    .struct-box strong { font-size: 0.86rem; margin-top: 2px; display: block; }
+    .struct-box span { display: block; color: var(--muted); font-size: 0.65rem; text-transform: uppercase; font-weight: 700; }
+    .struct-box strong { font-size: 0.85rem; margin-top: 2px; display: block; }
 
-    .legend-strip {
-      display: flex;
-      flex-wrap: wrap;
-      gap: 8px;
-      margin-bottom: 12px;
-      font-size: 0.74rem;
-    }
-    .box-pill {
-      padding: 3px 9px;
-      border-radius: 6px;
-      font-weight: 700;
-      display: inline-block;
-    }
+    .legend-strip { display: flex; flex-wrap: wrap; gap: 8px; margin-bottom: 12px; font-size: 0.73rem; }
+    .box-pill { padding: 3px 9px; border-radius: 6px; font-weight: 700; display: inline-block; }
     .box-strong-sup { background: var(--bull-bg); color: #6ee7b7; border: 1.5px solid var(--bull); }
     .box-strong-res { background: var(--bear-bg); color: #fda4af; border: 1.5px solid var(--bear); }
     .box-weak-sr { background: var(--warn-bg); color: #fde68a; border: 1.5px solid var(--warn); }
 
-    .table-wrap { overflow-x: auto; max-height: 450px; overflow-y: auto; border-radius: 10px; border: 1px solid var(--border); }
-    table.oc-table { width: 100%; border-collapse: collapse; font-size: 0.76rem; }
+    .table-wrap { overflow-x: auto; max-height: 440px; overflow-y: auto; border-radius: 10px; border: 1px solid var(--border); }
+    table.oc-table { width: 100%; border-collapse: collapse; font-size: 0.75rem; }
     table.oc-table th {
       position: sticky;
       top: 0;
-      background: #0a101b;
+      background: #090f1b;
       color: var(--muted);
       font-weight: 700;
-      padding: 9px 10px;
+      padding: 8px 9px;
       border-bottom: 1px solid var(--border);
       text-align: right;
       z-index: 2;
     }
     table.oc-table th.center, table.oc-table td.center { text-align: center; }
-    table.oc-table td {
-      padding: 7px 10px;
-      border-bottom: 1px solid var(--border-soft);
-      text-align: right;
-      vertical-align: middle;
-    }
+    table.oc-table td { padding: 7px 9px; border-bottom: 1px solid var(--border-soft); text-align: right; vertical-align: middle; }
     tr.atm-row { background: rgba(56, 189, 248, 0.09); }
     .cell-box-green { background: var(--bull-bg) !important; border: 1.5px solid var(--bull) !important; color: #a7f3d0 !important; font-weight: 700; border-radius: 5px; }
     .cell-box-red { background: var(--bear-bg) !important; border: 1.5px solid var(--bear) !important; color: #fecdd3 !important; font-weight: 700; border-radius: 5px; }
     .cell-box-yellow { background: var(--warn-bg) !important; border: 1.5px solid var(--warn) !important; color: #fef08a !important; font-weight: 700; border-radius: 5px; }
-    .impact-col { text-align: left !important; min-width: 240px; font-size: 0.74rem; color: #cbd5e1; }
+    .impact-col { text-align: left !important; min-width: 230px; font-size: 0.73rem; color: #cbd5e1; }
 
-    .empty-box { background: var(--surface); border: 1px dashed var(--border); border-radius: 12px; padding: 30px; text-align: center; color: var(--muted); }
+    .empty-box { background: var(--surface); border: 1px dashed var(--border); border-radius: 12px; padding: 28px; text-align: center; color: var(--muted); }
     .wf-banner {
       margin-top: 20px;
       background: var(--surface);
@@ -528,14 +523,17 @@
       justify-content: space-between;
       align-items: center;
       gap: 10px;
-      font-size: 0.8rem;
+      font-size: 0.79rem;
     }
 
+    @media (max-width: 1024px) {
+      .pitch-strip { grid-template-columns: repeat(2, 1fr); }
+    }
     @media (max-width: 900px) {
       .guardrail-bar, .intel-grid { grid-template-columns: 1fr; }
     }
     @media (max-width: 640px) {
-      .cards-grid { grid-template-columns: 1fr; }
+      .pitch-strip, .cards-grid { grid-template-columns: 1fr; }
       .levels { grid-template-columns: repeat(2, 1fr); }
     }
   </style>
@@ -543,13 +541,13 @@
 <body>
   <header class="topbar">
     <div class="brand">
-      <div class="pulse-ring" id="statusDot"></div>
+      <div class="pulse-dot" id="statusDot"></div>
       <div>
         <h1>
           <span id="deskTitle">Quant &amp; Hedging Desk</span>
-          <span class="mode-chip mono" id="modeChip">LIVE</span>
+          <span class="mode-badge mono" id="modeChip">LIVE</span>
         </h1>
-        <small id="lastUpdated">Initializing market execution terminal...</small>
+        <small id="lastUpdated">Loading institutional market snapshot...</small>
       </div>
     </div>
 
@@ -576,6 +574,8 @@
   </header>
 
   <main class="container">
+    <section class="pitch-strip" id="pitchStrip"></section>
+
     <section class="guardrail-bar" id="guardrailBar"></section>
 
     <div class="history-ribbon" id="historyPills"></div>
@@ -610,7 +610,7 @@
         </div>
         <div class="controls">
           <select id="ocSymbolSelect" title="Select Symbol for Live Option Chain"></select>
-          <span class="mono" id="ocTickClock" style="font-size:0.76rem; color:var(--accent);">Tick: —</span>
+          <span class="mono" id="ocTickClock" style="font-size:0.75rem; color:var(--accent);">Tick: —</span>
         </div>
       </div>
 
@@ -649,6 +649,30 @@
       if (s.includes('+') || parseFloat(s) > 0) return 'pos';
       return 'neu';
     };
+
+    function compactTimingLabel(rawTiming) {
+      const t = String(rawTiming || '').toUpperCase();
+      if (!t) return 'IN-ZONE';
+      if (t.includes('EXTENDED') && t.includes('TOP')) return 'EXTENDED TOP';
+      if (t.includes('EXTENDED') && t.includes('DOWN')) return 'EXTENDED LOW';
+      if (t.includes('MODERATELY') && t.includes('UP')) return 'STRETCHED UP';
+      if (t.includes('MODERATELY') && t.includes('DOWN')) return 'STRETCHED DN';
+      if (t.includes('HEALTHY') || t.includes('IN-ZONE')) return 'IN-ZONE';
+      return t.slice(0, 14);
+    }
+
+    function computeEffectiveRange(item) {
+      if (item.avg_range_rs !== undefined && item.avg_range_rs !== null && Number(item.avg_range_rs) > 0) {
+        return `₹${Number(item.avg_range_rs).toFixed(1)}`;
+      }
+      const e = Number(item.entry);
+      const t1 = Number(item.target_1);
+      if (Number.isFinite(e) && Number.isFinite(t1) && e > 0 && t1 > 0 && e !== t1) {
+        const estDailyRange = Math.abs(t1 - e) / 1.8;
+        return `~₹${estDailyRange.toFixed(1)}`;
+      }
+      return '—';
+    }
 
     async function fetchJsonNoCache(url) {
       const sep = url.includes('?') ? '&' : '?';
@@ -760,7 +784,7 @@
 
     async function loadSnapshot(filePath, isBackgroundTick = false) {
       const btn = document.getElementById('refreshBtn');
-      if (!isBackgroundTick) btn.textContent = '↻ Loading...';
+      if (!isBackgroundTick) btn.textContent = '↻ Syncing...';
       try {
         const data = await fetchJsonNoCache(filePath);
         currentPayload = data;
@@ -775,7 +799,7 @@
           document.getElementById('contentArea').innerHTML = `
             <div class="empty-box">
               <h3>Snapshot not published yet (${filePath})</h3>
-              <p style="margin-top:6px;">Trigger the GitHub Actions screener workflow to generate <code>docs/data/latest.json</code> and history snapshots.</p>
+              <p style="margin-top:6px;">Run the GitHub Actions screener workflow to generate <code>docs/data/latest.json</code> and daily archives.</p>
             </div>`;
           document.getElementById('ocBody').innerHTML = `<div class="empty-box">Option chain feed unavailable until snapshot generation completes.</div>`;
         }
@@ -928,12 +952,46 @@
       document.getElementById('optionChainPanel').scrollIntoView({ behavior: 'smooth', block: 'start' });
     }
 
+    function buildRiskRewardGraphic(item) {
+      const entry = Number(item.entry);
+      const sl = Number(item.stop_loss);
+      const t1 = Number(item.target_1);
+      const t2 = Number(item.target_2);
+      if (!Number.isFinite(entry) || !Number.isFinite(sl) || !Number.isFinite(t1) || !Number.isFinite(t2)) {
+        return '';
+      }
+      const risk = Math.max(Math.abs(entry - sl), 0.01);
+      const rew1 = Math.max(Math.abs(t1 - entry), 0.01);
+      const rew2 = Math.max(Math.abs(t2 - t1), 0.01);
+      const total = risk + rew1 + rew2;
+      const slPct = Math.round((risk / total) * 100);
+      const t1Pct = Math.round((rew1 / total) * 100);
+      const t2Pct = Math.max(100 - slPct - t1Pct, 5);
+      const rrRatio = ((rew1 + rew2) / risk).toFixed(1);
+
+      return `
+        <div class="rr-visual mono">
+          <div class="rr-labels">
+            <span class="neg">Risk: ${risk.toFixed(1)}</span>
+            <span style="color:#e2e8f0;">R:R = 1 : ${rrRatio}</span>
+            <span class="pos">Reward: +${(rew1 + rew2).toFixed(1)}</span>
+          </div>
+          <div class="rr-bar">
+            <div class="rr-seg-sl" style="width:${slPct}%" title="Stop Loss Risk"></div>
+            <div class="rr-seg-t1" style="width:${t1Pct}%" title="Target 1 Leg"></div>
+            <div class="rr-seg-t2" style="width:${t2Pct}%" title="Target 2 Extension"></div>
+          </div>
+        </div>`;
+    }
+
     function renderCard(item, tagLabel) {
       const isBull = String(item.side || '').toUpperCase().includes('BULL') || String(item.action || '').toUpperCase().includes('BUY');
       const badgeCls = isBull ? 'badge-bull' : 'badge-bear';
       const optPlan = item.option_plan || {};
       const planText = optPlan.strategy_name || optPlan.summary || (item.equity_bucket || 'Cash / Intraday Execution');
-      const rngVal = item.avg_range_rs ? `₹${item.avg_range_rs}` : '—';
+      const rngText = computeEffectiveRange(item);
+      const timingShort = compactTimingLabel(item.extension_status);
+      const qtyUnit = tagLabel === 'INDEX' ? 'units (1 lot)' : (tagLabel === 'EQ INTRA' ? 'shares' : 'qty');
 
       return `
         <article class="card">
@@ -941,13 +999,13 @@
             <div>
               <div class="sym mono">
                 ${item.symbol}
-                <span class="${chgClass(item.change_pct)}" style="font-size:0.84rem; margin-left:4px;">(${item.change_pct >= 0 ? '+' : ''}${fmtNum(item.change_pct)}%)</span>
+                <span class="${chgClass(item.change_pct)}" style="font-size:0.83rem; margin-left:4px;">(${item.change_pct >= 0 ? '+' : ''}${fmtNum(item.change_pct)}%)</span>
               </div>
               <div class="sub-tags">
                 <span class="tag-pill">${item.sector || 'EQUITY'}</span>
                 <span class="tag-pill">${tagLabel}</span>
                 <span>Score: <strong class="mono">${fmtNum(item.score)}</strong></span>
-                ${item.avg_range_rs ? `<span>AvgRng: <strong class="mono">${rngVal}</strong></span>` : ''}
+                <span>Rng: <strong class="mono">${rngText}</strong></span>
               </div>
             </div>
             <span class="badge ${badgeCls}">${item.side || 'SETUP'}</span>
@@ -960,12 +1018,14 @@
             <div class="lvl"><span>Target 2</span><strong class="pos">${fmtNum(item.target_2)}</strong></div>
           </div>
 
+          ${buildRiskRewardGraphic(item)}
+
           <div class="kv-strip">
             <div>Best Zone: <strong class="mono">${fmtNum(item.best_entry_low)}–${fmtNum(item.best_entry_high)}</strong></div>
             <div>VWAP / OI Tgt: <strong class="mono">${fmtNum(item.vwap)} / ${fmtNum(item.oi_target)}</strong></div>
-            <div>Qty / Sizing: <strong class="mono">${fmtNum(item.qty)}</strong></div>
-            <div>Timing: <strong class="mono">${fmtNum(item.extension_status)}</strong></div>
-            <div style="grid-column: 1 / -1;">Execution Plan: <strong>${fmtNum(planText)}</strong></div>
+            <div>Sizing: <strong class="mono">${fmtNum(item.qty)} ${qtyUnit}</strong></div>
+            <div>Timing: <strong class="mono">${timingShort}</strong></div>
+            <div style="grid-column: 1 / -1;">Execution: <strong>${fmtNum(planText)}</strong></div>
           </div>
 
           <div class="rationale">${item.why_trade || item.entry_action || 'Systematic technical & relative strength alignment.'}</div>
@@ -979,9 +1039,11 @@
     function renderExecutionTable(items, tagLabel) {
       const rows = items.map(item => {
         const isBull = String(item.side || '').toUpperCase().includes('BULL');
+        const timingShort = compactTimingLabel(item.extension_status);
+        const timingCls = timingShort.includes('EXTENDED') ? 'badge-warn' : (isBull ? 'badge-bull' : 'badge-bear');
         return `
           <tr class="mono">
-            <td><strong>${item.symbol}</strong> <span class="muted" style="font-size:0.7rem;">(${item.sector || 'EQ'})</span></td>
+            <td><strong>${item.symbol}</strong> <span class="muted" style="font-size:0.69rem;">(${item.sector || 'EQ'})</span></td>
             <td><span class="badge ${isBull ? 'badge-bull' : 'badge-bear'}">${item.side || tagLabel}</span></td>
             <td class="num ${chgClass(item.change_pct)}">${item.change_pct >= 0 ? '+' : ''}${fmtNum(item.change_pct)}%</td>
             <td class="num">${fmtNum(item.entry)}</td>
@@ -989,10 +1051,10 @@
             <td class="num pos">${fmtNum(item.target_1)}</td>
             <td class="num pos">${fmtNum(item.target_2)}</td>
             <td class="num">${fmtNum(item.oi_target)}</td>
-            <td class="num">${item.avg_range_rs ? '₹' + item.avg_range_rs : '—'}</td>
+            <td class="num">${computeEffectiveRange(item)}</td>
             <td class="num">${fmtNum(item.qty)}</td>
-            <td>${fmtNum(item.extension_status)}</td>
-            <td><button type="button" class="btn-ghost" style="padding:3px 8px; font-size:0.72rem;" onclick="openChainForSymbol('${item.symbol}')">Chain</button></td>
+            <td><span class="badge ${timingCls}">${timingShort}</span></td>
+            <td><button type="button" class="btn-ghost" style="padding:3px 8px; font-size:0.71rem;" onclick="openChainForSymbol('${item.symbol}')">Chain</button></td>
           </tr>`;
       }).join('');
 
@@ -1012,12 +1074,21 @@
                 <th class="num">Avg Rng</th>
                 <th class="num">Qty</th>
                 <th>Timing</th>
-                <th>Action</th>
+                <th>Chain</th>
               </tr>
             </thead>
             <tbody>${rows}</tbody>
           </table>
         </div>`;
+    }
+
+    function parseAdvDecPct(breadthRatioStr) {
+      const m = String(breadthRatioStr || '').match(/(\d+)\s*Adv\s*\/\s*(\d+)\s*Dec/i);
+      if (!m) return 50;
+      const adv = Number(m[1]);
+      const dec = Number(m[2]);
+      const tot = adv + dec;
+      return tot > 0 ? Math.round((adv / tot) * 100) : 50;
     }
 
     function renderDashboard(data) {
@@ -1036,6 +1107,33 @@
       const tone = String(s.breadth_tone || 'MIXED').toUpperCase();
       document.getElementById('statusDot').style.background = tone === 'BULLISH' ? 'var(--bull)' : (tone === 'BEARISH' ? 'var(--bear)' : 'var(--warn)');
 
+      const idxCount = (data.index_trades || []).length;
+      const optCount = (data.options_bullish || []).length + (data.options_bearish || []).length;
+      const eqCount = (data.equity_intraday || []).length;
+
+      document.getElementById('pitchStrip').innerHTML = `
+        <div class="pitch-card">
+          <span class="pitch-k">01 • Multi-Asset Architecture</span>
+          <span class="pitch-v mono">${idxCount} Index + ${optCount} Options + ${eqCount} Equity</span>
+          <span class="pitch-s">Strict zero-overlap separation between F&amp;O and cash baskets</span>
+        </div>
+        <div class="pitch-card">
+          <span class="pitch-k">02 • Intraday Velocity Engine</span>
+          <span class="pitch-v">₹20–₹50 Daily Range Filter</span>
+          <span class="pitch-s">Dedicated 10-stock cash basket; distinct MORNING vs BTST rotation</span>
+        </div>
+        <div class="pitch-card">
+          <span class="pitch-k">03 • Institutional OI Analytics</span>
+          <span class="pitch-v">WTT / WTB &amp; EOS / EOR (±1)</span>
+          <span class="pitch-s">Real-time strike dominance, contracts delta &amp; trap detection</span>
+        </div>
+        <div class="pitch-card">
+          <span class="pitch-k">04 • Walk-Forward Governance</span>
+          <span class="pitch-v">Chronological Cost-Adjusted Ledger</span>
+          <span class="pitch-s">Includes STT, exchange, GST, brokerage &amp; drawdown audit</span>
+        </div>
+      `;
+
       const rulesHtml = (sg.rules || []).slice(0, 3).map(r => `<span class="rule-chip">${r}</span>`).join('');
       const capText = s.capital_configured
         ? `Capital: ₹${fmtInt(s.capital)} • Risk/Trade: ${fmtNum(s.risk_pct)}%`
@@ -1045,24 +1143,25 @@
         <div class="guardrail-card">
           <div class="guardrail-top">
             <span class="guardrail-title">Session Guardrail: ${fmtNum(sg.window_status || 'STANDARD SESSION')}</span>
-            <span class="mono muted" style="font-size:0.72rem;">9:15–9:25 Calib • 2:30 PM Cutoff</span>
+            <span class="mono muted" style="font-size:0.71rem;">9:15–9:25 Calib • 2:30 PM Cutoff</span>
           </div>
           <div class="guardrail-copy">${fmtNum(sg.window_note || 'Monitor WTT/WTB shifts and EOS/EOR boundaries before entry.')}</div>
           <div class="rule-chips">${rulesHtml}</div>
         </div>
         <div class="guardrail-card">
           <div class="guardrail-top">
-            <span class="guardrail-title">Risk &amp; Allocation Desk</span>
-            <span class="mono muted" style="font-size:0.72rem;">Zero Option/Equity Overlap</span>
+            <span class="guardrail-title">Risk &amp; Allocation Governance</span>
+            <span class="mono muted" style="font-size:0.71rem;">Max Sector Cap Enforced</span>
           </div>
           <div class="guardrail-copy mono">${capText}</div>
           <div class="rule-chips">
             <span class="rule-chip">Stock Options: Top 5 Bull / 5 Bear</span>
-            <span class="rule-chip">Intraday Equity: 10 Dedicated (₹20–₹50 Range Focus)</span>
+            <span class="rule-chip">Intraday Equity: ${eqCount} Dedicated Stocks</span>
           </div>
         </div>
       `;
 
+      const advPct = parseAdvDecPct(s.breadth_ratio);
       document.getElementById('kpiGrid').innerHTML = `
         <div class="kpi">
           <div class="kpi-label">NIFTY 50</div>
@@ -1080,46 +1179,77 @@
           <div class="kpi-sub mono ${chgClass(s.fin_chg)}">${fmtNum(s.fin_chg)}</div>
         </div>
         <div class="kpi">
-          <div class="kpi-label">Market Breadth</div>
+          <div class="kpi-label">Market Breadth (${advPct}% Adv)</div>
           <div class="kpi-val ${tone === 'BULLISH' ? 'pos' : (tone === 'BEARISH' ? 'neg' : 'neu')}">${tone}</div>
           <div class="kpi-sub mono">${fmtNum(s.breadth_ratio)} • &gt;EMA20: ${fmtNum(s.above_ema20)}%</div>
+          <div class="meter-track"><div class="meter-bull" style="width:${advPct}%"></div></div>
         </div>
         <div class="kpi">
           <div class="kpi-label">Active Ideas (${modeStr})</div>
           <div class="kpi-val mono">${fmtNum(s.ideas_count)}</div>
-          <div class="kpi-sub">Options + 10 Intraday Eq: ${fmtNum(s.stock_setups_count)}</div>
+          <div class="kpi-sub mono">${idxCount} Idx + ${optCount} Opt + ${eqCount} Eq = ${idxCount + optCount + eqCount}</div>
         </div>
       `;
 
       const cues = Array.isArray(data.global_cues) ? data.global_cues : [];
-      const cuesHtml = cues.length
-        ? cues.slice(0, 8).map(c => {
+      const validCues = cues.filter(c => {
+        const v = c.price ?? c.last ?? c.value ?? c.change_pct ?? c.change;
+        return v !== null && v !== undefined && String(v).trim() !== '' && String(v).trim() !== '—';
+      });
+      const cuesHtml = validCues.length
+        ? validCues.slice(0, 8).map(c => {
             const name = c.name || c.symbol || 'Cue';
-            const val = c.price || c.last || c.value || '';
-            const chg = c.change_pct !== undefined ? `${Number(c.change_pct) >= 0 ? '+' : ''}${c.change_pct}%` : (c.change || '');
-            return `<span class="cue-item mono"><span>${name}</span><strong>${fmtNum(val)}</strong><span class="${chgClass(chg)}">${fmtNum(chg)}</span></span>`;
+            const val = c.price ?? c.last ?? c.value ?? '';
+            const chg = c.change_pct !== undefined && c.change_pct !== null
+              ? `${Number(c.change_pct) >= 0 ? '+' : ''}${c.change_pct}%`
+              : (c.change || '');
+            return `<span class="data-chip mono"><span>${name}</span>${val !== '' ? `<strong>${fmtNum(val)}</strong>` : ''}<span class="${chgClass(chg)}">${fmtNum(chg)}</span></span>`;
           }).join('')
-        : `<span class="muted" style="font-size:0.76rem;">Global cues feed unavailable in this snapshot.</span>`;
+        : `<span class="muted" style="font-size:0.75rem;">Overnight global index quotes not reported in this snapshot (using domestic NSE/BSE breadth &amp; RS).</span>`;
 
       const sectorsArr = Array.isArray(data.sectors)
         ? data.sectors
         : Object.entries(data.sectors || {}).map(([k, v]) => ({ sector: k, ...(typeof v === 'object' ? v : { score: v }) }));
+
+      const sectorPerfFallback = {};
+      getAllSetups(data).forEach(item => {
+        const sec = String(item.sector || '').toUpperCase();
+        const chg = Number(item.change_pct);
+        if (!sec || sec === 'INDEX' || !Number.isFinite(chg)) return;
+        if (!sectorPerfFallback[sec]) sectorPerfFallback[sec] = [];
+        sectorPerfFallback[sec].push(chg);
+      });
+
       const secHtml = sectorsArr.length
         ? sectorsArr.slice(0, 10).map(secObj => {
-            const sName = secObj.sector || secObj.name || 'SECTOR';
-            const sVal = secObj.avg_change_pct !== undefined ? `${Number(secObj.avg_change_pct) >= 0 ? '+' : ''}${Number(secObj.avg_change_pct).toFixed(2)}%` : fmtNum(secObj.score);
-            return `<span class="sec-chip mono"><span>${sName}</span><strong class="${chgClass(sVal)}">${sVal}</strong></span>`;
+            const sName = String(secObj.sector || secObj.name || 'SECTOR').toUpperCase();
+            let rawVal = secObj.avg_change_pct ?? secObj.change_pct ?? secObj.rs_score ?? secObj.score;
+            if ((rawVal === null || rawVal === undefined || rawVal === '') && sectorPerfFallback[sName]) {
+              const arr = sectorPerfFallback[sName];
+              rawVal = arr.reduce((a, b) => a + b, 0) / arr.length;
+            }
+            const numVal = Number(rawVal);
+            const sVal = Number.isFinite(numVal)
+              ? `${numVal >= 0 ? '+' : ''}${numVal.toFixed(2)}%`
+              : 'Active';
+            return `<span class="data-chip mono"><span>${sName}</span><strong class="${chgClass(sVal)}">${sVal}</strong></span>`;
           }).join('')
-        : `<span class="muted" style="font-size:0.76rem;">Sector rotation metrics unavailable.</span>`;
+        : `<span class="muted" style="font-size:0.75rem;">Sector rotation metrics unavailable.</span>`;
 
       document.getElementById('intelGrid').innerHTML = `
         <div class="intel-box">
-          <div class="intel-heading">Global Macro &amp; Overnight Cues</div>
-          <div class="cues-list">${cuesHtml}</div>
+          <div class="intel-head">
+            <span class="intel-heading">Global Macro &amp; Overnight Cues</span>
+            <span class="mono muted" style="font-size:0.68rem;">Macro Context</span>
+          </div>
+          <div class="chip-wrap">${cuesHtml}</div>
         </div>
         <div class="intel-box">
-          <div class="intel-heading">Sector Strength &amp; Rotation</div>
-          <div class="sector-chips">${secHtml}</div>
+          <div class="intel-head">
+            <span class="intel-heading">Sector Strength &amp; Rotation</span>
+            <span class="mono muted" style="font-size:0.68rem;">Relative Momentum</span>
+          </div>
+          <div class="chip-wrap">${secHtml}</div>
         </div>
       `;
 
@@ -1135,8 +1265,8 @@
 
       const sections = [
         { key: 'INDEX', title: 'Index Option & Hedging Desk', sub: 'NIFTY • BANKNIFTY • FINNIFTY • SENSEX', tag: 'INDEX', items: filterFn(data.index_trades) },
-        { key: 'OPT_BULL', title: 'Stock Options — Bullish Candidates', sub: 'High-conviction CE / Bull Spread setups', tag: 'OPT BULL', items: filterFn(data.options_bullish || (data.setups || {}).bullish) },
-        { key: 'OPT_BEAR', title: 'Stock Options — Bearish Candidates', sub: 'High-conviction PE / Bear Spread setups', tag: 'OPT BEAR', items: filterFn(data.options_bearish || (data.setups || {}).bearish) },
+        { key: 'OPT_BULL', title: 'Stock Options — Bullish Candidates', sub: 'High-conviction CE / Bull Spread setups (Zero Equity Overlap)', tag: 'OPT BULL', items: filterFn(data.options_bullish || (data.setups || {}).bullish) },
+        { key: 'OPT_BEAR', title: 'Stock Options — Bearish Candidates', sub: 'High-conviction PE / Bear Spread setups (Zero Equity Overlap)', tag: 'OPT BEAR', items: filterFn(data.options_bearish || (data.setups || {}).bearish) },
         { key: 'EQ_INTRA', title: `Intraday Equity Basket (${modeStr})`, sub: '10 Non-Overlapping Stocks • ₹20–₹50 Daily Range Priority', tag: 'EQ INTRA', items: filterFn(data.equity_intraday) },
       ].filter(secObj => activeTab === 'ALL' || activeTab === secObj.key);
 
@@ -1152,7 +1282,7 @@
               <div class="section-title">${secObj.title}</div>
               <div class="section-sub">${secObj.sub}</div>
             </div>
-            <span class="mono muted" style="font-size:0.78rem;">${secObj.items.length} setups</span>
+            <span class="mono muted" style="font-size:0.77rem;">${secObj.items.length} setups</span>
           </div>
           ${bodyContent}`;
       });
@@ -1171,7 +1301,7 @@
           Net P&amp;L: <span class="mono">₹${fmtNum(wf.total_net_pnl)}</span> •
           Max Drawdown: <span class="mono">₹${fmtNum(wf.max_drawdown_net_pnl)}</span>
         </div>
-        <div class="neu" style="font-size:0.75rem;">${wf.sample_warning || 'Research & risk-management analytics only; not guaranteed performance.'}</div>
+        <div class="neu" style="font-size:0.74rem;">${wf.sample_warning || 'Research & risk-management analytics only; not guaranteed performance.'}</div>
       `;
     }
 
