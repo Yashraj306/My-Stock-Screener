@@ -270,7 +270,6 @@
     }
     .chain-open-btn:hover { background: rgba(56, 189, 248, 0.18); }
 
-    /* Live Option Chain Drawer / Panel */
     .oc-panel {
       margin-top: 24px;
       background: var(--surface);
@@ -444,7 +443,6 @@
 
     <section class="wf-banner" id="wfBanner"></section>
   </main>
-
   <script>
     let currentPayload = null;
     let allSnapshots = [];
@@ -635,6 +633,7 @@
       }
 
       const cs = item.chain_summary || {};
+      const ca = item.chain_analytics || {};
       const rows = Array.isArray(item.option_chain) ? item.option_chain : [];
 
       titleEl.textContent = `Live Option Chain — ${item.symbol} (Spot: ${fmtNum(item.spot || item.entry)})`;
@@ -643,8 +642,11 @@
         PCR: <strong class="mono">${fmtNum(cs.pcr)}</strong> •
         OI Build-up: <strong class="mono">${fmtNum(cs.oi_build_up)}</strong> •
         Max Pain: <strong class="mono">${fmtNum(cs.max_pain)}</strong> •
-        Support: <strong class="pos mono">${fmtNum(cs.support_strike)}</strong> •
-        Resistance: <strong class="neg mono">${fmtNum(cs.resistance_strike)}</strong>
+        Support: <strong class="pos mono">${fmtNum(cs.support_strike)}</strong> (${fmtNum(ca.support_shift)} ${fmtNum(ca.support_shift_pct)}%) •
+        Resistance: <strong class="neg mono">${fmtNum(cs.resistance_strike)}</strong> (${fmtNum(ca.resistance_shift)} ${fmtNum(ca.resistance_shift_pct)}%) •
+        EOS: <strong class="mono">${fmtNum(ca.eos)}</strong> •
+        EOR: <strong class="mono">${fmtNum(ca.eor)}</strong> •
+        State: <strong class="mono">${fmtNum(ca.sentiment_state)}</strong>
       `;
 
       if (!rows.length) {
@@ -697,13 +699,13 @@
             <thead>
               <tr>
                 <th>Call OI</th>
-                <th>Call OI Chg (% )</th>
+                <th>Call OI Chg (%)</th>
                 <th>Call Cntr</th>
                 <th>CE LTP</th>
                 <th class="center">Strike</th>
                 <th>PE LTP</th>
                 <th>Put Cntr</th>
-                <th>Put OI Chg (% )</th>
+                <th>Put OI Chg (%)</th>
                 <th>Put OI</th>
                 <th class="center">Zone Box</th>
                 <th style="text-align:left;">OI Change Impact</th>
@@ -726,6 +728,7 @@
       const badgeCls = isBull ? 'badge-bull' : 'badge-bear';
       const oiHtml = item.oi_target ? `<span>OI Target: <strong class="mono">${item.oi_target}</strong></span>` : '';
       const vwapHtml = item.vwap ? `<span>VWAP: <strong class="mono">${item.vwap}</strong></span>` : '';
+      const extHtml = item.extension_status ? `<span>Timing: <strong class="mono">${item.extension_status}</strong></span>` : '';
 
       return `
         <article class="card">
@@ -749,6 +752,7 @@
             ${vwapHtml}
             ${oiHtml}
             <span>Qty: <strong class="mono">${fmtNum(item.qty)}</strong></span>
+            ${extHtml}
           </div>
 
           <div class="rationale">${item.why_trade || item.entry_action || 'Systematic technical & relative strength alignment.'}</div>
@@ -761,9 +765,10 @@
 
     function renderDashboard(data) {
       const s = data.summary || {};
+      const sg = data.session_guardrails || {};
       document.getElementById('deskTitle').textContent = `${data.title || 'Quant & Hedging Desk'} [${data.mode || 'LIVE'}]`;
       document.getElementById('lastUpdated').textContent =
-        `Session: ${data.session_date || '—'} • Mode: ${data.mode || '—'} • Generated: ${data.generated_at_ist || '—'} • Feed: ${s.data_source || '—'}`;
+        `Session: ${data.session_date || '—'} • Mode: ${data.mode || '—'} • ${sg.window_status ? sg.window_status + ' • ' : ''}Generated: ${data.generated_at_ist || '—'} • Feed: ${s.data_source || '—'}`;
 
       const tone = String(s.breadth_tone || 'MIXED').toUpperCase();
       document.getElementById('statusDot').style.background = tone === 'BULLISH' ? 'var(--bull)' : (tone === 'BEARISH' ? 'var(--bear)' : 'var(--warn)');
@@ -814,6 +819,9 @@
       ].filter(secObj => activeTab === 'ALL' || activeTab === secObj.key);
 
       let html = '';
+      if (sg.window_note) {
+        html += `<div class="rationale" style="margin-bottom:14px;"><strong>${fmtNum(sg.window_status)}:</strong> ${fmtNum(sg.window_note)}</div>`;
+      }
       sections.forEach(secObj => {
         if (!secObj.items.length) return;
         html += `
@@ -828,11 +836,14 @@
       renderOptionChainPanel(data);
 
       const wf = data.walk_forward || {};
+      const costsVal = wf.total_costs !== undefined ? wf.total_costs : (wf.total_est_charges || 0);
       document.getElementById('wfBanner').innerHTML = `
         <div>
           <strong>Walk-Forward Ledger:</strong> Closed Trades: <span class="mono">${fmtNum(wf.closed_trades)}</span> •
           Win Rate: <span class="mono">${wf.net_win_rate_pct !== null && wf.net_win_rate_pct !== undefined ? wf.net_win_rate_pct + '%' : 'N/A'}</span> •
-          Net P&amp;L: <span class="mono">₹${fmtNum(wf.total_net_pnl)}</span>
+          Costs: <span class="mono">₹${fmtNum(costsVal)}</span> •
+          Net P&amp;L: <span class="mono">₹${fmtNum(wf.total_net_pnl)}</span> •
+          Max DD: <span class="mono">₹${fmtNum(wf.max_drawdown_net_pnl)}</span>
         </div>
         <div style="color:var(--warn); font-size:0.78rem;">${wf.sample_warning || ''}</div>
       `;
