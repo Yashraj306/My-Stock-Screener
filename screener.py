@@ -40,7 +40,7 @@ from options_data import chain_upstox
 from setups import position_size
 from tech import clean_ohlcv, compute_indicators
 from tracker import evaluate_signals_chronologically, log_signals, walk_forward_summary
-from universe import LOT_SIZES, STOCKS_UNIVERSE, eq_keys
+from universe import BSE_STOCKS_UNIVERSE, LOT_SIZES, STOCKS_UNIVERSE, eq_keys
 
 warnings.filterwarnings("ignore")
 logging.basicConfig(level=logging.INFO, format="%(asctime)s - %(levelname)s - %(message)s")
@@ -68,23 +68,35 @@ YF_SYMBOL_MAP = {
     "M&M": "M&M.NS",
 }
 
-_WARNED_UPSTOX_STATUS: set[int] = set()
+_BSE_SET = set(BSE_STOCKS_UNIVERSE)
+_WARNED_UPSTOX_KEYS: set[str] = set()
 _WARNED_YF_COUNT = 0
 
 
 def _yf_ticker(sym: str) -> str:
-    return YF_SYMBOL_MAP.get(sym, f"{sym}.NS")
+    if sym in YF_SYMBOL_MAP:
+        return YF_SYMBOL_MAP[sym]
+    if sym in _BSE_SET:
+        return f"{sym}.BO"
+    return f"{sym}.NS"
 
 
 def _clean_yf_duplicates(df: pd.DataFrame | None) -> pd.DataFrame | None:
-    if df is None or df.empty:
+    if df is None or getattr(df, "empty", True):
         return None
     out = df.copy()
-    if isinstance(out.columns, pd.MultiIndex):
-        out.columns = [str(c[0]) for c in out.columns]
-    out = out.loc[:, ~out.columns.duplicated()]
     if out.index.duplicated().any():
         out = out[~out.index.duplicated(keep="last")]
+    if isinstance(out.columns, pd.MultiIndex):
+        out = out.loc[:, ~out.columns.duplicated()]
+        flat_cols = []
+        for c in out.columns:
+            parts = [str(x).strip() for x in c if x is not None and str(x).strip() != ""]
+            flat_cols.append(parts[0] if parts else "")
+        out.columns = flat_cols
+    else:
+        out.columns = [str(c).strip() for c in out.columns]
+    out = out.loc[:, ~out.columns.duplicated()]
     return out
 
 
@@ -104,9 +116,21 @@ def _compute_cumulative_vwap(df: pd.DataFrame) -> float | None:
     return None
 
 
-def _fetch_upstox_1y(instrument_key: str) -> pd.DataFrame | None:
+def _compute_avg_daily_range_rs(df: pd.DataFrame, lookback: int = 14) -> float:
+    if df is None or getattr(df, "empty", True):
+        return 0.0
+    high = pd.to_numeric(df["High"], errors="coerce")
+    low = pd.to_numeric(df["Low"], errors="coerce")
+    rng = (high - low).dropna()
+    if rng.empty:
+        return 0.0
+    val = float(rng.tail(max(int(lookback), 1)).mean())
+    return round(val, 2) if pd.notna(val) else 0.0
+
+
+def _fetch_upstox_1y(instrument_key: str, symbol: str = "") -> pd.DataFrame | None:
     if not UPSTOX_ACCESS_TOKEN:
-        logging.warning("Upstox token is empty for %s", instrument_key)
+        logging.warning("Upstox token is empty for %s (%s)", symbol, instrument_key)
         return None
     if not instrument_key:
         return None
@@ -119,10 +143,12 @@ def _fetch_upstox_1y(instrument_key: str) -> pd.DataFrame | None:
     try:
         resp = requests.get(url, headers=headers, timeout=12)
         if resp.status_code != 200:
-            if resp.status_code not in _WARNED_UPSTOX_STATUS:
-                _WARNED_UPSTOX_STATUS.add(resp.status_code)
+            warn_key = f"{symbol}:{instrument_key}:{resp.status_code}"
+            if warn_key not in _WARNED_UPSTOX_KEYS:
+                _WARNED_UPSTOX_KEYS.add(warn_key)
                 logging.warning(
-                    "Upstox %s HTTP %s: %s",
+                    "Upstox %s [%s] HTTP %s: %s",
+                    symbol or "SYM",
                     instrument_key,
                     resp.status_code,
                     (resp.text or "")[:120],
@@ -130,7 +156,7 @@ def _fetch_upstox_1y(instrument_key: str) -> pd.DataFrame | None:
             return None
         candles = ((resp.json() or {}).get("data") or {}).get("candles") or []
         if not candles:
-            logging.warning("Upstox %s returned empty candles", instrument_key)
+            logging.warning("Upstox %s [%s] returned empty candles", symbol or "SYM", instrument_key)
             return None
         rows = [
             {
@@ -146,49 +172,52 @@ def _fetch_upstox_1y(instrument_key: str) -> pd.DataFrame | None:
         ]
         cleaned = clean_ohlcv(pd.DataFrame(rows))
         if cleaned is None:
-            logging.warning("Upstox %s failed OHLCV normalization", instrument_key)
+            logging.warning("Upstox %s [%s] failed OHLCV normalization", symbol or "SYM", instrument_key)
             return None
         if len(cleaned) < 20:
             return None
         return cleaned
     except Exception as exc:
-        logging.warning("Upstox %s exception: %s", instrument_key, exc)
+        logging.warning("Upstox %s [%s] exception: %s", symbol or "SYM", instrument_key, exc)
         return None
 
 
 def _fetch_yf_1y(symbol: str) -> pd.DataFrame | None:
     global _WARNED_YF_COUNT
-    ticker = _yf_ticker(symbol)
-    try:
-        df = yf.download(
-            ticker,
-            period="1y",
-            interval="1d",
-            progress=False,
-            threads=False,
-            timeout=12,
-            auto_adjust=False,
-        )
-        cleaned_raw = _clean_yf_duplicates(df)
-        norm = clean_ohlcv(cleaned_raw) if cleaned_raw is not None else None
-        if norm is not None and len(norm) >= 20:
-            return norm
+    primary_ticker = _yf_ticker(symbol)
+    alt_ticker = f"{symbol}.NS" if primary_ticker.endswith(".BO") else (f"{symbol}.BO" if primary_ticker.endswith(".NS") else primary_ticker)
+    candidates = [primary_ticker] if primary_ticker == alt_ticker else [primary_ticker, alt_ticker]
 
-        hist = yf.Ticker(ticker).history(period="1y", interval="1d", auto_adjust=False)
-        cleaned_hist = _clean_yf_duplicates(hist)
-        norm2 = clean_ohlcv(cleaned_hist) if cleaned_hist is not None else None
-        if norm2 is not None and len(norm2) >= 20:
-            return norm2
+    for ticker in candidates:
+        try:
+            hist = yf.Ticker(ticker).history(period="1y", interval="1d", auto_adjust=False)
+            cleaned_hist = _clean_yf_duplicates(hist)
+            norm_hist = clean_ohlcv(cleaned_hist) if cleaned_hist is not None else None
+            if norm_hist is not None and len(norm_hist) >= 20:
+                return norm_hist
 
-        if _WARNED_YF_COUNT < 5:
-            _WARNED_YF_COUNT += 1
-            logging.warning("YF %s returned empty/insufficient data", ticker)
-        return None
-    except Exception as exc:
-        if _WARNED_YF_COUNT < 5:
-            _WARNED_YF_COUNT += 1
-            logging.warning("YF %s err: %s", ticker, exc)
-        return None
+            df = yf.download(
+                ticker,
+                period="1y",
+                interval="1d",
+                progress=False,
+                threads=False,
+                timeout=12,
+                auto_adjust=False,
+            )
+            cleaned_raw = _clean_yf_duplicates(df)
+            norm_dl = clean_ohlcv(cleaned_raw) if cleaned_raw is not None else None
+            if norm_dl is not None and len(norm_dl) >= 20:
+                return norm_dl
+        except Exception as exc:
+            if _WARNED_YF_COUNT < 8:
+                _WARNED_YF_COUNT += 1
+                logging.warning("YF %s err: %s", ticker, exc)
+
+    if _WARNED_YF_COUNT < 8:
+        _WARNED_YF_COUNT += 1
+        logging.warning("YF %s returned empty/insufficient data", primary_ticker)
+    return None
 
 
 def load_candles_1y() -> tuple[dict[str, pd.DataFrame], str]:
@@ -197,7 +226,7 @@ def load_candles_1y() -> tuple[dict[str, pd.DataFrame], str]:
     upstox_hits = 0
 
     def _worker(sym: str):
-        df = _fetch_upstox_1y(keys.get(sym, ""))
+        df = _fetch_upstox_1y(keys.get(sym, ""), symbol=sym)
         if df is not None and not df.empty:
             return sym, df, "UPSTOX"
         yf_df = _fetch_yf_1y(sym)
@@ -211,11 +240,11 @@ def load_candles_1y() -> tuple[dict[str, pd.DataFrame], str]:
                     upstox_hits += 1
 
     if upstox_hits > 0 and upstox_hits >= max(1, len(candles) // 2):
-        source_label = "UPSTOX_V2_HIST_1Y"
+        source_label = "UPSTOX_V2_HIST_1Y (NSE+BSE)"
     elif upstox_hits > 0:
-        source_label = "UPSTOX_V2 + YFINANCE_1Y"
+        source_label = "UPSTOX_V2 + YFINANCE_1Y (NSE+BSE)"
     else:
-        source_label = "YFINANCE_1Y"
+        source_label = "YFINANCE_1Y (NSE+BSE)"
     return candles, source_label
 
 
@@ -500,8 +529,15 @@ def _compute_oi_target(chain_summary: dict | None, entry: float, is_bull: bool) 
     return round(max(below), 2) if below else None
 
 
-def _select_capped_items(items: list[dict], max_items: int, enforce_risk_cap: bool = True) -> list[dict]:
+def _select_capped_items(
+    items: list[dict],
+    max_items: int,
+    enforce_risk_cap: bool = True,
+    excluded_symbols: set[str] | None = None,
+) -> list[dict]:
     selected: list[dict] = []
+    seen_syms: set[str] = set()
+    excluded = {str(s).strip().upper() for s in (excluded_symbols or set())}
     sector_counts: dict[str, int] = {}
     total_risk = 0.0
     portfolio_risk_cap = CAPITAL * MAX_PORTFOLIO_RISK_PCT if (CAPITAL_CONFIGURED and enforce_risk_cap) else float("inf")
@@ -509,6 +545,9 @@ def _select_capped_items(items: list[dict], max_items: int, enforce_risk_cap: bo
     for item in items:
         if len(selected) >= max_items:
             break
+        sym = str(item.get("symbol") or "").strip().upper()
+        if not sym or sym in seen_syms or sym in excluded:
+            continue
         sec = str(item.get("sector") or "OTHER").upper()
         if sector_counts.get(sec, 0) >= MAX_SECTOR_POSITIONS:
             continue
@@ -516,9 +555,127 @@ def _select_capped_items(items: list[dict], max_items: int, enforce_risk_cap: bo
         if enforce_risk_cap and CAPITAL_CONFIGURED and trade_risk > 0 and (total_risk + trade_risk) > portfolio_risk_cap:
             continue
         selected.append(item)
+        seen_syms.add(sym)
         sector_counts[sec] = sector_counts.get(sec, 0) + 1
         total_risk += trade_risk
     return selected
+
+
+def _load_previous_morning_equity_symbols(session_date: str, current_mode: str, base_dir: str = "docs/data") -> set[str]:
+    if str(current_mode or "").upper() != "BTST":
+        return set()
+    used: set[str] = set()
+    history_dir = Path(base_dir) / "history"
+    if not history_dir.exists():
+        return used
+
+    candidates = [
+        history_dir / f"{session_date}_MORNING.json",
+        history_dir / f"{session_date}.json",
+    ]
+    for p in candidates:
+        if not p.exists():
+            continue
+        try:
+            raw = json.loads(p.read_text(encoding="utf-8"))
+            if p.name == f"{session_date}.json" and str(raw.get("mode") or "").upper() != "MORNING":
+                continue
+            for item in (raw.get("equity_intraday") or []):
+                sym = str((item or {}).get("symbol") or "").strip().upper()
+                if sym:
+                    used.add(sym)
+        except Exception:
+            continue
+    return used
+
+
+def _select_intraday_equity_10(
+    bull_candidates: list[dict],
+    bear_candidates: list[dict],
+    excluded_symbols: set[str] | None = None,
+    mode_tag: str = "MORNING",
+) -> tuple[list[dict], list[dict]]:
+    excluded = {str(s).strip().upper() for s in (excluded_symbols or set())}
+    m_up = str(mode_tag or "MORNING").upper()
+
+    def _rank_pool(pool: list[dict], tier: int) -> list[dict]:
+        matched: list[dict] = []
+        for it in pool:
+            rng = float(it.get("avg_range_rs") or 0.0)
+            if tier == 0 and (20.0 <= rng <= 50.0):
+                matched.append(it)
+            elif tier == 1 and (15.0 <= rng <= 65.0):
+                matched.append(it)
+            elif tier == 2:
+                matched.append(it)
+
+        if m_up == "MORNING":
+            matched.sort(
+                key=lambda x: (
+                    1 if (20.0 <= float(x.get("avg_range_rs") or 0.0) <= 50.0) else 0,
+                    abs(float(x.get("change_pct") or 0.0)),
+                    float(x.get("score") or 0.0),
+                ),
+                reverse=True,
+            )
+        else:
+            matched.sort(
+                key=lambda x: (
+                    1 if (20.0 <= float(x.get("avg_range_rs") or 0.0) <= 50.0) else 0,
+                    float(x.get("score") or 0.0),
+                ),
+                reverse=True,
+            )
+        return matched
+
+    bull_picked: list[dict] = []
+    bear_picked: list[dict] = []
+    chosen_syms: set[str] = set()
+
+    for tier in (0, 1, 2):
+        for side_key, pool, target_list in (
+            ("BULL", _rank_pool(bull_candidates, tier), bull_picked),
+            ("BEAR", _rank_pool(bear_candidates, tier), bear_picked),
+        ):
+            while len(bull_picked) + len(bear_picked) < 10 and len(target_list) < 6:
+                added_in_pass = False
+                for it in pool:
+                    if len(bull_picked) + len(bear_picked) >= 10 or len(target_list) >= 6:
+                        break
+                    sym = str(it.get("symbol") or "").strip().upper()
+                    if not sym or sym in chosen_syms or sym in excluded:
+                        continue
+                    enriched_item = dict(it)
+                    rng_val = float(enriched_item.get("avg_range_rs") or 0.0)
+                    rng_tag = "₹20–₹50 Range" if (20.0 <= rng_val <= 50.0) else f"Avg Range ₹{rng_val:.1f}"
+                    enriched_item["equity_bucket"] = f"{m_up} EQ ({rng_tag})"
+                    target_list.append(enriched_item)
+                    chosen_syms.add(sym)
+                    added_in_pass = True
+                if not added_in_pass:
+                    break
+
+    if len(bull_picked) + len(bear_picked) < 10:
+        combined_fallback = sorted(
+            bull_candidates + bear_candidates,
+            key=lambda x: float(x.get("score") or 0.0),
+            reverse=True,
+        )
+        for it in combined_fallback:
+            if len(bull_picked) + len(bear_picked) >= 10:
+                break
+            sym = str(it.get("symbol") or "").strip().upper()
+            if not sym or sym in chosen_syms:
+                continue
+            enriched_item = dict(it)
+            enriched_item["equity_bucket"] = f"{m_up} EQ (Fallback)"
+            if str(it.get("side") or "").upper() == "BULLISH":
+                bull_picked.append(enriched_item)
+            else:
+                bear_picked.append(enriched_item)
+            chosen_syms.add(sym)
+
+    return bull_picked, bear_picked
 
 
 def _safe_position_size(entry: float, stop_loss: float, lot_size: int = 1) -> dict:
@@ -558,6 +715,7 @@ def _build_entry_and_rationale(
     rs_score: float,
     chain_summary: dict | None,
     chain_analytics: dict | None = None,
+    avg_range_rs: float = 0.0,
 ) -> dict:
     atr_safe = max(float(atr_val or 0.0), 0.05)
     anchor = float(vwap) if (vwap is not None and float(vwap) > 0) else ema20
@@ -603,12 +761,13 @@ def _build_entry_and_rationale(
     if ca.get("eos") is not None or ca.get("eor") is not None:
         lvl_txt = f" EOS {ca.get('eos')} / EOR {ca.get('eor')} [{ca.get('sentiment_state')}]."
 
+    rng_txt = f" AvgRng ₹{avg_range_rs:.1f}." if avg_range_rs > 0 else ""
     vwap_txt = f"VWAP {vwap:.2f}" if (vwap is not None and vwap > 0) else "VWAP N/A"
     dir_txt = "Bullish alignment" if is_bull else "Bearish alignment"
     why_trade = (
         f"{dir_txt} ({chg_pct:+.2f}%), {'above' if close >= ema20 else 'below'} EMA20 ({ema20:.2f}), "
         f"{vwap_txt}, RSI {rsi:.1f}, Vol {vol_ratio:.2f}x, "
-        f"RS vs Nifty {rs_score:+.2f}% in {sector}.{oi_txt}{lvl_txt}"
+        f"RS vs Nifty {rs_score:+.2f}% in {sector}.{rng_txt}{oi_txt}{lvl_txt}"
     )
 
     return {
@@ -630,6 +789,7 @@ def _build_stock_setup(sym: str, ind: dict, rs_info: dict, is_bull: bool, chain_
     vol_ratio = float(ind.get("vol_ratio") or 0.0)
     chg_pct = float(ind.get("change_pct") or 0.0)
     avg_turnover = float(ind.get("avg_turnover") or 0.0)
+    avg_range_rs = float(ind.get("avg_range_rs") or 0.0)
 
     if avg_turnover < MIN_DAILY_TURNOVER_RS:
         return None
@@ -687,6 +847,7 @@ def _build_stock_setup(sym: str, ind: dict, rs_info: dict, is_bull: bool, chain_
         rs_score=rs_score,
         chain_summary=chain_summary,
         chain_analytics=chain_analytics,
+        avg_range_rs=avg_range_rs,
     )
 
     base_score = float(ind.get("bull_score" if is_bull else "bear_score") or 50.0)
@@ -701,6 +862,7 @@ def _build_stock_setup(sym: str, ind: dict, rs_info: dict, is_bull: bool, chain_
         "close": round(close, 2),
         "spot": round(close, 2),
         "change_pct": round(chg_pct, 2),
+        "avg_range_rs": round(avg_range_rs, 2),
         "stop_loss": sl,
         "target_1": pa_t1,
         "target_2": pa_t2,
@@ -900,10 +1062,12 @@ def run_screener():
             continue
         close = float(ind["close"])
         cum_vwap = _compute_cumulative_vwap(df)
+        avg_range_rs = _compute_avg_daily_range_rs(df, lookback=14)
         vol_20 = pd.to_numeric(df["Volume"], errors="coerce").tail(20).mean()
         close_20 = pd.to_numeric(df["Close"], errors="coerce").tail(20).mean()
 
         ind["vwap"] = cum_vwap
+        ind["avg_range_rs"] = avg_range_rs
         ind["avg_turnover"] = float((vol_20 or 0.0) * (close_20 or close))
         indicators_by_sym[sym] = ind
 
@@ -961,8 +1125,25 @@ def run_screener():
     options_bullish = _select_capped_items(bull_candidates, max_items=5, enforce_risk_cap=False)
     options_bearish = _select_capped_items(bear_candidates, max_items=5, enforce_risk_cap=False)
 
-    intraday_bullish = _select_capped_items(bull_candidates, max_items=5, enforce_risk_cap=True)
-    intraday_bearish = _select_capped_items(bear_candidates, max_items=5, enforce_risk_cap=True)
+    option_symbols = {
+        str(x.get("symbol") or "").strip().upper()
+        for x in (options_bullish + options_bearish)
+        if x.get("symbol")
+    }
+    session_date_now = dt.datetime.now(IST).date().isoformat()
+    prev_morning_eq_syms = _load_previous_morning_equity_symbols(
+        session_date=session_date_now,
+        current_mode=MODE,
+        base_dir="docs/data",
+    )
+    excluded_eq_syms = option_symbols | prev_morning_eq_syms
+
+    intraday_bullish, intraday_bearish = _select_intraday_equity_10(
+        bull_candidates=bull_candidates,
+        bear_candidates=bear_candidates,
+        excluded_symbols=excluded_eq_syms,
+        mode_tag=MODE,
+    )
     equity_intraday = intraday_bullish + intraday_bearish
 
     index_trades = _build_index_trades(candles)
@@ -984,7 +1165,7 @@ def run_screener():
     above20_pct = round((above20 / total_stocks) * 100.0) if total_stocks else 0
     above50_pct = round((above50 / total_stocks) * 100.0) if total_stocks else 0
 
-    stock_setups_count = len(options_bullish) + len(options_bearish) + len(intraday_bullish) + len(intraday_bearish)
+    stock_setups_count = len(options_bullish) + len(options_bearish) + len(equity_intraday)
     total_ideas = len(index_trades) + stock_setups_count
 
     payload = {
@@ -1032,13 +1213,12 @@ def run_screener():
 
     send_alert(payload)
     logging.info(
-        "Dispatched %d total ideas (%d stock setups: %dB/%dS opt + %dB/%dS eq) using %s",
+        "Dispatched %d total ideas (%d stock setups: %dB/%dS opt + %d eq [10 target]) using %s",
         total_ideas,
         stock_setups_count,
         len(options_bullish),
         len(options_bearish),
-        len(intraday_bullish),
-        len(intraday_bearish),
+        len(equity_intraday),
         data_source,
     )
 
