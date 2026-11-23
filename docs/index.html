@@ -3,277 +3,446 @@
 <head>
   <meta charset="UTF-8" />
   <meta name="viewport" content="width=device-width, initial-scale=1.0" />
-  <title>Quant &amp; Hedging Desk — Live Option Chain &amp; Screener Terminal</title>
+  <title>Quant &amp; Hedging Desk — Institutional Execution &amp; Option Chain Terminal</title>
   <link rel="preconnect" href="https://fonts.googleapis.com">
   <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
-  <link href="https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600;700&family=JetBrains+Mono:wght@400;500;600;700&display=swap" rel="stylesheet">
+  <link href="https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600;700;800&family=JetBrains+Mono:wght@400;500;600;700&display=swap" rel="stylesheet">
   <style>
     :root {
-      --bg: #090d16;
-      --surface: #111827;
-      --surface-2: #172033;
-      --border: #1f2d47;
+      --bg: #070b12;
+      --surface: #0e1522;
+      --surface-2: #141e30;
+      --surface-3: #1a273d;
+      --border: #22324d;
+      --border-soft: rgba(34, 50, 77, 0.65);
       --text: #f1f5f9;
       --muted: #94a3b8;
+      --muted-2: #64748b;
       --accent: #38bdf8;
+      --accent-2: #818cf8;
       --bull: #10b981;
       --bull-bg: rgba(16, 185, 129, 0.14);
       --bear: #f43f5e;
       --bear-bg: rgba(244, 63, 94, 0.14);
       --warn: #f59e0b;
-      --warn-bg: rgba(245, 158, 11, 0.16);
+      --warn-bg: rgba(245, 158, 11, 0.15);
     }
 
     * { box-sizing: border-box; margin: 0; padding: 0; }
+    html { scroll-behavior: smooth; }
+
     body {
-      background: radial-gradient(circle at top right, #111d35 0%, var(--bg) 45%);
+      background:
+        radial-gradient(ellipse 900px 420px at 85% -5%, rgba(56, 189, 248, 0.11), transparent 65%),
+        radial-gradient(ellipse 700px 380px at 10% 0%, rgba(16, 185, 129, 0.07), transparent 60%),
+        var(--bg);
       color: var(--text);
       font-family: 'Inter', system-ui, -apple-system, sans-serif;
-      line-height: 1.5;
+      line-height: 1.48;
       min-height: 100vh;
+      -webkit-font-smoothing: antialiased;
     }
 
-    .mono { font-family: 'JetBrains Mono', monospace; }
+    .mono { font-family: 'JetBrains Mono', monospace; font-variant-numeric: tabular-nums; }
+    .pos { color: var(--bull); }
+    .neg { color: var(--bear); }
+    .neu { color: var(--warn); }
+    .muted { color: var(--muted); }
 
+    /* Sticky Institutional Topbar */
     .topbar {
       position: sticky;
       top: 0;
-      z-index: 40;
-      backdrop-filter: blur(12px);
-      background: rgba(9, 13, 22, 0.9);
+      z-index: 50;
+      backdrop-filter: blur(14px);
+      background: rgba(7, 11, 18, 0.88);
       border-bottom: 1px solid var(--border);
-      padding: 14px 24px;
+      padding: 11px 22px;
       display: flex;
       flex-wrap: wrap;
       align-items: center;
       justify-content: space-between;
-      gap: 14px;
+      gap: 12px;
     }
 
     .brand { display: flex; align-items: center; gap: 12px; }
-    .brand-dot {
-      width: 11px; height: 11px; border-radius: 50%;
+    .pulse-ring {
+      position: relative;
+      width: 11px;
+      height: 11px;
+      border-radius: 50%;
       background: var(--bull);
-      box-shadow: 0 0 12px var(--bull);
+      box-shadow: 0 0 0 4px rgba(16, 185, 129, 0.2);
+      flex-shrink: 0;
     }
-    .brand h1 { font-size: 1.05rem; font-weight: 700; letter-spacing: 0.2px; }
-    .brand small { display: block; color: var(--muted); font-size: 0.76rem; }
+    .brand h1 { font-size: 1rem; font-weight: 800; letter-spacing: -0.01em; display: flex; align-items: center; gap: 8px; }
+    .mode-chip {
+      font-size: 0.68rem;
+      font-weight: 700;
+      padding: 2px 7px;
+      border-radius: 999px;
+      letter-spacing: 0.04em;
+      border: 1px solid rgba(56, 189, 248, 0.4);
+      background: rgba(56, 189, 248, 0.14);
+      color: #7dd3fc;
+    }
+    .mode-chip.btst {
+      border-color: rgba(245, 158, 11, 0.45);
+      background: rgba(245, 158, 11, 0.15);
+      color: #fcd34d;
+    }
+    .brand small { display: block; color: var(--muted); font-size: 0.74rem; margin-top: 1px; }
 
-    .controls { display: flex; flex-wrap: wrap; align-items: center; gap: 10px; }
+    .controls { display: flex; flex-wrap: wrap; align-items: center; gap: 8px; }
 
-    .mode-switcher {
+    .seg-group {
       display: inline-flex;
       background: var(--surface);
       border: 1px solid var(--border);
-      border-radius: 10px;
-      padding: 3px;
-      gap: 4px;
+      border-radius: 9px;
+      padding: 2px;
+      gap: 2px;
     }
-    .mode-btn {
+    .seg-btn {
       border: 1px solid transparent;
       background: transparent;
       color: var(--muted);
-      padding: 6px 12px;
+      padding: 5px 11px;
       border-radius: 7px;
-      font-size: 0.78rem;
+      font-size: 0.75rem;
       font-weight: 700;
       cursor: pointer;
-      transition: all 0.16s ease;
+      transition: all 0.15s ease;
     }
-    .mode-btn:hover:not(:disabled) { color: var(--text); border-color: var(--border); }
-    .mode-btn.active-morning { background: rgba(56, 189, 248, 0.18); border-color: #38bdf8; color: #7dd3fc; }
-    .mode-btn.active-btst { background: rgba(245, 158, 11, 0.18); border-color: #f59e0b; color: #fcd34d; }
-    .mode-btn.active-latest { background: rgba(16, 185, 129, 0.18); border-color: #10b981; color: #6ee7b7; }
-    .mode-btn:disabled { opacity: 0.38; cursor: not-allowed; }
+    .seg-btn:hover:not(:disabled) { color: var(--text); }
+    .seg-btn.active-latest { background: rgba(16, 185, 129, 0.16); border-color: rgba(16, 185, 129, 0.5); color: #6ee7b7; }
+    .seg-btn.active-morning { background: rgba(56, 189, 248, 0.18); border-color: rgba(56, 189, 248, 0.55); color: #7dd3fc; }
+    .seg-btn.active-btst { background: rgba(245, 158, 11, 0.18); border-color: rgba(245, 158, 11, 0.55); color: #fcd34d; }
+    .seg-btn.active-view { background: var(--surface-3); border-color: rgba(56, 189, 248, 0.4); color: #e2e8f0; }
+    .seg-btn:disabled { opacity: 0.35; cursor: not-allowed; }
 
-    select, input[type="search"], button.ghost-btn {
+    select, input[type="search"], button.btn-ghost {
       background: var(--surface);
       color: var(--text);
       border: 1px solid var(--border);
       border-radius: 8px;
-      padding: 8px 12px;
-      font-size: 0.84rem;
+      padding: 7px 11px;
+      font-size: 0.8rem;
       font-family: inherit;
       outline: none;
       cursor: pointer;
-      transition: all 0.18s ease;
+      transition: border-color 0.15s ease, background 0.15s ease;
     }
-    select:hover, input[type="search"]:hover, button.ghost-btn:hover { border-color: var(--accent); }
-    button.ghost-btn.live-on {
-      border-color: var(--bull);
+    input[type="search"] { cursor: text; min-width: 190px; }
+    select:hover, input[type="search"]:hover, button.btn-ghost:hover { border-color: var(--accent); }
+    input[type="search"]:focus, select:focus { border-color: var(--accent); box-shadow: 0 0 0 2px rgba(56, 189, 248, 0.15); }
+
+    button.btn-ghost.live-on {
+      border-color: rgba(16, 185, 129, 0.55);
       background: rgba(16, 185, 129, 0.12);
       color: #6ee7b7;
       font-weight: 600;
     }
-
-    button.primary {
-      background: linear-gradient(135deg, #0284c7, #2563eb);
-      border: 1px solid #38bdf8;
+    button.btn-primary {
+      background: linear-gradient(135deg, #0284c7, #1d4ed8);
+      border: 1px solid rgba(56, 189, 248, 0.6);
       color: #fff;
       border-radius: 8px;
-      padding: 8px 14px;
-      font-size: 0.84rem;
-      font-weight: 600;
+      padding: 7px 13px;
+      font-size: 0.8rem;
+      font-weight: 700;
       cursor: pointer;
+      transition: transform 0.12s ease, filter 0.15s ease;
+    }
+    button.btn-primary:hover { filter: brightness(1.08); }
+    button.btn-primary:active { transform: scale(0.98); }
+
+    .container { max-width: 1460px; margin: 0 auto; padding: 18px 22px 60px; }
+
+    /* Session Guardrail & Risk Strip */
+    .guardrail-bar {
+      display: grid;
+      grid-template-columns: 1.4fr 1fr;
+      gap: 12px;
+      margin-bottom: 14px;
+    }
+    .guardrail-card {
+      background: var(--surface);
+      border: 1px solid var(--border);
+      border-radius: 12px;
+      padding: 11px 15px;
+      display: flex;
+      flex-direction: column;
+      gap: 5px;
+    }
+    .guardrail-top { display: flex; align-items: center; justify-content: space-between; gap: 8px; flex-wrap: wrap; }
+    .guardrail-title { font-size: 0.78rem; font-weight: 800; letter-spacing: 0.04em; text-transform: uppercase; color: var(--accent); }
+    .guardrail-copy { font-size: 0.8rem; color: #cbd5e1; }
+    .rule-chips { display: flex; flex-wrap: wrap; gap: 6px; margin-top: 2px; }
+    .rule-chip {
+      font-size: 0.7rem;
+      padding: 2px 8px;
+      border-radius: 6px;
+      background: var(--surface-2);
+      border: 1px solid var(--border-soft);
+      color: var(--muted);
+    }
+
+    /* History Ribbon */
+    .history-ribbon {
+      display: flex;
+      align-items: center;
+      gap: 7px;
+      overflow-x: auto;
+      padding-bottom: 8px;
+      margin-bottom: 14px;
+      scrollbar-width: thin;
+    }
+    .pill {
+      white-space: nowrap;
+      padding: 5px 11px;
+      border-radius: 999px;
+      font-size: 0.74rem;
+      font-weight: 600;
+      border: 1px solid var(--border);
+      background: var(--surface);
+      color: var(--muted);
+      cursor: pointer;
+      transition: all 0.14s ease;
+    }
+    .pill:hover { border-color: rgba(56, 189, 248, 0.5); color: var(--text); }
+    .pill.active {
+      background: rgba(56, 189, 248, 0.16);
+      border-color: var(--accent);
+      color: #e0f2fe;
+    }
+
+    /* KPI Grid */
+    .kpi-grid {
+      display: grid;
+      grid-template-columns: repeat(auto-fit, minmax(210px, 1fr));
+      gap: 12px;
+      margin-bottom: 16px;
+    }
+    .kpi {
+      background: linear-gradient(180deg, var(--surface) 0%, #0b111c 100%);
+      border: 1px solid var(--border);
+      border-radius: 12px;
+      padding: 13px 15px;
+      position: relative;
+      overflow: hidden;
+    }
+    .kpi::after {
+      content: "";
+      position: absolute;
+      inset: 0 0 auto 0;
+      height: 2px;
+      background: linear-gradient(90deg, rgba(56, 189, 248, 0.45), transparent);
+    }
+    .kpi-label { font-size: 0.7rem; font-weight: 700; text-transform: uppercase; letter-spacing: 0.06em; color: var(--muted); }
+    .kpi-val { font-size: 1.32rem; font-weight: 800; margin-top: 4px; letter-spacing: -0.02em; }
+    .kpi-sub { font-size: 0.75rem; margin-top: 3px; color: var(--muted); }
+
+    /* Sub-strip: Global Cues & Sectors */
+    .intel-grid {
+      display: grid;
+      grid-template-columns: 1fr 1.4fr;
+      gap: 12px;
+      margin-bottom: 16px;
+    }
+    .intel-box {
+      background: var(--surface);
+      border: 1px solid var(--border);
+      border-radius: 12px;
+      padding: 12px 14px;
+    }
+    .intel-heading { font-size: 0.73rem; font-weight: 800; text-transform: uppercase; letter-spacing: 0.05em; color: var(--muted); margin-bottom: 8px; }
+    .cues-list { display: flex; flex-wrap: wrap; gap: 7px; }
+    .cue-item {
+      background: var(--surface-2);
+      border: 1px solid var(--border-soft);
+      border-radius: 8px;
+      padding: 5px 9px;
+      font-size: 0.74rem;
+      display: inline-flex;
+      align-items: center;
+      gap: 6px;
+    }
+    .sector-chips { display: flex; flex-wrap: wrap; gap: 7px; }
+    .sec-chip {
+      background: var(--surface-2);
+      border: 1px solid var(--border-soft);
+      border-radius: 8px;
+      padding: 5px 9px;
+      font-size: 0.74rem;
       display: inline-flex;
       align-items: center;
       gap: 6px;
     }
 
-    .container { max-width: 1420px; margin: 0 auto; padding: 20px 24px 54px; }
-
-    .history-ribbon {
-      display: flex;
-      align-items: center;
-      gap: 8px;
-      overflow-x: auto;
-      padding-bottom: 10px;
-      margin-bottom: 16px;
-    }
-    .pill {
-      white-space: nowrap;
-      padding: 6px 12px;
-      border-radius: 999px;
-      font-size: 0.78rem;
-      border: 1px solid var(--border);
-      background: var(--surface);
-      color: var(--muted);
-      cursor: pointer;
-    }
-    .pill.active {
-      background: rgba(56, 189, 248, 0.15);
-      border-color: var(--accent);
-      color: var(--text);
-      font-weight: 600;
-    }
-
-    .kpi-grid {
-      display: grid;
-      grid-template-columns: repeat(auto-fit, minmax(205px, 1fr));
-      gap: 14px;
-      margin-bottom: 20px;
-    }
-    .kpi {
-      background: var(--surface);
-      border: 1px solid var(--border);
-      border-radius: 12px;
-      padding: 14px 16px;
-    }
-    .kpi-label { font-size: 0.74rem; text-transform: uppercase; letter-spacing: 0.6px; color: var(--muted); }
-    .kpi-val { font-size: 1.32rem; font-weight: 700; margin-top: 4px; }
-    .kpi-sub { font-size: 0.78rem; margin-top: 3px; color: var(--muted); }
-
-    .pos { color: var(--bull); }
-    .neg { color: var(--bear); }
-    .neu { color: var(--warn); }
-
+    /* Filter & Action Bar */
     .filter-bar {
       background: var(--surface);
       border: 1px solid var(--border);
       border-radius: 12px;
-      padding: 12px 16px;
-      margin-bottom: 20px;
+      padding: 10px 14px;
+      margin-bottom: 18px;
       display: flex;
       flex-wrap: wrap;
       justify-content: space-between;
       align-items: center;
-      gap: 12px;
+      gap: 10px;
     }
-    .tabs { display: flex; flex-wrap: wrap; gap: 8px; }
+    .tabs { display: flex; flex-wrap: wrap; gap: 6px; }
     .tab {
-      padding: 6px 13px;
+      padding: 6px 12px;
       border-radius: 8px;
-      font-size: 0.82rem;
-      font-weight: 600;
+      font-size: 0.78rem;
+      font-weight: 700;
       cursor: pointer;
       border: 1px solid transparent;
       background: transparent;
       color: var(--muted);
+      transition: all 0.14s ease;
     }
+    .tab:hover { color: var(--text); background: var(--surface-2); }
     .tab.active {
-      background: var(--surface-2);
-      border-color: var(--border);
-      color: var(--accent);
+      background: rgba(56, 189, 248, 0.14);
+      border-color: rgba(56, 189, 248, 0.45);
+      color: #7dd3fc;
     }
 
-    .section-title {
-      font-size: 0.95rem;
-      font-weight: 700;
-      margin: 22px 0 12px;
+    /* Sections & Setup Cards */
+    .section-head {
       display: flex;
-      align-items: center;
+      align-items: baseline;
       justify-content: space-between;
-      color: #e2e8f0;
+      gap: 10px;
+      margin: 22px 0 11px;
+      padding-bottom: 6px;
+      border-bottom: 1px solid var(--border-soft);
     }
+    .section-title { font-size: 0.94rem; font-weight: 800; letter-spacing: -0.01em; color: #f8fafc; }
+    .section-sub { font-size: 0.75rem; color: var(--muted); }
 
     .cards-grid {
       display: grid;
-      grid-template-columns: repeat(auto-fill, minmax(365px, 1fr));
-      gap: 16px;
+      grid-template-columns: repeat(auto-fill, minmax(370px, 1fr));
+      gap: 14px;
     }
 
     .card {
-      background: linear-gradient(180deg, var(--surface) 0%, #0d1422 100%);
+      background: linear-gradient(180deg, var(--surface) 0%, #0a101b 100%);
       border: 1px solid var(--border);
       border-radius: 14px;
-      padding: 16px;
+      padding: 15px;
       display: flex;
       flex-direction: column;
-      gap: 12px;
+      gap: 11px;
+      transition: border-color 0.15s ease, transform 0.15s ease;
     }
-    .card-head { display: flex; justify-content: space-between; align-items: flex-start; gap: 8px; }
-    .sym { font-size: 1.12rem; font-weight: 700; }
-    .sector-tag { font-size: 0.72rem; color: var(--muted); margin-top: 2px; }
+    .card:hover { border-color: rgba(56, 189, 248, 0.45); transform: translateY(-1px); }
+
+    .card-top { display: flex; justify-content: space-between; align-items: flex-start; gap: 8px; }
+    .sym { font-size: 1.08rem; font-weight: 800; letter-spacing: -0.01em; }
+    .sub-tags { display: flex; flex-wrap: wrap; align-items: center; gap: 6px; margin-top: 3px; font-size: 0.72rem; color: var(--muted); }
+    .tag-pill {
+      padding: 1px 7px;
+      border-radius: 5px;
+      background: var(--surface-2);
+      border: 1px solid var(--border-soft);
+      color: #cbd5e1;
+      font-weight: 600;
+    }
 
     .badge {
       padding: 4px 9px;
       border-radius: 6px;
-      font-size: 0.72rem;
-      font-weight: 700;
+      font-size: 0.7rem;
+      font-weight: 800;
+      letter-spacing: 0.03em;
+      white-space: nowrap;
     }
-    .badge-bull { background: var(--bull-bg); color: var(--bull); border: 1px solid rgba(16,185,129,0.35); }
-    .badge-bear { background: var(--bear-bg); color: var(--bear); border: 1px solid rgba(244,63,94,0.35); }
+    .badge-bull { background: var(--bull-bg); color: #6ee7b7; border: 1px solid rgba(16,185,129,0.4); }
+    .badge-bear { background: var(--bear-bg); color: #fda4af; border: 1px solid rgba(244,63,94,0.4); }
 
     .levels {
       display: grid;
       grid-template-columns: repeat(4, 1fr);
-      gap: 8px;
-      background: rgba(15, 23, 42, 0.72);
-      border: 1px solid var(--border);
+      gap: 7px;
+      background: rgba(9, 14, 24, 0.78);
+      border: 1px solid var(--border-soft);
       border-radius: 10px;
-      padding: 10px;
+      padding: 9px 10px;
     }
-    .lvl span { display: block; font-size: 0.68rem; color: var(--muted); text-transform: uppercase; }
-    .lvl strong { font-size: 0.88rem; }
+    .lvl span { display: block; font-size: 0.65rem; font-weight: 700; color: var(--muted); text-transform: uppercase; letter-spacing: 0.04em; }
+    .lvl strong { font-size: 0.88rem; font-weight: 700; margin-top: 2px; display: block; }
 
-    .meta-row { display: flex; flex-wrap: wrap; gap: 8px 14px; font-size: 0.78rem; color: var(--muted); }
+    .kv-strip {
+      display: grid;
+      grid-template-columns: repeat(2, 1fr);
+      gap: 6px 12px;
+      font-size: 0.75rem;
+      color: var(--muted);
+      background: rgba(20, 30, 48, 0.45);
+      border-radius: 8px;
+      padding: 8px 10px;
+    }
+    .kv-strip strong { color: #e2e8f0; }
+
     .rationale {
-      font-size: 0.8rem;
+      font-size: 0.78rem;
       color: #cbd5e1;
-      background: rgba(30, 41, 59, 0.45);
+      background: rgba(26, 39, 61, 0.5);
       padding: 9px 11px;
       border-radius: 8px;
       border-left: 3px solid var(--accent);
     }
 
-    .chain-open-btn {
+    .chain-btn {
       width: 100%;
-      padding: 9px 12px;
+      padding: 8px 12px;
       border-radius: 9px;
       border: 1px solid rgba(56, 189, 248, 0.35);
       background: rgba(56, 189, 248, 0.08);
       color: #7dd3fc;
-      font-size: 0.82rem;
+      font-size: 0.78rem;
       font-weight: 700;
       cursor: pointer;
-      transition: 0.15s;
+      transition: background 0.14s ease;
     }
-    .chain-open-btn:hover { background: rgba(56, 189, 248, 0.18); }
+    .chain-btn:hover { background: rgba(56, 189, 248, 0.18); }
 
-    .oc-panel {
-      margin-top: 24px;
+    /* Compact Execution Table View */
+    .exec-table-wrap {
+      overflow-x: auto;
+      border-radius: 12px;
+      border: 1px solid var(--border);
       background: var(--surface);
-      border: 1px solid #2b3f63;
+    }
+    table.exec-table { width: 100%; border-collapse: collapse; font-size: 0.77rem; }
+    table.exec-table th {
+      background: #0a101b;
+      color: var(--muted);
+      font-weight: 700;
+      padding: 9px 10px;
+      border-bottom: 1px solid var(--border);
+      text-align: left;
+      white-space: nowrap;
+    }
+    table.exec-table th.num, table.exec-table td.num { text-align: right; }
+    table.exec-table td {
+      padding: 8px 10px;
+      border-bottom: 1px solid var(--border-soft);
+      white-space: nowrap;
+    }
+    table.exec-table tr:hover td { background: rgba(56, 189, 248, 0.05); }
+
+    /* Option Chain Panel */
+    .oc-panel {
+      margin-top: 26px;
+      background: var(--surface);
+      border: 1px solid #2b4166;
       border-radius: 16px;
       padding: 18px;
       box-shadow: 0 20px 50px rgba(0, 0, 0, 0.45);
@@ -284,32 +453,49 @@
       justify-content: space-between;
       align-items: center;
       gap: 12px;
-      padding-bottom: 14px;
+      padding-bottom: 12px;
       border-bottom: 1px solid var(--border);
-      margin-bottom: 14px;
+      margin-bottom: 12px;
     }
+    .struct-strip {
+      display: grid;
+      grid-template-columns: repeat(auto-fit, minmax(175px, 1fr));
+      gap: 8px;
+      margin-bottom: 12px;
+    }
+    .struct-box {
+      background: var(--surface-2);
+      border: 1px solid var(--border-soft);
+      border-radius: 9px;
+      padding: 8px 10px;
+      font-size: 0.74rem;
+    }
+    .struct-box span { display: block; color: var(--muted); font-size: 0.66rem; text-transform: uppercase; font-weight: 700; }
+    .struct-box strong { font-size: 0.86rem; margin-top: 2px; display: block; }
+
     .legend-strip {
       display: flex;
       flex-wrap: wrap;
-      gap: 10px;
-      margin-bottom: 14px;
-      font-size: 0.76rem;
+      gap: 8px;
+      margin-bottom: 12px;
+      font-size: 0.74rem;
     }
     .box-pill {
-      padding: 4px 10px;
+      padding: 3px 9px;
       border-radius: 6px;
       font-weight: 700;
+      display: inline-block;
     }
-    .box-strong-sup { background: var(--bull-bg); color: #6ee7b7; border: 2px solid var(--bull); }
-    .box-strong-res { background: var(--bear-bg); color: #fda4af; border: 2px solid var(--bear); }
-    .box-weak-sr { background: var(--warn-bg); color: #fde68a; border: 2px solid var(--warn); }
+    .box-strong-sup { background: var(--bull-bg); color: #6ee7b7; border: 1.5px solid var(--bull); }
+    .box-strong-res { background: var(--bear-bg); color: #fda4af; border: 1.5px solid var(--bear); }
+    .box-weak-sr { background: var(--warn-bg); color: #fde68a; border: 1.5px solid var(--warn); }
 
-    .table-wrap { overflow-x: auto; max-height: 460px; overflow-y: auto; border-radius: 10px; border: 1px solid var(--border); }
-    table.oc-table { width: 100%; border-collapse: collapse; font-size: 0.78rem; }
+    .table-wrap { overflow-x: auto; max-height: 450px; overflow-y: auto; border-radius: 10px; border: 1px solid var(--border); }
+    table.oc-table { width: 100%; border-collapse: collapse; font-size: 0.76rem; }
     table.oc-table th {
       position: sticky;
       top: 0;
-      background: #0d1424;
+      background: #0a101b;
       color: var(--muted);
       font-weight: 700;
       padding: 9px 10px;
@@ -319,51 +505,35 @@
     }
     table.oc-table th.center, table.oc-table td.center { text-align: center; }
     table.oc-table td {
-      padding: 8px 10px;
-      border-bottom: 1px solid rgba(31, 45, 71, 0.6);
+      padding: 7px 10px;
+      border-bottom: 1px solid var(--border-soft);
       text-align: right;
       vertical-align: middle;
     }
-    tr.atm-row { background: rgba(56, 189, 248, 0.08); }
+    tr.atm-row { background: rgba(56, 189, 248, 0.09); }
+    .cell-box-green { background: var(--bull-bg) !important; border: 1.5px solid var(--bull) !important; color: #a7f3d0 !important; font-weight: 700; border-radius: 5px; }
+    .cell-box-red { background: var(--bear-bg) !important; border: 1.5px solid var(--bear) !important; color: #fecdd3 !important; font-weight: 700; border-radius: 5px; }
+    .cell-box-yellow { background: var(--warn-bg) !important; border: 1.5px solid var(--warn) !important; color: #fef08a !important; font-weight: 700; border-radius: 5px; }
+    .impact-col { text-align: left !important; min-width: 240px; font-size: 0.74rem; color: #cbd5e1; }
 
-    .cell-box-green {
-      background: var(--bull-bg) !important;
-      border: 2px solid var(--bull) !important;
-      color: #a7f3d0 !important;
-      font-weight: 700;
-      border-radius: 6px;
-    }
-    .cell-box-red {
-      background: var(--bear-bg) !important;
-      border: 2px solid var(--bear) !important;
-      color: #fecdd3 !important;
-      font-weight: 700;
-      border-radius: 6px;
-    }
-    .cell-box-yellow {
-      background: var(--warn-bg) !important;
-      border: 2px solid var(--warn) !important;
-      color: #fef08a !important;
-      font-weight: 700;
-      border-radius: 6px;
-    }
-
-    .impact-col { text-align: left !important; min-width: 240px; font-size: 0.75rem; color: #cbd5e1; }
-    .empty-box { background: var(--surface); border: 1px dashed var(--border); border-radius: 12px; padding: 36px; text-align: center; color: var(--muted); }
+    .empty-box { background: var(--surface); border: 1px dashed var(--border); border-radius: 12px; padding: 30px; text-align: center; color: var(--muted); }
     .wf-banner {
-      margin-top: 24px;
+      margin-top: 20px;
       background: var(--surface);
       border: 1px solid var(--border);
       border-radius: 12px;
-      padding: 14px 18px;
+      padding: 13px 16px;
       display: flex;
       flex-wrap: wrap;
       justify-content: space-between;
       align-items: center;
-      gap: 12px;
-      font-size: 0.83rem;
+      gap: 10px;
+      font-size: 0.8rem;
     }
 
+    @media (max-width: 900px) {
+      .guardrail-bar, .intel-grid { grid-template-columns: 1fr; }
+    }
     @media (max-width: 640px) {
       .cards-grid { grid-template-columns: 1fr; }
       .levels { grid-template-columns: repeat(2, 1fr); }
@@ -373,45 +543,57 @@
 <body>
   <header class="topbar">
     <div class="brand">
-      <div class="brand-dot" id="statusDot"></div>
+      <div class="pulse-ring" id="statusDot"></div>
       <div>
-        <h1 id="deskTitle">Quant &amp; Hedging Desk</h1>
-        <small id="lastUpdated">Loading latest market snapshot...</small>
+        <h1>
+          <span id="deskTitle">Quant &amp; Hedging Desk</span>
+          <span class="mode-chip mono" id="modeChip">LIVE</span>
+        </h1>
+        <small id="lastUpdated">Initializing market execution terminal...</small>
       </div>
     </div>
 
     <div class="controls">
-      <div class="mode-switcher" role="group" aria-label="Screener Mode Switcher">
-        <button type="button" class="mode-btn" id="btnLatest">LATEST</button>
-        <button type="button" class="mode-btn" id="btnMorning">☀ MORNING</button>
-        <button type="button" class="mode-btn" id="btnBtst">🌙 BTST</button>
+      <div class="mode-switcher seg-group" role="group" aria-label="Screener Mode Switcher">
+        <button type="button" class="seg-btn" id="btnLatest">LATEST</button>
+        <button type="button" class="seg-btn" id="btnMorning">☀ MORNING</button>
+        <button type="button" class="seg-btn" id="btnBtst">🌙 BTST</button>
       </div>
 
-      <button type="button" class="ghost-btn live-on" id="liveTickBtn" title="Toggle Live Tick Polling">● LIVE TICK (10s)</button>
+      <div class="seg-group" role="group" aria-label="Display Mode">
+        <button type="button" class="seg-btn active-view" id="viewCardsBtn">Cards</button>
+        <button type="button" class="seg-btn" id="viewTableBtn">Table</button>
+      </div>
+
+      <button type="button" class="btn-ghost live-on" id="liveTickBtn" title="Toggle Live Tick Polling">● LIVE TICK (10s)</button>
 
       <select id="historySelect" title="Select Historical Session">
         <option value="data/latest.json">Latest Run (Fresh)</option>
       </select>
 
-      <button class="primary" id="refreshBtn" type="button">↻ Refresh Data</button>
+      <button class="btn-primary" id="refreshBtn" type="button">↻ Refresh</button>
     </div>
   </header>
 
   <main class="container">
+    <section class="guardrail-bar" id="guardrailBar"></section>
+
     <div class="history-ribbon" id="historyPills"></div>
 
     <section class="kpi-grid" id="kpiGrid"></section>
+
+    <section class="intel-grid" id="intelGrid"></section>
 
     <section class="filter-bar">
       <div class="tabs" id="categoryTabs">
         <button class="tab active" data-tab="ALL">All Setups</button>
         <button class="tab" data-tab="INDEX">Index Ideas</button>
-        <button class="tab" data-tab="OPT_BULL">Options Bullish</button>
-        <button class="tab" data-tab="OPT_BEAR">Options Bearish</button>
-        <button class="tab" data-tab="EQ_INTRA">Equity Intraday</button>
+        <button class="tab" data-tab="OPT_BULL">Stock Options Bull</button>
+        <button class="tab" data-tab="OPT_BEAR">Stock Options Bear</button>
+        <button class="tab" data-tab="EQ_INTRA">Intraday Equity (10)</button>
       </div>
       <div class="controls">
-        <select id="sectorFilter">
+        <select id="sectorFilter" title="Filter by Sector">
           <option value="ALL">All Sectors</option>
         </select>
         <input type="search" id="searchInput" placeholder="Search symbol (e.g. NIFTY, RELIANCE)..." />
@@ -423,14 +605,16 @@
     <section class="oc-panel" id="optionChainPanel">
       <div class="oc-header">
         <div>
-          <h2 id="ocTitle" style="font-size:1.05rem;">Live Option Chain — Select an Index or Stock</h2>
+          <h2 id="ocTitle" style="font-size:1.02rem; font-weight:800;">Live Option Chain &amp; Structural Levels</h2>
           <small id="ocMeta" style="color:var(--muted);">OI Change, Contracts Added, % Change &amp; Support/Resistance Impact</small>
         </div>
         <div class="controls">
           <select id="ocSymbolSelect" title="Select Symbol for Live Option Chain"></select>
-          <span class="mono" id="ocTickClock" style="font-size:0.78rem; color:var(--accent);">Tick: —</span>
+          <span class="mono" id="ocTickClock" style="font-size:0.76rem; color:var(--accent);">Tick: —</span>
         </div>
       </div>
+
+      <div class="struct-strip" id="ocStructStrip"></div>
 
       <div class="legend-strip">
         <span class="box-pill box-strong-sup">🟢 Strong Support (Green Box)</span>
@@ -447,6 +631,7 @@
     let currentPayload = null;
     let allSnapshots = [];
     let activeTab = 'ALL';
+    let viewMode = 'CARDS';
     let selectedFile = 'data/latest.json';
     let selectedDate = null;
     let selectedChainSymbol = null;
@@ -508,9 +693,9 @@
       btnMorning.disabled = !morningFile;
       btnBtst.disabled = !btstFile;
 
-      btnLatest.className = 'mode-btn' + (selectedFile === 'data/latest.json' ? ' active-latest' : '');
-      btnMorning.className = 'mode-btn' + (activeMode === 'MORNING' && selectedFile !== 'data/latest.json' ? ' active-morning' : '');
-      btnBtst.className = 'mode-btn' + (activeMode === 'BTST' && selectedFile !== 'data/latest.json' ? ' active-btst' : '');
+      btnLatest.className = 'seg-btn' + (selectedFile === 'data/latest.json' ? ' active-latest' : '');
+      btnMorning.className = 'seg-btn' + (activeMode === 'MORNING' && selectedFile !== 'data/latest.json' ? ' active-morning' : '');
+      btnBtst.className = 'seg-btn' + (activeMode === 'BTST' && selectedFile !== 'data/latest.json' ? ' active-btst' : '');
 
       if (selectedFile === 'data/latest.json') {
         if (activeMode === 'MORNING') btnMorning.classList.add('active-morning');
@@ -535,7 +720,7 @@
           opt.textContent = `${snap.date} [${snap.mode}] — ${snap.ideas_count} Ideas (${snap.breadth_tone})`;
           sel.appendChild(opt);
 
-          if (!seenDates.has(snap.date) && seenDates.size < 12) {
+          if (!seenDates.has(snap.date) && seenDates.size < 14) {
             seenDates.add(snap.date);
             const btn = document.createElement('button');
             btn.className = `pill ${selectedFile === snap.file ? 'active' : ''}`;
@@ -575,7 +760,7 @@
 
     async function loadSnapshot(filePath, isBackgroundTick = false) {
       const btn = document.getElementById('refreshBtn');
-      if (!isBackgroundTick) btn.textContent = '↻ Refreshing...';
+      if (!isBackgroundTick) btn.textContent = '↻ Loading...';
       try {
         const data = await fetchJsonNoCache(filePath);
         currentPayload = data;
@@ -589,14 +774,14 @@
         if (!isBackgroundTick) {
           document.getElementById('contentArea').innerHTML = `
             <div class="empty-box">
-              <h3>Data snapshot not found yet (${filePath})</h3>
-              <p style="margin-top:6px;">Run the GitHub Actions screener workflow once to generate <code>docs/data/latest.json</code> and daily history archives.</p>
+              <h3>Snapshot not published yet (${filePath})</h3>
+              <p style="margin-top:6px;">Trigger the GitHub Actions screener workflow to generate <code>docs/data/latest.json</code> and history snapshots.</p>
             </div>`;
-          document.getElementById('ocBody').innerHTML = `<div class="empty-box">Live option chain feed not published yet for <code>${filePath}</code>.</div>`;
+          document.getElementById('ocBody').innerHTML = `<div class="empty-box">Option chain feed unavailable until snapshot generation completes.</div>`;
         }
         updateModeButtons('');
       } finally {
-        if (!isBackgroundTick) btn.textContent = '↻ Refresh Data';
+        if (!isBackgroundTick) btn.textContent = '↻ Refresh';
       }
     }
 
@@ -605,7 +790,7 @@
       const sectors = Array.from(new Set(allItems.map(x => x.sector).filter(Boolean))).sort();
       const sel = document.getElementById('sectorFilter');
       const prev = sel.value;
-      sel.innerHTML = `<option value="ALL">All Sectors</option>` +
+      sel.innerHTML = `<option value="ALL">All Sectors (${sectors.length})</option>` +
         sectors.map(s => `<option value="${s}">${s}</option>`).join('');
       if (sectors.includes(prev)) sel.value = prev;
 
@@ -624,10 +809,12 @@
       const item = allItems.find(x => x.symbol === selectedChainSymbol) || allItems[0];
       const titleEl = document.getElementById('ocTitle');
       const metaEl = document.getElementById('ocMeta');
+      const structEl = document.getElementById('ocStructStrip');
       const bodyEl = document.getElementById('ocBody');
 
       if (!item) {
-        titleEl.textContent = 'Live Option Chain';
+        titleEl.textContent = 'Live Option Chain & Structural Levels';
+        structEl.innerHTML = '';
         bodyEl.innerHTML = `<div class="empty-box">No instruments available in this snapshot.</div>`;
         return;
       }
@@ -641,19 +828,37 @@
         Expiry: <strong class="mono">${fmtNum(item.option_expiry || cs.expiry)}</strong> •
         PCR: <strong class="mono">${fmtNum(cs.pcr)}</strong> •
         OI Build-up: <strong class="mono">${fmtNum(cs.oi_build_up)}</strong> •
-        Max Pain: <strong class="mono">${fmtNum(cs.max_pain)}</strong> •
-        Support: <strong class="pos mono">${fmtNum(cs.support_strike)}</strong> (${fmtNum(ca.support_shift)} ${fmtNum(ca.support_shift_pct)}%) •
-        Resistance: <strong class="neg mono">${fmtNum(cs.resistance_strike)}</strong> (${fmtNum(ca.resistance_shift)} ${fmtNum(ca.resistance_shift_pct)}%) •
-        EOS: <strong class="mono">${fmtNum(ca.eos)}</strong> •
-        EOR: <strong class="mono">${fmtNum(ca.eor)}</strong> •
-        State: <strong class="mono">${fmtNum(ca.sentiment_state)}</strong>
+        Max Pain: <strong class="mono">${fmtNum(cs.max_pain)}</strong>
+      `;
+
+      structEl.innerHTML = `
+        <div class="struct-box">
+          <span>Market Regime State</span>
+          <strong class="mono">${fmtNum(ca.sentiment_state)}</strong>
+        </div>
+        <div class="struct-box">
+          <span>Strong / Weak Support</span>
+          <strong class="pos mono">${fmtNum(ca.strong_support)} / ${fmtNum(ca.weak_support)} (${fmtNum(ca.support_shift)} ${fmtNum(ca.support_shift_pct)}%)</strong>
+        </div>
+        <div class="struct-box">
+          <span>Strong / Weak Resistance</span>
+          <strong class="neg mono">${fmtNum(ca.strong_resistance)} / ${fmtNum(ca.weak_resistance)} (${fmtNum(ca.resistance_shift)} ${fmtNum(ca.resistance_shift_pct)}%)</strong>
+        </div>
+        <div class="struct-box">
+          <span>EOS (±1 Divergence)</span>
+          <strong class="pos mono">${fmtNum(ca.eos)} <small class="muted">(${fmtNum(ca.eos_minus_1)} / ${fmtNum(ca.eos_plus_1)})</small></strong>
+        </div>
+        <div class="struct-box">
+          <span>EOR (±1 Divergence)</span>
+          <strong class="neg mono">${fmtNum(ca.eor)} <small class="muted">(${fmtNum(ca.eor_minus_1)} / ${fmtNum(ca.eor_plus_1)})</small></strong>
+        </div>
       `;
 
       if (!rows.length) {
         bodyEl.innerHTML = `
           <div class="empty-box">
-            <strong>Option chain strike rows not available in this run for ${item.symbol}.</strong>
-            <p style="margin-top:6px; font-size:0.82rem;">Ensure Upstox option chain feed returns strikes for ${item.symbol} and re-run the workflow.</p>
+            <strong>Option chain strike rows unavailable for ${item.symbol} in this run.</strong>
+            <p style="margin-top:6px; font-size:0.78rem;">Verify live F&amp;O contract mapping and market-hours Upstox feed for ${item.symbol}.</p>
           </div>`;
         return;
       }
@@ -675,7 +880,7 @@
           ? '<span class="box-pill box-weak-sr">WEAK SUPPORT / SHIFT</span>'
           : r.zone_role === 'WEAK_RESISTANCE'
           ? '<span class="box-pill box-weak-sr">WEAK RESISTANCE / SHIFT</span>'
-          : '<span style="color:var(--muted);">—</span>';
+          : '<span class="muted">—</span>';
 
         return `
           <tr class="mono ${r.is_atm ? 'atm-row' : ''}">
@@ -726,16 +931,24 @@
     function renderCard(item, tagLabel) {
       const isBull = String(item.side || '').toUpperCase().includes('BULL') || String(item.action || '').toUpperCase().includes('BUY');
       const badgeCls = isBull ? 'badge-bull' : 'badge-bear';
-      const oiHtml = item.oi_target ? `<span>OI Target: <strong class="mono">${item.oi_target}</strong></span>` : '';
-      const vwapHtml = item.vwap ? `<span>VWAP: <strong class="mono">${item.vwap}</strong></span>` : '';
-      const extHtml = item.extension_status ? `<span>Timing: <strong class="mono">${item.extension_status}</strong></span>` : '';
+      const optPlan = item.option_plan || {};
+      const planText = optPlan.strategy_name || optPlan.summary || (item.equity_bucket || 'Cash / Intraday Execution');
+      const rngVal = item.avg_range_rs ? `₹${item.avg_range_rs}` : '—';
 
       return `
         <article class="card">
-          <div class="card-head">
+          <div class="card-top">
             <div>
-              <div class="sym mono">${item.symbol} <span class="${chgClass(item.change_pct)}" style="font-size:0.85rem;">(${item.change_pct >= 0 ? '+' : ''}${fmtNum(item.change_pct)}%)</span></div>
-              <div class="sector-tag">${item.sector || 'EQUITY'} • ${tagLabel} • Score: <strong class="mono">${fmtNum(item.score)}</strong></div>
+              <div class="sym mono">
+                ${item.symbol}
+                <span class="${chgClass(item.change_pct)}" style="font-size:0.84rem; margin-left:4px;">(${item.change_pct >= 0 ? '+' : ''}${fmtNum(item.change_pct)}%)</span>
+              </div>
+              <div class="sub-tags">
+                <span class="tag-pill">${item.sector || 'EQUITY'}</span>
+                <span class="tag-pill">${tagLabel}</span>
+                <span>Score: <strong class="mono">${fmtNum(item.score)}</strong></span>
+                ${item.avg_range_rs ? `<span>AvgRng: <strong class="mono">${rngVal}</strong></span>` : ''}
+              </div>
             </div>
             <span class="badge ${badgeCls}">${item.side || 'SETUP'}</span>
           </div>
@@ -747,31 +960,108 @@
             <div class="lvl"><span>Target 2</span><strong class="pos">${fmtNum(item.target_2)}</strong></div>
           </div>
 
-          <div class="meta-row">
-            <span>Best Zone: <strong class="mono">${fmtNum(item.best_entry_low)}–${fmtNum(item.best_entry_high)}</strong></span>
-            ${vwapHtml}
-            ${oiHtml}
-            <span>Qty: <strong class="mono">${fmtNum(item.qty)}</strong></span>
-            ${extHtml}
+          <div class="kv-strip">
+            <div>Best Zone: <strong class="mono">${fmtNum(item.best_entry_low)}–${fmtNum(item.best_entry_high)}</strong></div>
+            <div>VWAP / OI Tgt: <strong class="mono">${fmtNum(item.vwap)} / ${fmtNum(item.oi_target)}</strong></div>
+            <div>Qty / Sizing: <strong class="mono">${fmtNum(item.qty)}</strong></div>
+            <div>Timing: <strong class="mono">${fmtNum(item.extension_status)}</strong></div>
+            <div style="grid-column: 1 / -1;">Execution Plan: <strong>${fmtNum(planText)}</strong></div>
           </div>
 
           <div class="rationale">${item.why_trade || item.entry_action || 'Systematic technical & relative strength alignment.'}</div>
 
-          <button type="button" class="chain-open-btn" onclick="openChainForSymbol('${item.symbol}')">
-            📊 View Live Option Chain &amp; S/R Boxes (${item.symbol})
+          <button type="button" class="chain-btn" onclick="openChainForSymbol('${item.symbol}')">
+            📊 Inspect Option Chain &amp; S/R Zones (${item.symbol})
           </button>
         </article>`;
+    }
+
+    function renderExecutionTable(items, tagLabel) {
+      const rows = items.map(item => {
+        const isBull = String(item.side || '').toUpperCase().includes('BULL');
+        return `
+          <tr class="mono">
+            <td><strong>${item.symbol}</strong> <span class="muted" style="font-size:0.7rem;">(${item.sector || 'EQ'})</span></td>
+            <td><span class="badge ${isBull ? 'badge-bull' : 'badge-bear'}">${item.side || tagLabel}</span></td>
+            <td class="num ${chgClass(item.change_pct)}">${item.change_pct >= 0 ? '+' : ''}${fmtNum(item.change_pct)}%</td>
+            <td class="num">${fmtNum(item.entry)}</td>
+            <td class="num neg">${fmtNum(item.stop_loss)}</td>
+            <td class="num pos">${fmtNum(item.target_1)}</td>
+            <td class="num pos">${fmtNum(item.target_2)}</td>
+            <td class="num">${fmtNum(item.oi_target)}</td>
+            <td class="num">${item.avg_range_rs ? '₹' + item.avg_range_rs : '—'}</td>
+            <td class="num">${fmtNum(item.qty)}</td>
+            <td>${fmtNum(item.extension_status)}</td>
+            <td><button type="button" class="btn-ghost" style="padding:3px 8px; font-size:0.72rem;" onclick="openChainForSymbol('${item.symbol}')">Chain</button></td>
+          </tr>`;
+      }).join('');
+
+      return `
+        <div class="exec-table-wrap">
+          <table class="exec-table">
+            <thead>
+              <tr>
+                <th>Symbol</th>
+                <th>Side</th>
+                <th class="num">Chg%</th>
+                <th class="num">Entry</th>
+                <th class="num">Stop Loss</th>
+                <th class="num">Target 1</th>
+                <th class="num">Target 2</th>
+                <th class="num">OI Target</th>
+                <th class="num">Avg Rng</th>
+                <th class="num">Qty</th>
+                <th>Timing</th>
+                <th>Action</th>
+              </tr>
+            </thead>
+            <tbody>${rows}</tbody>
+          </table>
+        </div>`;
     }
 
     function renderDashboard(data) {
       const s = data.summary || {};
       const sg = data.session_guardrails || {};
-      document.getElementById('deskTitle').textContent = `${data.title || 'Quant & Hedging Desk'} [${data.mode || 'LIVE'}]`;
+      const modeStr = String(data.mode || 'LIVE').toUpperCase();
+
+      document.getElementById('deskTitle').textContent = data.title || 'Quant & Hedging Desk';
+      const chip = document.getElementById('modeChip');
+      chip.textContent = modeStr;
+      chip.className = 'mode-chip mono' + (modeStr === 'BTST' ? ' btst' : '');
+
       document.getElementById('lastUpdated').textContent =
-        `Session: ${data.session_date || '—'} • Mode: ${data.mode || '—'} • ${sg.window_status ? sg.window_status + ' • ' : ''}Generated: ${data.generated_at_ist || '—'} • Feed: ${s.data_source || '—'}`;
+        `Session ${data.session_date || '—'} • Generated ${data.generated_at_ist || '—'} • Feed: ${s.data_source || '—'}`;
 
       const tone = String(s.breadth_tone || 'MIXED').toUpperCase();
       document.getElementById('statusDot').style.background = tone === 'BULLISH' ? 'var(--bull)' : (tone === 'BEARISH' ? 'var(--bear)' : 'var(--warn)');
+
+      const rulesHtml = (sg.rules || []).slice(0, 3).map(r => `<span class="rule-chip">${r}</span>`).join('');
+      const capText = s.capital_configured
+        ? `Capital: ₹${fmtInt(s.capital)} • Risk/Trade: ${fmtNum(s.risk_pct)}%`
+        : `Capital: Not Configured (1-Lot / Baseline Sizing) • Risk/Trade: ${fmtNum(s.risk_pct)}%`;
+
+      document.getElementById('guardrailBar').innerHTML = `
+        <div class="guardrail-card">
+          <div class="guardrail-top">
+            <span class="guardrail-title">Session Guardrail: ${fmtNum(sg.window_status || 'STANDARD SESSION')}</span>
+            <span class="mono muted" style="font-size:0.72rem;">9:15–9:25 Calib • 2:30 PM Cutoff</span>
+          </div>
+          <div class="guardrail-copy">${fmtNum(sg.window_note || 'Monitor WTT/WTB shifts and EOS/EOR boundaries before entry.')}</div>
+          <div class="rule-chips">${rulesHtml}</div>
+        </div>
+        <div class="guardrail-card">
+          <div class="guardrail-top">
+            <span class="guardrail-title">Risk &amp; Allocation Desk</span>
+            <span class="mono muted" style="font-size:0.72rem;">Zero Option/Equity Overlap</span>
+          </div>
+          <div class="guardrail-copy mono">${capText}</div>
+          <div class="rule-chips">
+            <span class="rule-chip">Stock Options: Top 5 Bull / 5 Bear</span>
+            <span class="rule-chip">Intraday Equity: 10 Dedicated (₹20–₹50 Range Focus)</span>
+          </div>
+        </div>
+      `;
 
       document.getElementById('kpiGrid').innerHTML = `
         <div class="kpi">
@@ -795,9 +1085,41 @@
           <div class="kpi-sub mono">${fmtNum(s.breadth_ratio)} • &gt;EMA20: ${fmtNum(s.above_ema20)}%</div>
         </div>
         <div class="kpi">
-          <div class="kpi-label">Active Ideas (${data.mode || 'RUN'})</div>
+          <div class="kpi-label">Active Ideas (${modeStr})</div>
           <div class="kpi-val mono">${fmtNum(s.ideas_count)}</div>
-          <div class="kpi-sub">Stock Setups: ${fmtNum(s.stock_setups_count)}</div>
+          <div class="kpi-sub">Options + 10 Intraday Eq: ${fmtNum(s.stock_setups_count)}</div>
+        </div>
+      `;
+
+      const cues = Array.isArray(data.global_cues) ? data.global_cues : [];
+      const cuesHtml = cues.length
+        ? cues.slice(0, 8).map(c => {
+            const name = c.name || c.symbol || 'Cue';
+            const val = c.price || c.last || c.value || '';
+            const chg = c.change_pct !== undefined ? `${Number(c.change_pct) >= 0 ? '+' : ''}${c.change_pct}%` : (c.change || '');
+            return `<span class="cue-item mono"><span>${name}</span><strong>${fmtNum(val)}</strong><span class="${chgClass(chg)}">${fmtNum(chg)}</span></span>`;
+          }).join('')
+        : `<span class="muted" style="font-size:0.76rem;">Global cues feed unavailable in this snapshot.</span>`;
+
+      const sectorsArr = Array.isArray(data.sectors)
+        ? data.sectors
+        : Object.entries(data.sectors || {}).map(([k, v]) => ({ sector: k, ...(typeof v === 'object' ? v : { score: v }) }));
+      const secHtml = sectorsArr.length
+        ? sectorsArr.slice(0, 10).map(secObj => {
+            const sName = secObj.sector || secObj.name || 'SECTOR';
+            const sVal = secObj.avg_change_pct !== undefined ? `${Number(secObj.avg_change_pct) >= 0 ? '+' : ''}${Number(secObj.avg_change_pct).toFixed(2)}%` : fmtNum(secObj.score);
+            return `<span class="sec-chip mono"><span>${sName}</span><strong class="${chgClass(sVal)}">${sVal}</strong></span>`;
+          }).join('')
+        : `<span class="muted" style="font-size:0.76rem;">Sector rotation metrics unavailable.</span>`;
+
+      document.getElementById('intelGrid').innerHTML = `
+        <div class="intel-box">
+          <div class="intel-heading">Global Macro &amp; Overnight Cues</div>
+          <div class="cues-list">${cuesHtml}</div>
+        </div>
+        <div class="intel-box">
+          <div class="intel-heading">Sector Strength &amp; Rotation</div>
+          <div class="sector-chips">${secHtml}</div>
         </div>
       `;
 
@@ -812,40 +1134,44 @@
       });
 
       const sections = [
-        { key: 'INDEX', title: 'Index Option & Hedging Ideas', tag: 'INDEX', items: filterFn(data.index_trades) },
-        { key: 'OPT_BULL', title: 'Options Bullish Candidates (Top 5)', tag: 'OPT BULL', items: filterFn(data.options_bullish || (data.setups || {}).bullish) },
-        { key: 'OPT_BEAR', title: 'Options Bearish Candidates (Top 5)', tag: 'OPT BEAR', items: filterFn(data.options_bearish || (data.setups || {}).bearish) },
-        { key: 'EQ_INTRA', title: 'Equity Intraday / Swing Setups', tag: 'EQUITY', items: filterFn(data.equity_intraday) },
+        { key: 'INDEX', title: 'Index Option & Hedging Desk', sub: 'NIFTY • BANKNIFTY • FINNIFTY • SENSEX', tag: 'INDEX', items: filterFn(data.index_trades) },
+        { key: 'OPT_BULL', title: 'Stock Options — Bullish Candidates', sub: 'High-conviction CE / Bull Spread setups', tag: 'OPT BULL', items: filterFn(data.options_bullish || (data.setups || {}).bullish) },
+        { key: 'OPT_BEAR', title: 'Stock Options — Bearish Candidates', sub: 'High-conviction PE / Bear Spread setups', tag: 'OPT BEAR', items: filterFn(data.options_bearish || (data.setups || {}).bearish) },
+        { key: 'EQ_INTRA', title: `Intraday Equity Basket (${modeStr})`, sub: '10 Non-Overlapping Stocks • ₹20–₹50 Daily Range Priority', tag: 'EQ INTRA', items: filterFn(data.equity_intraday) },
       ].filter(secObj => activeTab === 'ALL' || activeTab === secObj.key);
 
       let html = '';
-      if (sg.window_note) {
-        html += `<div class="rationale" style="margin-bottom:14px;"><strong>${fmtNum(sg.window_status)}:</strong> ${fmtNum(sg.window_note)}</div>`;
-      }
       sections.forEach(secObj => {
         if (!secObj.items.length) return;
+        const bodyContent = viewMode === 'TABLE'
+          ? renderExecutionTable(secObj.items, secObj.tag)
+          : `<div class="cards-grid">${secObj.items.map(i => renderCard(i, secObj.tag)).join('')}</div>`;
         html += `
-          <div class="section-title">
-            <span>${secObj.title}</span>
-            <span class="mono" style="font-size:0.8rem; color:var(--muted);">${secObj.items.length} setups</span>
+          <div class="section-head">
+            <div>
+              <div class="section-title">${secObj.title}</div>
+              <div class="section-sub">${secObj.sub}</div>
+            </div>
+            <span class="mono muted" style="font-size:0.78rem;">${secObj.items.length} setups</span>
           </div>
-          <div class="cards-grid">${secObj.items.map(i => renderCard(i, secObj.tag)).join('')}</div>`;
+          ${bodyContent}`;
       });
 
-      document.getElementById('contentArea').innerHTML = html || `<div class="empty-box">No setups match the selected filter/date criteria.</div>`;
+      document.getElementById('contentArea').innerHTML = html || `<div class="empty-box">No setups match the active tab, sector, or symbol search filter.</div>`;
       renderOptionChainPanel(data);
 
       const wf = data.walk_forward || {};
       const costsVal = wf.total_costs !== undefined ? wf.total_costs : (wf.total_est_charges || 0);
       document.getElementById('wfBanner').innerHTML = `
         <div>
-          <strong>Walk-Forward Ledger:</strong> Closed Trades: <span class="mono">${fmtNum(wf.closed_trades)}</span> •
+          <strong>Walk-Forward Audit Ledger:</strong>
+          Closed: <span class="mono">${fmtNum(wf.closed_trades)}</span> •
           Win Rate: <span class="mono">${wf.net_win_rate_pct !== null && wf.net_win_rate_pct !== undefined ? wf.net_win_rate_pct + '%' : 'N/A'}</span> •
-          Costs: <span class="mono">₹${fmtNum(costsVal)}</span> •
+          Est. Charges: <span class="mono">₹${fmtNum(costsVal)}</span> •
           Net P&amp;L: <span class="mono">₹${fmtNum(wf.total_net_pnl)}</span> •
-          Max DD: <span class="mono">₹${fmtNum(wf.max_drawdown_net_pnl)}</span>
+          Max Drawdown: <span class="mono">₹${fmtNum(wf.max_drawdown_net_pnl)}</span>
         </div>
-        <div style="color:var(--warn); font-size:0.78rem;">${wf.sample_warning || ''}</div>
+        <div class="neu" style="font-size:0.75rem;">${wf.sample_warning || 'Research & risk-management analytics only; not guaranteed performance.'}</div>
       `;
     }
 
@@ -856,6 +1182,20 @@
         await loadSnapshot(selectedFile, true);
       }, 10000);
     }
+
+    document.getElementById('viewCardsBtn').addEventListener('click', () => {
+      viewMode = 'CARDS';
+      document.getElementById('viewCardsBtn').classList.add('active-view');
+      document.getElementById('viewTableBtn').classList.remove('active-view');
+      if (currentPayload) renderDashboard(currentPayload);
+    });
+
+    document.getElementById('viewTableBtn').addEventListener('click', () => {
+      viewMode = 'TABLE';
+      document.getElementById('viewTableBtn').classList.add('active-view');
+      document.getElementById('viewCardsBtn').classList.remove('active-view');
+      if (currentPayload) renderDashboard(currentPayload);
+    });
 
     document.getElementById('liveTickBtn').addEventListener('click', (e) => {
       liveTickEnabled = !liveTickEnabled;
