@@ -1,3 +1,4 @@
+import asyncio
 import datetime as dt
 import inspect
 import json
@@ -13,6 +14,15 @@ from urllib.parse import quote
 import pandas as pd
 import requests
 import yfinance as yf
+
+try:
+    from mcp import ClientSession
+    from mcp.client.streamable_http import streamablehttp_client
+    _MCP_AVAILABLE = True
+except Exception:
+    ClientSession = None  # type: ignore[assignment]
+    streamablehttp_client = None  # type: ignore[assignment]
+    _MCP_AVAILABLE = False
 
 from chain import analyze_chain
 from config import (
@@ -53,6 +63,16 @@ UPSTOX_ACCESS_TOKEN = (
 ).strip()
 UPSTOX_BASE_V2 = "https://api.upstox.com/v2"
 
+NSE_BHAVCOPY_MCP_URL = os.getenv(
+    "NSE_BHAVCOPY_MCP_URL",
+    "https://mcp.nseindia.in/bhavcopy/cm/mcp",
+).strip()
+NSE_CM_MARKET_MCP_URL = os.getenv(
+    "NSE_CM_MARKET_MCP_URL",
+    "https://mcp.nseindia.in/cmmkt/mcp",
+).strip()
+ENABLE_NSE_MCP = os.getenv("ENABLE_NSE_MCP", "true").strip().lower() in {"1", "true", "yes"}
+
 _YF_CACHE_DIR = os.path.join(tempfile.gettempdir(), "py-yfinance")
 os.makedirs(_YF_CACHE_DIR, exist_ok=True)
 try:
@@ -71,6 +91,7 @@ YF_SYMBOL_MAP = {
 _BSE_SET = set(BSE_STOCKS_UNIVERSE)
 _WARNED_UPSTOX_KEYS: set[str] = set()
 _WARNED_YF_COUNT = 0
+_WARNED_MCP_COUNT = 0
 
 
 def _yf_ticker(sym: str) -> str:
@@ -126,6 +147,147 @@ def _compute_avg_daily_range_rs(df: pd.DataFrame, lookback: int = 14) -> float:
         return 0.0
     val = float(rng.tail(max(int(lookback), 1)).mean())
     return round(val, 2) if pd.notna(val) else 0.0
+
+
+def _parse_mcp_tool_result(result: Any) -> Any:
+    if result is None:
+        return None
+    structured = getattr(result, "structuredContent", None)
+    if structured:
+        return structured
+    for block in (getattr(result, "content", None) or []):
+        txt = getattr(block, "text", None)
+        if txt:
+            try:
+                return json.loads(txt)
+            except Exception:
+                return txt
+    return None
+
+
+async def _call_nse_mcp_tool_async(url: str, tool_name: str, arguments: dict[str, Any]) -> Any:
+    async with streamablehttp_client(url) as (read_stream, write_stream, _):
+        async with ClientSession(read_stream, write_stream) as session:
+            await session.initialize()
+            res = await session.call_tool(tool_name, arguments=arguments)
+            return _parse_mcp_tool_result(res)
+
+
+def call_nse_mcp_tool(url: str, tool_name: str, arguments: dict[str, Any] | None = None) -> Any:
+    global _WARNED_MCP_COUNT
+    if not ENABLE_NSE_MCP or not _MCP_AVAILABLE or not url:
+        return None
+    args = arguments or {}
+    try:
+        return asyncio.run(
+            asyncio.wait_for(_call_nse_mcp_tool_async(url, tool_name, args), timeout=15.0)
+        )
+    except RuntimeError:
+        loop = asyncio.new_event_loop()
+        try:
+            return loop.run_until_complete(
+                asyncio.wait_for(_call_nse_mcp_tool_async(url, tool_name, args), timeout=15.0)
+            )
+        except Exception as exc:
+            if _WARNED_MCP_COUNT < 5:
+                _WARNED_MCP_COUNT += 1
+                logging.debug("NSE MCP call failed (%s): %s", tool_name, exc)
+            return None
+        finally:
+            loop.close()
+    except Exception as exc:
+        if _WARNED_MCP_COUNT < 5:
+            _WARNED_MCP_COUNT += 1
+            logging.debug("NSE MCP call failed (%s): %s", tool_name, exc)
+        return None
+
+
+def _extract_rows_from_mcp_payload(payload: Any) -> list[dict[str, Any]]:
+    if isinstance(payload, list):
+        return [r for r in payload if isinstance(r, dict)]
+    if isinstance(payload, dict):
+        for key in ("data", "records", "candles", "history", "rows", "items", "result"):
+            val = payload.get(key)
+            if isinstance(val, list):
+                return [r for r in val if isinstance(r, dict)]
+    return []
+
+
+def _fetch_nse_mcp_bhavcopy_1y(symbol: str) -> pd.DataFrame | None:
+    if not ENABLE_NSE_MCP or not _MCP_AVAILABLE or symbol in _BSE_SET:
+        return None
+    if symbol in {"NIFTY", "BANKNIFTY", "FINNIFTY", "SENSEX"}:
+        return None
+
+    end_dt = dt.datetime.now(IST).date()
+    start_dt = end_dt - dt.timedelta(days=370)
+    cur_end = end_dt
+    all_rows: list[dict[str, Any]] = []
+
+    for _ in range(5):
+        chunk_start = max(start_dt, cur_end - dt.timedelta(days=89))
+        data = call_nse_mcp_tool(
+            NSE_BHAVCOPY_MCP_URL,
+            "get_stock_history",
+            {
+                "symbol": symbol,
+                "startDate": chunk_start.isoformat(),
+                "endDate": cur_end.isoformat(),
+            },
+        )
+        rows = _extract_rows_from_mcp_payload(data)
+        if not rows:
+            break
+        all_rows.extend(rows)
+
+        next_end_str = None
+        if isinstance(data, dict):
+            next_end_str = data.get("next_end_date") or data.get("nextEndDate")
+        if next_end_str:
+            try:
+                cur_end = dt.date.fromisoformat(str(next_end_str)[:10])
+            except Exception:
+                cur_end = chunk_start - dt.timedelta(days=1)
+        else:
+            cur_end = chunk_start - dt.timedelta(days=1)
+
+        if cur_end <= start_dt:
+            break
+
+    if not all_rows:
+        return None
+
+    norm_rows = []
+    for r in all_rows:
+        dt_val = r.get("Date") or r.get("date") or r.get("CH_TIMESTAMP") or r.get("timestamp")
+        o_val = r.get("Open") if r.get("Open") is not None else (r.get("open") if r.get("open") is not None else r.get("CH_OPENING_PRICE"))
+        h_val = r.get("High") if r.get("High") is not None else (r.get("high") if r.get("high") is not None else r.get("CH_TRADE_HIGH_PRICE"))
+        l_val = r.get("Low") if r.get("Low") is not None else (r.get("low") if r.get("low") is not None else r.get("CH_TRADE_LOW_PRICE"))
+        c_val = r.get("Close") if r.get("Close") is not None else (r.get("close") if r.get("close") is not None else r.get("CH_CLOSING_PRICE"))
+        v_val = r.get("Volume") if r.get("Volume") is not None else (r.get("volume") if r.get("volume") is not None else r.get("CH_TOT_TRADED_QTY"))
+        if dt_val and c_val is not None:
+            norm_rows.append({
+                "Date": str(dt_val)[:10],
+                "Open": o_val if o_val is not None else c_val,
+                "High": h_val if h_val is not None else c_val,
+                "Low": l_val if l_val is not None else c_val,
+                "Close": c_val,
+                "Volume": v_val if v_val is not None else 0,
+            })
+
+    cleaned = clean_ohlcv(pd.DataFrame(norm_rows))
+    if cleaned is not None and len(cleaned) >= 20:
+        return cleaned
+    return None
+
+
+def _fetch_nse_mcp_live_snapshot() -> dict[str, Any]:
+    if not ENABLE_NSE_MCP or not _MCP_AVAILABLE or not NSE_CM_MARKET_MCP_URL:
+        return {}
+    live_data = call_nse_mcp_tool(NSE_CM_MARKET_MCP_URL, "cm_get_live_market_data", {})
+    if isinstance(live_data, dict):
+        return live_data
+    return {}
 
 
 def _fetch_upstox_1y(instrument_key: str, symbol: str = "") -> pd.DataFrame | None:
@@ -224,13 +386,17 @@ def load_candles_1y() -> tuple[dict[str, pd.DataFrame], str]:
     keys = eq_keys()
     candles: dict[str, pd.DataFrame] = {}
     upstox_hits = 0
+    mcp_hits = 0
 
     def _worker(sym: str):
         df = _fetch_upstox_1y(keys.get(sym, ""), symbol=sym)
         if df is not None and not df.empty:
             return sym, df, "UPSTOX"
         yf_df = _fetch_yf_1y(sym)
-        return sym, yf_df, "YF"
+        if yf_df is not None and not yf_df.empty:
+            return sym, yf_df, "YF"
+        mcp_df = _fetch_nse_mcp_bhavcopy_1y(sym)
+        return sym, mcp_df, "NSE_MCP"
 
     with ThreadPoolExecutor(max_workers=6) as pool:
         for sym, df, src in pool.map(_worker, list(keys.keys())):
@@ -238,13 +404,17 @@ def load_candles_1y() -> tuple[dict[str, pd.DataFrame], str]:
                 candles[sym] = df
                 if src == "UPSTOX":
                     upstox_hits += 1
+                elif src == "NSE_MCP":
+                    mcp_hits += 1
 
-    if upstox_hits > 0 and upstox_hits >= max(1, len(candles) // 2):
-        source_label = "UPSTOX_V2_HIST_1Y (NSE+BSE)"
-    elif upstox_hits > 0:
-        source_label = "UPSTOX_V2 + YFINANCE_1Y (NSE+BSE)"
-    else:
-        source_label = "YFINANCE_1Y (NSE+BSE)"
+    parts = []
+    if upstox_hits > 0:
+        parts.append("UPSTOX_V2")
+    if mcp_hits > 0:
+        parts.append(f"NSE_MCP({mcp_hits})")
+    if not parts or (upstox_hits + mcp_hits) < len(candles):
+        parts.append("YFINANCE_1Y")
+    source_label = " + ".join(parts) + " (NSE+BSE)"
     return candles, source_label
 
 
@@ -1046,6 +1216,7 @@ def run_screener():
     candles, data_source = load_candles_1y()
     logging.info("Loaded candles for %d symbols using %s", len(candles), data_source)
     global_cues = fetch_global_cues()
+    nse_live_snap = _fetch_nse_mcp_live_snapshot()
 
     sectors = compute_sector_strength(candles)
     rs_map = compute_relative_strength(candles)
@@ -1191,6 +1362,7 @@ def run_screener():
             "max_allocation_pct": MAX_ALLOCATION_PCT,
             "leverage_enabled": ALLOW_MIS_LEVERAGE,
             "leverage_multiplier": MIS_LEVERAGE,
+            "nse_mcp_live_active": bool(nse_live_snap),
         },
         "global_cues": global_cues or [],
         "sectors": sectors,
