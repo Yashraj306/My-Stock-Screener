@@ -11,81 +11,69 @@
       --ac:#38bdf8; --bu:#10b981; --be:#f43f5e; --wa:#f59e0b;
     }
     * { box-sizing:border-box; margin:0; padding:0; }
-    body {
-      background:var(--bg); color:var(--tx); font-family:'Inter',system-ui,sans-serif;
-      line-height:1.45; min-height:100vh;
-    }
+    body { background:var(--bg); color:var(--tx); font-family:'Inter',system-ui,sans-serif; line-height:1.45; min-height:100vh; }
     .mono { font-family:'JetBrains Mono',monospace; font-variant-numeric:tabular-nums; }
-    .pos { color:var(--bu); } .neg { color:var(--be); } .neu { color:var(--wa); } .mu { color:var(--mu); }
+    .pos { color:var(--bu); } .neg { color:var(--be); } .mu { color:var(--mu); }
     .topbar {
-      position:sticky; top:0; z-index:40; background:rgba(6,10,18,.94); backdrop-filter:blur(10px);
-      border-bottom:1px solid var(--bd); padding:10px 16px; display:flex; flex-wrap:wrap; gap:10px;
+      position:sticky; top:0; z-index:40; background:rgba(6,10,18,.95);
+      border-bottom:1px solid var(--bd); padding:10px 14px; display:flex; flex-wrap:wrap; gap:8px;
       align-items:center; justify-content:space-between;
     }
-    .row { display:flex; flex-wrap:wrap; gap:8px; align-items:center; }
-    .chip {
-      font-size:.68rem; font-weight:700; padding:2px 8px; border-radius:999px;
-      border:1px solid var(--bd); background:var(--s2); color:#cbd5e1;
-    }
+    .row { display:flex; flex-wrap:wrap; gap:6px; align-items:center; }
+    .chip { font-size:.68rem; font-weight:700; padding:2px 8px; border-radius:999px; border:1px solid var(--bd); background:var(--s2); color:#cbd5e1; }
     .b-bu { background:rgba(16,185,129,.15); color:#6ee7b7; border-color:rgba(16,185,129,.45); }
     .b-be { background:rgba(244,63,94,.15); color:#fda4af; border-color:rgba(244,63,94,.45); }
     .b-wa { background:rgba(245,158,11,.15); color:#fde68a; border-color:rgba(245,158,11,.45); }
     select, input, button.btn {
       background:var(--s1); color:var(--tx); border:1px solid var(--bd); border-radius:8px;
-      padding:6px 10px; font-size:.76rem; font-family:inherit; min-height:32px;
+      padding:6px 9px; font-size:.75rem; font-family:inherit; min-height:32px;
     }
     button.btn { cursor:pointer; font-weight:600; }
     button.btn-pri { background:#0284c7; border-color:#7dd3fc; color:#fff; }
     button.btn-run { background:#0d9488; border-color:#6ee7b7; color:#fff; }
-    .wrap { max-width:1440px; margin:0 auto; padding:14px 16px 56px; }
-    .banner, .panel, .kpi, .card, .ledger {
-      background:var(--s1); border:1px solid var(--bd); border-radius:12px; padding:12px 14px;
-    }
-    .banner { margin-bottom:12px; display:flex; flex-wrap:wrap; justify-content:space-between; gap:8px; font-size:.76rem; }
-    .dispatch { display:none; margin-bottom:12px; }
+    .wrap { max-width:1440px; margin:0 auto; padding:12px 14px 56px; }
+    .box { background:var(--s1); border:1px solid var(--bd); border-radius:12px; padding:11px 13px; margin-bottom:10px; }
+    .err-box { background:rgba(244,63,94,.12); border:1px solid rgba(244,63,94,.5); color:#fecdd3; border-radius:10px; padding:10px 12px; margin-bottom:10px; font-size:.74rem; display:none; }
+    .dispatch { display:none; }
     .dispatch.open { display:block; }
-    .d-grid { display:grid; grid-template-columns:repeat(auto-fit,minmax(150px,1fr)); gap:8px; margin-top:8px; }
-    .d-grid label { display:block; font-size:.66rem; font-weight:700; color:var(--mu); margin-bottom:3px; text-transform:uppercase; }
+    .d-grid { display:grid; grid-template-columns:repeat(auto-fit,minmax(145px,1fr)); gap:8px; margin-top:8px; }
+    .d-grid label { display:block; font-size:.65rem; font-weight:700; color:var(--mu); margin-bottom:3px; text-transform:uppercase; }
     .d-grid input, .d-grid select { width:100%; }
-    .strip { display:flex; gap:8px; overflow-x:auto; padding-bottom:6px; margin-bottom:12px; }
-    .tile { min-width:165px; background:var(--s1); border:1px solid var(--bd); border-radius:10px; padding:8px 11px; flex-shrink:0; }
-    .grid-4 { display:grid; grid-template-columns:repeat(auto-fit,minmax(195px,1fr)); gap:10px; margin-bottom:12px; }
-    .grid-2 { display:grid; grid-template-columns:repeat(auto-fit,minmax(290px,1fr)); gap:10px; margin-bottom:12px; }
-    .tabs { display:flex; flex-wrap:wrap; gap:6px; }
-    .tab {
-      padding:6px 10px; border-radius:8px; border:1px solid transparent; background:transparent;
-      color:var(--mu); font-size:.75rem; font-weight:700; cursor:pointer;
-    }
+    .strip { display:flex; gap:8px; overflow-x:auto; padding-bottom:6px; margin-bottom:10px; }
+    .tile { min-width:155px; background:var(--s1); border:1px solid var(--bd); border-radius:10px; padding:8px 10px; flex-shrink:0; }
+    .grid-4 { display:grid; grid-template-columns:repeat(auto-fit,minmax(160px,1fr)); gap:8px; margin-bottom:10px; }
+    .grid-2 { display:grid; grid-template-columns:repeat(auto-fit,minmax(270px,1fr)); gap:8px; margin-bottom:10px; }
+    .tabs { display:flex; flex-wrap:wrap; gap:5px; }
+    .tab { padding:5px 9px; border-radius:8px; border:1px solid transparent; background:transparent; color:var(--mu); font-size:.73rem; font-weight:700; cursor:pointer; }
     .tab.active { background:rgba(56,189,248,.16); border-color:rgba(56,189,248,.5); color:#7dd3fc; }
-    .sec-h { display:flex; justify-content:space-between; align-items:baseline; margin:16px 0 8px; padding-bottom:5px; border-bottom:1px solid var(--bd); }
-    .cards { display:grid; grid-template-columns:repeat(auto-fill,minmax(330px,1fr)); gap:12px; }
-    .card { display:flex; flex-direction:column; gap:8px; }
-    .lvls { display:grid; grid-template-columns:repeat(4,1fr); gap:6px; background:#080d17; border:1px solid var(--bd); border-radius:8px; padding:7px; }
-    .lvls span { display:block; font-size:.6rem; color:var(--mu); text-transform:uppercase; }
-    .lvls strong { display:block; font-size:.82rem; margin-top:2px; }
-    .kv { display:grid; grid-template-columns:1fr 1fr; gap:4px 8px; font-size:.72rem; color:var(--mu); background:var(--s2); border-radius:8px; padding:7px 9px; }
+    .sec-h { display:flex; justify-content:space-between; align-items:baseline; margin:14px 0 8px; padding-bottom:4px; border-bottom:1px solid var(--bd); }
+    .cards { display:grid; grid-template-columns:repeat(auto-fill,minmax(310px,1fr)); gap:10px; }
+    .lvls { display:grid; grid-template-columns:repeat(4,1fr); gap:5px; background:#080d17; border:1px solid var(--bd); border-radius:8px; padding:6px; margin:7px 0; }
+    .lvls span { display:block; font-size:.58rem; color:var(--mu); text-transform:uppercase; }
+    .lvls strong { display:block; font-size:.8rem; margin-top:1px; }
+    .kv { display:grid; grid-template-columns:1fr 1fr; gap:4px 8px; font-size:.71rem; color:var(--mu); background:var(--s2); border-radius:8px; padding:6px 8px; }
     .kv strong { color:var(--tx); }
-    .rat { font-size:.74rem; color:#cbd5e1; background:var(--s2); border-left:3px solid var(--ac); border-radius:7px; padding:7px 9px; }
-    .t-wrap { overflow-x:auto; border:1px solid var(--bd); border-radius:10px; background:var(--s1); max-height:480px; }
-    table { width:100%; border-collapse:collapse; font-size:.74rem; }
+    .rat { font-size:.73rem; color:#cbd5e1; background:var(--s2); border-left:3px solid var(--ac); border-radius:7px; padding:6px 8px; margin-top:7px; }
+    .t-wrap { overflow-x:auto; border:1px solid var(--bd); border-radius:10px; background:var(--s1); max-height:460px; }
+    table { width:100%; border-collapse:collapse; font-size:.73rem; }
     th, td { padding:6px 8px; border-bottom:1px solid rgba(34,52,84,.6); white-space:nowrap; }
     th { position:sticky; top:0; background:#090f1b; color:var(--mu); text-align:left; }
     th.r, td.r { text-align:right; } th.c, td.c { text-align:center; }
-    .chips { display:flex; flex-wrap:wrap; gap:6px; margin-top:6px; }
-    .dchip { background:var(--s2); border:1px solid var(--bd); border-radius:7px; padding:3px 8px; font-size:.72rem; }
-    .warn-box { margin-top:10px; padding:9px 11px; border-radius:8px; background:rgba(245,158,11,.1); border:1px solid rgba(245,158,11,.35); font-size:.74rem; color:#fde68a; }
-    .empty { background:var(--s1); border:1px dashed var(--bd); border-radius:10px; padding:22px; text-align:center; color:var(--mu); }
+    .chips { display:flex; flex-wrap:wrap; gap:5px; margin-top:6px; }
+    .dchip { background:var(--s2); border:1px solid var(--bd); border-radius:7px; padding:3px 7px; font-size:.71rem; }
+    .warn-box { margin-top:8px; padding:8px 10px; border-radius:8px; background:rgba(245,158,11,.1); border:1px solid rgba(245,158,11,.35); font-size:.73rem; color:#fde68a; }
+    .empty { background:var(--s1); border:1px dashed var(--bd); border-radius:10px; padding:18px; text-align:center; color:var(--mu); font-size:.78rem; }
   </style>
 </head>
 <body>
   <header class="topbar">
     <div>
       <div class="row">
-        <strong id="bTitle" style="font-size:.96rem;">My-Stock-Screener</strong>
+        <strong id="bTitle" style="font-size:.92rem;">My-Stock-Screener</strong>
         <span class="chip mono b-bu" id="bMode">MODE</span>
         <span class="chip mono" id="bFresh">CHECKING</span>
       </div>
-      <div class="mu" id="bSub" style="font-size:.71rem; margin-top:2px;">Loading snapshot...</div>
+      <div class="mu" id="bSub" style="font-size:.7rem; margin-top:2px;">Loading snapshot...</div>
     </div>
     <div class="row">
       <div class="row">
@@ -105,11 +93,12 @@
   </header>
 
   <main class="wrap">
-    <section class="banner" id="bannerBox"></section>
+    <div class="err-box mono" id="errBox"></div>
+    <section class="box" id="bannerBox" style="display:flex; flex-wrap:wrap; justify-content:space-between; gap:8px; font-size:.75rem;"></section>
 
-    <section class="panel dispatch" id="dispatchBox">
+    <section class="box dispatch" id="dispatchBox">
       <div class="row" style="justify-content:space-between;">
-        <strong style="font-size:.82rem;">GitHub Workflow Dispatch (Local Browser Storage Only)</strong>
+        <strong style="font-size:.8rem;">GitHub Workflow Dispatch (Local Browser Only)</strong>
         <button type="button" class="btn" id="btnClearCfg">Clear Config</button>
       </div>
       <div class="d-grid">
@@ -120,12 +109,12 @@
         <div><label>Mode</label><select id="ghMode"><option value="MORNING">MORNING</option><option value="BTST">BTST</option></select></div>
         <div><label>PAT (Local)</label><input type="password" id="ghPat" placeholder="github_pat_..." /></div>
       </div>
-      <div class="row" style="justify-content:space-between; margin-top:10px;">
+      <div class="row" style="justify-content:space-between; margin-top:8px;">
         <div class="row">
           <button type="button" class="btn btn-run" id="btnTrigger">Trigger &amp; Poll</button>
           <button type="button" class="btn" id="btnSaveCfg">Save Local</button>
         </div>
-        <span class="mono mu" id="dStatus" style="font-size:.72rem;">Ready.</span>
+        <span class="mono mu" id="dStatus" style="font-size:.71rem;">Ready.</span>
       </div>
     </section>
 
@@ -134,7 +123,7 @@
     <section class="grid-4" id="kpiBox"></section>
     <section class="grid-2" id="ctxBox"></section>
 
-    <section class="panel" id="filterBox" style="margin-bottom:12px;">
+    <section class="box" id="filterBox">
       <div class="row" style="justify-content:space-between;">
         <div class="tabs" id="tabBar">
           <button type="button" class="tab active" data-t="ALL">All</button>
@@ -153,7 +142,7 @@
     </section>
 
     <div id="workBox"></div>
-    <section class="ledger" id="ledgerBox" style="margin-top:16px;"></section>
+    <section class="box" id="ledgerBox" style="margin-top:14px;"></section>
   </main>
 
   <script>
@@ -162,8 +151,19 @@
     const st = {
       data: null, snaps: [], tab: "ALL", view: "CARDS",
       file: "data/latest.json", date: null, chainSym: null,
-      auto: true, pTimer: null, dTimer: null, lastGen: null, err: null
+      auto: true, pTimer: null, dTimer: null, lastGen: null
     };
+
+    function showErr(msg) {
+      const eb = document.getElementById("errBox");
+      if (!eb) return;
+      if (!msg) { eb.style.display = "none"; eb.textContent = ""; return; }
+      eb.style.display = "block";
+      eb.textContent = "Runtime Diagnostic: " + msg;
+    }
+
+    window.addEventListener("error", (ev) => showErr(`${ev.message} (line ${ev.lineno || "?"})`));
+    window.addEventListener("unhandledrejection", (ev) => showErr(String(ev.reason || ev)));
 
     const setH = (id, h) => { const e = document.getElementById(id); if (e) e.innerHTML = h; };
     const esc = (v) => v == null ? "" : String(v).replace(/[&<>"']/g, m => ({"&":"&amp;","<":"&lt;",">":"&gt;",'"':"&quot;","'":"&#39;"}[m]));
@@ -192,7 +192,7 @@
       const tm = setTimeout(() => ac.abort(), 10000);
       try {
         const r = await fetch(`${url}${url.includes("?") ? "&" : "?"}_t=${Date.now()}`, { cache: "no-store", signal: ac.signal });
-        if (!r.ok) throw new Error(`HTTP ${r.status}`);
+        if (!r.ok) throw new Error(`HTTP ${r.status} on ${url}`);
         return await r.json();
       } finally { clearTimeout(tm); }
     }
@@ -285,7 +285,7 @@
         const lp = pills.querySelector('[data-f="data/latest.json"]');
         if (lp) lp.onclick = () => pickSnap("data/latest.json", null);
         sel.value = Array.from(sel.options).some(x => x.value === cur) ? cur : "data/latest.json";
-      } catch (_) {}
+      } catch (e) { showErr("Manifest: " + e.message); }
     }
 
     async function pickSnap(f, dt = null, quiet = false) {
@@ -303,11 +303,12 @@
       if (!quiet && b) b.textContent = "Syncing...";
       try {
         const d = await getJson(f);
-        st.data = d; st.err = null;
+        st.data = d;
+        showErr(null);
         if (!st.date && d.session_date) st.date = d.session_date;
         st.lastGen = d.generated_at_ist || null;
       } catch (e) {
-        st.err = e.message || String(e);
+        showErr("Snapshot load: " + (e.message || String(e)));
       } finally {
         if (!quiet && b) b.textContent = "Refresh";
         render(); syncModes();
@@ -327,11 +328,11 @@
       const plan = (it.option_plan && (it.option_plan.strategy_name || it.option_plan.summary)) || it.equity_bucket || "Execution Plan";
       const rng = Number(it.avg_range_rs) > 0 ? `₹${Number(it.avg_range_rs).toFixed(1)}` : "—";
       return `
-        <article class="card">
+        <article class="box">
           <div class="row" style="justify-content:space-between; align-items:flex-start;">
             <div>
-              <div class="mono" style="font-size:1rem; font-weight:800;">${esc(it.symbol)} <span class="${clsF(it.change_pct)}" style="font-size:.8rem;">${chgF(it.change_pct)}</span></div>
-              <div class="row mu" style="font-size:.69rem; margin-top:2px;">
+              <div class="mono" style="font-size:.98rem; font-weight:800;">${esc(it.symbol)} <span class="${clsF(it.change_pct)}" style="font-size:.78rem;">${chgF(it.change_pct)}</span></div>
+              <div class="row mu" style="font-size:.68rem; margin-top:2px;">
                 <span class="chip">${esc(it.sector || "EQ")}</span>
                 <span class="chip">${esc(bkt)}</span>
                 <span>AvgRng: <strong class="mono">${esc(rng)}</strong></span>
@@ -353,7 +354,7 @@
             <div style="grid-column:1/-1;">Plan: <strong>${esc(plan)}</strong></div>
           </div>
           <div class="rat">${esc(it.why_trade || it.entry_action || "Technical & OI setup.")}</div>
-          <button type="button" class="btn" onclick="openChain('${esc(String(it.symbol || "").toUpperCase())}')">Inspect Option Chain (${esc(it.symbol)})</button>
+          <button type="button" class="btn" style="width:100%; margin-top:7px;" onclick="openChain('${esc(String(it.symbol || "").toUpperCase())}')">Inspect Option Chain (${esc(it.symbol)})</button>
         </article>`;
     }
 
@@ -412,12 +413,12 @@
       }).join("")}</tbody></table></div>`
       : `<div class="empty">Strike rows not present for <strong>${esc(sel.symbol)}</strong> in this snapshot.</div>`;
 
-      return `<div class="panel">
-        <div class="row" style="justify-content:space-between; margin-bottom:10px;">
-          <div><strong>Option Chain &amp; OI Structure</strong> <span class="mu" style="font-size:.72rem;">(Snapshot data, not tick streaming)</span></div>
+      return `<div class="box">
+        <div class="row" style="justify-content:space-between; margin-bottom:8px;">
+          <div><strong>Option Chain &amp; OI Structure</strong> <span class="mu" style="font-size:.71rem;">(Snapshot data, not tick streaming)</span></div>
           <select id="oiPick">${opts}</select>
         </div>
-        <div class="kv" style="grid-template-columns:repeat(auto-fit,minmax(160px,1fr)); margin-bottom:10px;">
+        <div class="kv" style="grid-template-columns:repeat(auto-fit,minmax(150px,1fr)); margin-bottom:8px;">
           <div>Spot: <strong class="mono">${num(sel.spot ?? sel.entry)}</strong></div>
           <div>Expiry / PCR: <strong class="mono">${num(sel.option_expiry || cs.expiry)} / ${num(cs.pcr)}</strong></div>
           <div>OI / Pain: <strong class="mono">${num(cs.oi_build_up)} / ${num(cs.max_pain)}</strong></div>
@@ -435,108 +436,115 @@
     }
 
     function render() {
-      const inf = istInfo(), p = st.data;
-      if (st.err && !p) {
-        setH("bannerBox", `<div><strong class="neg">Load Error:</strong> ${esc(st.err)}</div><div class="mono mu">${esc(inf.nowStr)}</div>`);
-        return;
-      }
-      const age = ageMins(p && p.generated_at_ist);
-      const stale = age != null && age > 180;
-      const fBadge = stale ? `<span class="chip mono b-be">STALE (${age}m)</span>`
-        : (age != null ? `<span class="chip mono b-bu">${age <= 30 ? "RECENT" : "SNAP"} (${age}m)</span>` : `<span class="chip mono">SNAP</span>`);
-      setH("bFresh", fBadge);
-      setH("bannerBox", `
-        <div><strong>${inf.open ? "Market Hours (Batch Sync)" : "Market Closed / Snapshot Data"}:</strong> Batch JSON snapshot (not tick-by-tick live feed).</div>
-        <div class="mono mu">Gen: ${esc(p?.generated_at_ist || "—")} • Now: ${esc(inf.nowStr)}</div>
-      `);
-      if (!p) return;
+      try {
+        const inf = istInfo(), p = st.data;
+        const age = ageMins(p && p.generated_at_ist);
+        const stale = age != null && age > 180;
+        const fBadge = stale ? `<span class="chip mono b-be">STALE (${age}m)</span>`
+          : (age != null ? `<span class="chip mono b-bu">${age <= 30 ? "RECENT" : "SNAP"} (${age}m)</span>` : `<span class="chip mono">SNAP</span>`);
+        setH("bFresh", fBadge);
+        setH("bannerBox", `
+          <div><strong>${inf.open ? "Market Hours (Batch Sync)" : "Market Closed / Snapshot Data"}:</strong> Batch JSON snapshot (not tick-by-tick live feed).</div>
+          <div class="mono mu">Gen: ${esc(p?.generated_at_ist || "—")} • Now: ${esc(inf.nowStr)}</div>
+        `);
+        if (!p) return;
 
-      const s = p.summary || {}, mStr = String(p.mode || "RUN").toUpperCase();
-      const mb = document.getElementById("bMode");
-      if (mb) { mb.textContent = mStr; mb.className = `chip mono ${mStr === "BTST" ? "b-wa" : "b-bu"}`; }
-      const bt = document.getElementById("bTitle"); if (bt) bt.textContent = p.title || "My-Stock-Screener";
-      const bs = document.getElementById("bSub"); if (bs) bs.textContent = `Date: ${p.session_date || "—"} • Source: ${s.data_source || "—"}`;
+        const s = p.summary || {}, mStr = String(p.mode || "RUN").toUpperCase();
+        const mb = document.getElementById("bMode");
+        if (mb) { mb.textContent = mStr; mb.className = `chip mono ${mStr === "BTST" ? "b-wa" : "b-bu"}`; }
+        const bt = document.getElementById("bTitle"); if (bt) bt.textContent = p.title || "My-Stock-Screener";
+        const bs = document.getElementById("bSub"); if (bs) bs.textContent = `Date: ${p.session_date || "—"} • Source: ${s.data_source || "—"}`;
 
-      const items = allInst(p);
-      const secs = Array.from(new Set(items.map(x => x.sector).filter(Boolean))).sort();
-      const secSel = document.getElementById("secSel");
-      if (secSel) {
-        const prev = secSel.value;
-        secSel.innerHTML = `<option value="ALL">All Sectors (${secs.length})</option>` + secs.map(x => `<option value="${esc(x)}">${esc(x)}</option>`).join("");
-        if (secs.includes(prev)) secSel.value = prev;
-      }
-      if (!st.chainSym || !items.some(x => x.symbol === st.chainSym)) {
-        st.chainSym = items.some(x => String(x.symbol).toUpperCase() === "NIFTY") ? "NIFTY" : (items[0]?.symbol || null);
-      }
-
-      const idxT = Array.isArray(p.index_trades) ? p.index_trades : [];
-      const oBu = Array.isArray(p.options_bullish) ? p.options_bullish : (p.setups?.bullish || []);
-      const oBe = Array.isArray(p.options_bearish) ? p.options_bearish : (p.setups?.bearish || []);
-      const eqI = Array.isArray(p.equity_intraday) ? p.equity_intraday : [];
-
-      const tList = [
-        { k: "NIFTY 50", v: s.nifty_spot, c: s.nifty_chg },
-        { k: "BANK NIFTY", v: s.bnf_spot, c: s.bnf_chg },
-        { k: "FIN NIFTY", v: s.fin_spot, c: s.fin_chg },
-        { k: "BREADTH", v: s.breadth_tone || "MIXED", c: s.breadth_ratio || "—" },
-      ];
-      const sx = idxT.find(x => String(x.symbol).toUpperCase() === "SENSEX");
-      if (sx) tList.splice(3, 0, { k: "SENSEX", v: sx.spot ?? sx.entry, c: sx.change_pct });
-      setH("tickerBox", tList.map(t => `<div class="tile"><div class="row mono" style="justify-content:space-between; font-size:.7rem;"><span>${esc(t.k)}</span><span class="${clsF(t.c)}">${esc(chgF(t.c))}</span></div><div class="mono" style="font-size:.95rem; font-weight:800; margin-top:3px;">${num(t.v)}</div></div>`).join(""));
-
-      setH("kpiBox", `
-        <div class="kpi"><div class="mu" style="font-size:.66rem; font-weight:700;">TOTAL IDEAS</div><div class="mono" style="font-size:1.25rem; font-weight:800;">${num(s.ideas_count)}</div><div class="mono mu" style="font-size:.7rem;">${idxT.length} Idx • ${oBu.length + oBe.length} Opt • ${eqI.length} Eq</div></div>
-        <div class="kpi"><div class="mu" style="font-size:.66rem; font-weight:700;">OPTIONS</div><div class="mono" style="font-size:1.25rem; font-weight:800;">${oBu.length + oBe.length}</div><div class="mono mu" style="font-size:.7rem;">${oBu.length} Bull / ${oBe.length} Bear</div></div>
-        <div class="kpi"><div class="mu" style="font-size:.66rem; font-weight:700;">EQUITY INTRADAY</div><div class="mono" style="font-size:1.25rem; font-weight:800;">${eqI.length}</div><div class="mu" style="font-size:.7rem;">Zero overlap w/ stock options</div></div>
-        <div class="kpi"><div class="mu" style="font-size:.66rem; font-weight:700;">BREADTH</div><div class="mono ${clsF(s.breadth_tone === "BULLISH" ? 1 : (s.breadth_tone === "BEARISH" ? -1 : 0))}" style="font-size:1.25rem; font-weight:800;">${esc(s.breadth_tone || "MIXED")}</div><div class="mono mu" style="font-size:.7rem;">${esc(s.breadth_ratio || "—")}</div></div>
-      `);
-
-      const cues = Array.isArray(p.global_cues) ? p.global_cues : [];
-      const secArr = Array.isArray(p.sectors) ? p.sectors : Object.entries(p.sectors || {}).map(([k, v]) => (typeof v === "object" && v ? { sector: k, ...v } : { sector: k, score: v }));
-      setH("ctxBox", `
-        <div class="panel"><strong style="font-size:.72rem;">GLOBAL CUES</strong><div class="chips">${cues.length ? cues.slice(0, 8).map(c => `<span class="dchip mono">${esc(c.name || c.symbol || "Cue")} <strong>${num(c.price ?? c.value)}</strong> <span class="${clsF(c.change_pct ?? c.change)}">${chgF(c.change_pct ?? c.change)}</span></span>`).join("") : `<span class="mu" style="font-size:.72rem;">None</span>`}</div></div>
-        <div class="panel"><strong style="font-size:.72rem;">SECTOR STRENGTH</strong><div class="chips">${secArr.length ? secArr.slice(0, 12).map(sc => { const m = sc.avg_change_pct ?? sc.score; return `<span class="dchip mono">${esc(sc.sector || sc.name || "SEC")} <strong class="${clsF(m)}">${m != null ? (sc.avg_change_pct != null ? chgF(m) : num(m)) : "—"}</strong></span>`; }).join("") : `<span class="mu" style="font-size:.72rem;">None</span>`}</div></div>
-      `);
-
-      if (st.tab === "OI") {
-        setH("workBox", oiHtml(p));
-        const pk = document.getElementById("oiPick");
-        if (pk) pk.onchange = (e) => { st.chainSym = e.target.value; render(); };
-      } else {
-        const secsCfg = [
-          { t: "IDX", title: "Index Trades", b: "INDEX", list: filt(idxT) },
-          { t: "OBULL", title: "Options — Bullish", b: "OPT BULL", list: filt(oBu) },
-          { t: "OBEAR", title: "Options — Bearish", b: "OPT BEAR", list: filt(oBe) },
-          { t: "EQ", title: "Equity Intraday", b: "EQ INTRA", list: filt(eqI) },
-        ].filter(x => st.tab === "ALL" || st.tab === x.t);
-
-        let out = "";
-        for (const sc of secsCfg) {
-          if (!sc.list.length) continue;
-          const body = st.view === "TABLE" ? tblHtml(sc.list, sc.b) : `<div class="cards">${sc.list.map(it => cardHtml(it, sc.b)).join("")}</div>`;
-          out += `<div class="sec-h"><strong>${esc(sc.title)}</strong><span class="mono mu" style="font-size:.73rem;">${sc.list.length}</span></div>${body}`;
+        const items = allInst(p);
+        const secs = Array.from(new Set(items.map(x => x.sector).filter(Boolean))).sort();
+        const secSel = document.getElementById("secSel");
+        if (secSel) {
+          const prev = secSel.value;
+          secSel.innerHTML = `<option value="ALL">All Sectors (${secs.length})</option>` + secs.map(x => `<option value="${esc(x)}">${esc(x)}</option>`).join("");
+          if (secs.includes(prev)) secSel.value = prev;
         }
-        setH("workBox", out || `<div class="empty">No matching setups. <button type="button" class="btn" onclick="resetF()">Reset</button></div>`);
-      }
+        if (!st.chainSym || !items.some(x => x.symbol === st.chainSym)) {
+          st.chainSym = items.some(x => String(x.symbol).toUpperCase() === "NIFTY") ? "NIFTY" : (items[0]?.symbol || null);
+        }
 
-      const wf = p.walk_forward || {};
-      const nClosed = Number(wf.closed_trades ?? 0);
-      const small = !Number.isFinite(nClosed) || nClosed < 30;
-      const wr = wf.net_win_rate_pct != null ? `${num(wf.net_win_rate_pct)}% (Post-Cost)` : "N/A";
-      setH("ledgerBox", `
-        <div class="row" style="justify-content:space-between;">
-          <strong>Risk &amp; Post-Cost Walk-Forward Ledger</strong>
-          <span class="chip mono ${small ? "b-wa" : "b-bu"}">n = ${esc(wf.closed_trades ?? 0)}</span>
-        </div>
-        <div class="kv mono" style="grid-template-columns:repeat(auto-fit,minmax(140px,1fr)); margin-top:8px;">
-          <div>Closed Trades: <strong>${num(wf.closed_trades ?? 0)}</strong></div>
-          <div>Net Win Rate: <strong>${esc(wr)}</strong></div>
-          <div>Est. Costs: <strong>₹${num(wf.total_costs ?? wf.total_est_charges ?? 0)}</strong></div>
-          <div>Total Net P&amp;L: <strong>₹${num(wf.total_net_pnl ?? 0)}</strong></div>
-          <div>Max Net DD: <strong>₹${num(wf.max_drawdown_net_pnl ?? 0)}</strong></div>
-        </div>
-        <div class="warn-box"><strong>Notice:</strong> ${small ? `Small sample (n = ${esc(wf.closed_trades ?? 0)} &lt; 30); early metrics are not guaranteed performance.` : esc(wf.sample_warning || "Post-cost historical log.")} Research &amp; risk tool only.</div>
-      `);
+        const idxT = Array.isArray(p.index_trades) ? p.index_trades : [];
+        const oBu = Array.isArray(p.options_bullish) ? p.options_bullish : (p.setups?.bullish || []);
+        const oBe = Array.isArray(p.options_bearish) ? p.options_bearish : (p.setups?.bearish || []);
+        const eqI = Array.isArray(p.equity_intraday) ? p.equity_intraday : [];
+
+        const tList = [
+          { k: "NIFTY 50", v: s.nifty_spot, c: s.nifty_chg },
+          { k: "BANK NIFTY", v: s.bnf_spot, c: s.bnf_chg },
+          { k: "FIN NIFTY", v: s.fin_spot, c: s.fin_chg },
+          { k: "BREADTH", v: s.breadth_tone || "MIXED", c: s.breadth_ratio || "—" },
+        ];
+        const sx = idxT.find(x => String(x.symbol).toUpperCase() === "SENSEX");
+        if (sx) tList.splice(3, 0, { k: "SENSEX", v: sx.spot ?? sx.entry, c: sx.change_pct });
+        setH("tickerBox", tList.map(t => `<div class="tile"><div class="row mono" style="justify-content:space-between; font-size:.69rem;"><span>${esc(t.k)}</span><span class="${clsF(t.c)}">${esc(chgF(t.c))}</span></div><div class="mono" style="font-size:.93rem; font-weight:800; margin-top:2px;">${num(t.v)}</div></div>`).join(""));
+
+        setH("kpiBox", `
+          <div class="box" style="margin-bottom:0;"><div class="mu" style="font-size:.65rem; font-weight:700;">TOTAL IDEAS</div><div class="mono" style="font-size:1.2rem; font-weight:800;">${num(s.ideas_count)}</div><div class="mono mu" style="font-size:.69rem;">${idxT.length} Idx • ${oBu.length + oBe.length} Opt • ${eqI.length} Eq</div></div>
+          <div class="box" style="margin-bottom:0;"><div class="mu" style="font-size:.65rem; font-weight:700;">OPTIONS</div><div class="mono" style="font-size:1.2rem; font-weight:800;">${oBu.length + oBe.length}</div><div class="mono mu" style="font-size:.69rem;">${oBu.length} Bull / ${oBe.length} Bear</div></div>
+          <div class="box" style="margin-bottom:0;"><div class="mu" style="font-size:.65rem; font-weight:700;">EQUITY INTRADAY</div><div class="mono" style="font-size:1.2rem; font-weight:800;">${eqI.length}</div><div class="mu" style="font-size:.69rem;">Zero overlap w/ stock options</div></div>
+          <div class="box" style="margin-bottom:0;"><div class="mu" style="font-size:.65rem; font-weight:700;">BREADTH</div><div class="mono ${clsF(s.breadth_tone === "BULLISH" ? 1 : (s.breadth_tone === "BEARISH" ? -1 : 0))}" style="font-size:1.2rem; font-weight:800;">${esc(s.breadth_tone || "MIXED")}</div><div class="mono mu" style="font-size:.69rem;">${esc(s.breadth_ratio || "—")}</div></div>
+        `);
+
+        const cues = Array.isArray(p.global_cues) ? p.global_cues : [];
+        const secArr = Array.isArray(p.sectors) ? p.sectors : Object.entries(p.sectors || {}).map(([k, v]) => (typeof v === "object" && v ? { sector: k, ...v } : { sector: k, score: v }));
+        setH("ctxBox", `
+          <div class="box" style="margin-bottom:0;"><strong style="font-size:.71rem;">GLOBAL CUES</strong><div class="chips">${cues.length ? cues.slice(0, 8).map(c => {
+            const vRaw = c.val ?? c.price ?? c.last ?? c.value;
+            const cRaw = c.chg ?? c.change_pct ?? c.change;
+            return `<span class="dchip mono">${esc(c.name || c.symbol || "Cue")} <strong>${num(vRaw)}</strong> <span class="${clsF(cRaw)}">${chgF(cRaw)}</span></span>`;
+          }).join("") : `<span class="mu" style="font-size:.71rem;">None</span>`}</div></div>
+          <div class="box" style="margin-bottom:0;"><strong style="font-size:.71rem;">SECTOR STRENGTH</strong><div class="chips">${secArr.length ? secArr.slice(0, 12).map(sc => {
+            const m = sc.avg_change_pct ?? sc.score;
+            return `<span class="dchip mono">${esc(sc.sector || sc.name || "SEC")} <strong class="${clsF(m)}">${m != null ? (sc.avg_change_pct != null ? chgF(m) : num(m)) : "—"}</strong></span>`;
+          }).join("") : `<span class="mu" style="font-size:.71rem;">None</span>`}</div></div>
+        `);
+
+        if (st.tab === "OI") {
+          setH("workBox", oiHtml(p));
+          const pk = document.getElementById("oiPick");
+          if (pk) pk.onchange = (e) => { st.chainSym = e.target.value; render(); };
+        } else {
+          const secsCfg = [
+            { t: "IDX", title: "Index Trades", b: "INDEX", list: filt(idxT) },
+            { t: "OBULL", title: "Options — Bullish", b: "OPT BULL", list: filt(oBu) },
+            { t: "OBEAR", title: "Options — Bearish", b: "OPT BEAR", list: filt(oBe) },
+            { t: "EQ", title: "Equity Intraday", b: "EQ INTRA", list: filt(eqI) },
+          ].filter(x => st.tab === "ALL" || st.tab === x.t);
+
+          let out = "";
+          for (const sc of secsCfg) {
+            if (!sc.list.length) continue;
+            const body = st.view === "TABLE" ? tblHtml(sc.list, sc.b) : `<div class="cards">${sc.list.map(it => cardHtml(it, sc.b)).join("")}</div>`;
+            out += `<div class="sec-h"><strong>${esc(sc.title)}</strong><span class="mono mu" style="font-size:.72rem;">${sc.list.length}</span></div>${body}`;
+          }
+          setH("workBox", out || `<div class="empty">No matching setups. <button type="button" class="btn" onclick="resetF()">Reset</button></div>`);
+        }
+
+        const wf = p.walk_forward || {};
+        const nClosed = Number(wf.closed_trades ?? 0);
+        const small = !Number.isFinite(nClosed) || nClosed < 30;
+        const wr = wf.net_win_rate_pct != null ? `${num(wf.net_win_rate_pct)}% (Post-Cost)` : "N/A";
+        setH("ledgerBox", `
+          <div class="row" style="justify-content:space-between;">
+            <strong>Risk &amp; Post-Cost Walk-Forward Ledger</strong>
+            <span class="chip mono ${small ? "b-wa" : "b-bu"}">n = ${esc(wf.closed_trades ?? 0)}</span>
+          </div>
+          <div class="kv" style="grid-template-columns:repeat(auto-fit,minmax(135px,1fr)); margin-top:8px;">
+            <div>Closed Trades: <strong>${num(wf.closed_trades ?? 0)}</strong></div>
+            <div>Net Win Rate: <strong>${esc(wr)}</strong></div>
+            <div>Est. Costs: <strong>₹${num(wf.total_costs ?? wf.total_est_charges ?? 0)}</strong></div>
+            <div>Total Net P&amp;L: <strong>₹${num(wf.total_net_pnl ?? 0)}</strong></div>
+            <div>Max Net DD: <strong>₹${num(wf.max_drawdown_net_pnl ?? 0)}</strong></div>
+          </div>
+          <div class="warn-box"><strong>Notice:</strong> ${small ? `Small sample (n = ${esc(wf.closed_trades ?? 0)} &lt; 30); early metrics are not guaranteed performance.` : esc(wf.sample_warning || "Post-cost historical log.")} Research &amp; risk tool only.</div>
+        `);
+      } catch (e) {
+        showErr("Render: " + (e.message || String(e)));
+      }
     }
 
     function resetF() {
