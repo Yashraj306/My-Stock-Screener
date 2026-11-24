@@ -42,16 +42,12 @@
       -webkit-font-smoothing: antialiased;
     }
 
-    .mono {
-      font-family: 'JetBrains Mono', monospace;
-      font-variant-numeric: tabular-nums;
-    }
+    .mono { font-family: 'JetBrains Mono', monospace; font-variant-numeric: tabular-nums; }
     .pos { color: var(--bull); }
     .neg { color: var(--bear); }
     .neu { color: var(--warn); }
     .muted { color: var(--muted); }
 
-    /* Top Navigation & Command Bar */
     .topbar {
       position: sticky;
       top: 0;
@@ -165,7 +161,6 @@
 
     .container { max-width: 1460px; margin: 0 auto; padding: 18px 20px 64px; }
 
-    /* Freshness & Market Status Banner */
     .status-banner {
       background: var(--surface);
       border: 1px solid var(--border);
@@ -188,7 +183,6 @@
       background: linear-gradient(90deg, rgba(244, 63, 94, 0.11), var(--surface) 45%);
     }
 
-    /* Optional Local Workflow Dispatch Drawer */
     .dispatch-panel {
       background: var(--surface);
       border: 1px solid var(--border);
@@ -214,7 +208,6 @@
     }
     .field input, .field select { width: 100%; }
 
-    /* History Ribbon */
     .history-ribbon {
       display: flex;
       align-items: center;
@@ -240,7 +233,6 @@
       color: #f8fafc;
     }
 
-    /* Live-Style Snapshot Ticker Strip */
     .ticker-strip {
       display: flex;
       align-items: stretch;
@@ -261,7 +253,6 @@
     .ticker-val { font-size: 0.98rem; font-weight: 800; margin-top: 3px; }
     .ticker-sub { font-size: 0.69rem; color: var(--muted); margin-top: 2px; }
 
-    /* KPI Grid */
     .kpi-grid {
       display: grid;
       grid-template-columns: repeat(auto-fit, minmax(205px, 1fr));
@@ -280,7 +271,6 @@
     .meter { margin-top: 7px; height: 6px; border-radius: 999px; background: rgba(244, 63, 94, 0.25); overflow: hidden; }
     .meter-fill { height: 100%; background: linear-gradient(90deg, #059669, #10b981); }
 
-    /* Context & Sector Row */
     .context-grid {
       display: grid;
       grid-template-columns: 1fr 1.35fr;
@@ -313,7 +303,6 @@
       gap: 6px;
     }
 
-    /* Navigation Tabs & Filters */
     .filter-bar {
       background: var(--surface);
       border: 1px solid var(--border);
@@ -345,7 +334,6 @@
       color: #7dd3fc;
     }
 
-    /* Setup Sections & Cards */
     .sec-head {
       display: flex;
       justify-content: space-between;
@@ -433,7 +421,6 @@
       padding: 8px 10px;
     }
 
-    /* Tables (Setups & Option Chain / OI Overview) */
     .table-wrap {
       overflow-x: auto;
       border-radius: 12px;
@@ -480,7 +467,6 @@
     .cell-res { background: var(--bear-bg) !important; border: 1.5px solid var(--bear) !important; color: #fecdd3 !important; font-weight: 700; border-radius: 5px; }
     .cell-weak { background: var(--warn-bg) !important; border: 1.5px solid var(--warn) !important; color: #fef08a !important; font-weight: 700; border-radius: 5px; }
 
-    /* Risk & Walk-Forward Ledger */
     .ledger-panel {
       margin-top: 20px;
       background: var(--surface);
@@ -572,7 +558,7 @@
   <main class="container">
     <section class="status-banner" id="statusBanner" role="status" aria-live="polite"></section>
 
-    <section class="dispatch-panel" id="dispatchPanel" aria-label="GitHub Workflow Dispatch Configuration">
+    <section class="dispatch-panel" id="dispatchPanel" aria-label="GitHub Actions Workflow Dispatch Configuration">
       <div style="display:flex; justify-content:space-between; align-items:center; flex-wrap:wrap; gap:8px;">
         <div>
           <strong style="font-size:0.84rem;">GitHub Actions Workflow Dispatch (Local Browser Storage Only)</strong>
@@ -630,7 +616,7 @@
 
     <section class="context-grid" id="contextGrid" aria-label="Global Cues and Sector Strength"></section>
 
-    <section class="filter-bar" aria-label="Setup Filters">
+    <section class="filter-bar" id="filterBar" aria-label="Setup Filters">
       <div class="tabs" id="navTabs" role="tablist">
         <button type="button" class="tab active" data-tab="ALL" role="tab">All Setups</button>
         <button type="button" class="tab" data-tab="INDEX" role="tab">Index</button>
@@ -670,6 +656,11 @@
       lastKnownGeneratedAt: null,
       loadError: null,
     };
+
+    function setHtml(id, html) {
+      const el = document.getElementById(id);
+      if (el) el.innerHTML = html;
+    }
 
     function escapeHtml(val) {
       if (val === null || val === undefined) return "";
@@ -802,15 +793,17 @@
       const btnMorning = document.getElementById("btnMorning");
       const btnBtst = document.getElementById("btnBtst");
 
-      btnLatest.classList.toggle("active", state.selectedFile === "data/latest.json");
-      btnMorning.disabled = !morningFile;
-      btnBtst.disabled = !btstFile;
-
-      const morningSelected = state.selectedFile === morningFile || (state.selectedFile === "data/latest.json" && activeMode === "MORNING");
-      const btstSelected = state.selectedFile === btstFile || (state.selectedFile === "data/latest.json" && activeMode === "BTST");
-
-      btnMorning.classList.toggle("active", Boolean(morningSelected && morningFile));
-      btnBtst.classList.toggle("active", Boolean(btstSelected && btstFile));
+      if (btnLatest) btnLatest.classList.toggle("active", state.selectedFile === "data/latest.json");
+      if (btnMorning) {
+        btnMorning.disabled = !morningFile;
+        const morningSelected = state.selectedFile === morningFile || (state.selectedFile === "data/latest.json" && activeMode === "MORNING");
+        btnMorning.classList.toggle("active", Boolean(morningSelected && morningFile));
+      }
+      if (btnBtst) {
+        btnBtst.disabled = !btstFile;
+        const btstSelected = state.selectedFile === btstFile || (state.selectedFile === "data/latest.json" && activeMode === "BTST");
+        btnBtst.classList.toggle("active", Boolean(btstSelected && btstFile));
+      }
     }
 
     async function loadManifest() {
@@ -819,6 +812,7 @@
         state.snapshots = Array.isArray(manifest.snapshots) ? manifest.snapshots : [];
         const sel = document.getElementById("historySelect");
         const pills = document.getElementById("historyPills");
+        if (!sel || !pills) return;
 
         const currentVal = state.selectedFile;
         sel.innerHTML = `<option value="data/latest.json">Latest Snapshot (data/latest.json)</option>`;
@@ -844,9 +838,10 @@
           }
         }
 
-        pills.querySelector('[data-file="data/latest.json"]').addEventListener("click", () => {
-          selectSnapshot("data/latest.json", null);
-        });
+        const latestPill = pills.querySelector('[data-file="data/latest.json"]');
+        if (latestPill) {
+          latestPill.addEventListener("click", () => selectSnapshot("data/latest.json", null));
+        }
         sel.value = Array.from(sel.options).some((o) => o.value === currentVal) ? currentVal : "data/latest.json";
       } catch (err) {
         console.warn("Manifest load issue:", err.message);
@@ -864,7 +859,8 @@
         if (found) state.selectedDate = found.date;
       }
 
-      document.getElementById("historySelect").value = filePath;
+      const histSel = document.getElementById("historySelect");
+      if (histSel) histSel.value = filePath;
       document.querySelectorAll("#historyPills .pill").forEach((el) => {
         const match =
           (filePath === "data/latest.json" && el.dataset.file === "data/latest.json") ||
@@ -877,7 +873,7 @@
 
     async function loadSnapshot(filePath, isPoll = false) {
       const syncBtn = document.getElementById("syncBtn");
-      if (!isPoll) syncBtn.textContent = "Syncing...";
+      if (!isPoll && syncBtn) syncBtn.textContent = "Syncing...";
 
       try {
         const data = await fetchJson(filePath);
@@ -896,7 +892,7 @@
         }
         syncModeButtons();
       } finally {
-        if (!isPoll) syncBtn.textContent = "Refresh Snapshot";
+        if (!isPoll && syncBtn) syncBtn.textContent = "Refresh Snapshot";
       }
     }
 
@@ -904,10 +900,12 @@
       const items = getAllInstruments(state.payload);
       const sectors = Array.from(new Set(items.map((x) => x.sector).filter(Boolean))).sort();
       const sel = document.getElementById("sectorFilter");
-      const prev = sel.value;
-      sel.innerHTML = `<option value="ALL">All Sectors (${sectors.length})</option>` +
-        sectors.map((s) => `<option value="${escapeHtml(s)}">${escapeHtml(s)}</option>`).join("");
-      if (sectors.includes(prev)) sel.value = prev;
+      if (sel) {
+        const prev = sel.value;
+        sel.innerHTML = `<option value="ALL">All Sectors (${sectors.length})</option>` +
+          sectors.map((s) => `<option value="${escapeHtml(s)}">${escapeHtml(s)}</option>`).join("");
+        if (sectors.includes(prev)) sel.value = prev;
+      }
 
       if (!state.selectedChainSymbol || !items.some((x) => x.symbol === state.selectedChainSymbol)) {
         const hasNifty = items.some((x) => String(x.symbol).toUpperCase() === "NIFTY");
@@ -916,8 +914,10 @@
     }
 
     function filterSetups(arr) {
-      const q = document.getElementById("searchInput").value.trim().toUpperCase();
-      const sec = document.getElementById("sectorFilter").value;
+      const searchEl = document.getElementById("searchInput");
+      const secEl = document.getElementById("sectorFilter");
+      const q = searchEl ? searchEl.value.trim().toUpperCase() : "";
+      const sec = secEl ? secEl.value : "ALL";
       return (arr || []).filter((item) => {
         if (!item) return false;
         const symMatch = !q || String(item.symbol || "").toUpperCase().includes(q);
@@ -1152,6 +1152,7 @@
           ${chainTableHtml}
         </div>`;
     }
+
     function inspectSymbolChain(sym) {
       state.selectedChainSymbol = sym;
       state.activeTab = "OI_OVERVIEW";
@@ -1159,7 +1160,7 @@
         t.classList.toggle("active", t.dataset.tab === "OI_OVERVIEW");
       });
       renderAll();
-      document.querySelector(".filter-bar")?.scrollIntoView({ behavior: "smooth" });
+      document.getElementById("filterBar")?.scrollIntoView({ behavior: "smooth" });
     }
 
     function renderStatusBanner(payload) {
@@ -1169,14 +1170,16 @@
       const nowInfo = getNowIstParts();
 
       if (state.loadError && !payload) {
-        banner.className = "status-banner stale-banner";
-        badge.className = "chip chip-stale mono";
-        badge.textContent = "SNAPSHOT UNAVAILABLE";
-        dot.style.background = "var(--bear)";
-        banner.innerHTML = `
+        if (banner) banner.className = "status-banner stale-banner";
+        if (badge) {
+          badge.className = "chip chip-stale mono";
+          badge.textContent = "SNAPSHOT UNAVAILABLE";
+        }
+        if (dot) dot.style.background = "var(--bear)";
+        setHtml("statusBanner", `
           <div><strong>Data Load Error:</strong> ${escapeHtml(state.loadError)} — Ensure <code>docs/data/latest.json</code> has been published by <code>screener.py</code>.</div>
           <div class="mono muted">Clock: ${escapeHtml(nowInfo.istLabel)}</div>
-        `;
+        `);
         return;
       }
 
@@ -1188,33 +1191,39 @@
         : "Market Closed / Outside Regular Session (Snapshot Data)";
 
       if (isStale) {
-        banner.className = "status-banner stale-banner";
-        badge.className = "chip chip-stale mono";
-        badge.textContent = `STALE (${ageMin}m old)`;
-        dot.style.background = "var(--bear)";
+        if (banner) banner.className = "status-banner stale-banner";
+        if (badge) {
+          badge.className = "chip chip-stale mono";
+          badge.textContent = `STALE (${ageMin}m old)`;
+        }
+        if (dot) dot.style.background = "var(--bear)";
       } else if (ageMin !== null && ageMin <= 30) {
-        banner.className = "status-banner";
-        badge.className = "chip chip-fresh mono";
-        badge.textContent = `RECENT (${ageMin}m ago)`;
-        dot.style.background = "var(--bull)";
+        if (banner) banner.className = "status-banner";
+        if (badge) {
+          badge.className = "chip chip-fresh mono";
+          badge.textContent = `RECENT (${ageMin}m ago)`;
+        }
+        if (dot) dot.style.background = "var(--bull)";
       } else {
-        banner.className = "status-banner warn-banner";
-        badge.className = "chip chip-mode mono";
-        badge.textContent = ageMin !== null ? `SNAPSHOT (${ageMin}m ago)` : "SNAPSHOT DATA";
-        dot.style.background = "var(--warn)";
+        if (banner) banner.className = "status-banner warn-banner";
+        if (badge) {
+          badge.className = "chip chip-mode mono";
+          badge.textContent = ageMin !== null ? `SNAPSHOT (${ageMin}m ago)` : "SNAPSHOT DATA";
+        }
+        if (dot) dot.style.background = "var(--warn)";
       }
 
       const guardNote = (payload && payload.session_guardrails && payload.session_guardrails.window_note)
         ? payload.session_guardrails.window_note
         : "Batch screener snapshot; verify live quotes and risk limits prior to execution.";
 
-      banner.innerHTML = `
+      setHtml("statusBanner", `
         <div>
           <strong>${escapeHtml(marketLabel)}:</strong> ${escapeHtml(guardNote)}
           <span class="muted"> • Note: Auto-sync re-reads batch JSON files; it is not a tick-by-tick live feed.</span>
         </div>
         <div class="mono muted">Generated: ${escapeHtml(genStr || "—")} • Now: ${escapeHtml(nowInfo.istLabel)}</div>
-      `;
+      `);
     }
 
     function renderAll() {
@@ -1222,23 +1231,29 @@
       renderStatusBanner(payload);
 
       if (!payload) {
-        document.getElementById("tickerStrip").innerHTML = "";
-        document.getElementById("kpiGrid").innerHTML = "";
-        document.getElementById("contextGrid").innerHTML = "";
-        document.getElementById("mainWorkspace").innerHTML = `<div class="empty-state">Waiting for valid snapshot data.</div>`;
-        document.getElementById("ledgerPanel").innerHTML = "";
+        setHtml("tickerStrip", "");
+        setHtml("kpiGrid", "");
+        setHtml("contextGrid", "");
+        setHtml("mainWorkspace", `<div class="empty-state">Waiting for valid snapshot data.</div>`);
+        setHtml("ledgerPanel", "");
         return;
       }
 
       const summary = payload.summary || {};
       const modeStr = String(payload.mode || "RUN").toUpperCase();
       const modeBadge = document.getElementById("modeBadge");
-      modeBadge.textContent = modeStr;
-      modeBadge.className = `chip mono ${modeStr === "BTST" ? "chip-btst" : "chip-mode"}`;
+      if (modeBadge) {
+        modeBadge.textContent = modeStr;
+        modeBadge.className = `chip mono ${modeStr === "BTST" ? "chip-btst" : "chip-mode"}`;
+      }
 
-      document.getElementById("brandTitle").textContent = payload.title || "My-Stock-Screener — Quant & Hedging Desk";
-      document.getElementById("metaSubtitle").textContent =
-        `Session: ${payload.session_date || "—"} • Source: ${summary.data_source || "—"} • Capital Configured: ${summary.capital_configured ? "Yes" : "No"}`;
+      const titleEl = document.getElementById("brandTitle");
+      if (titleEl) titleEl.textContent = payload.title || "My-Stock-Screener — Quant & Hedging Desk";
+
+      const subEl = document.getElementById("metaSubtitle");
+      if (subEl) {
+        subEl.textContent = `Session: ${payload.session_date || "—"} • Source: ${summary.data_source || "—"} • Capital Configured: ${summary.capital_configured ? "Yes" : "No"}`;
+      }
 
       populateFilters();
 
@@ -1258,14 +1273,14 @@
           });
         }
       }
-      document.getElementById("tickerStrip").innerHTML = tickers
+      setHtml("tickerStrip", tickers
         .map((t) => `
           <div class="ticker-tile">
             <div class="ticker-top mono"><span>${escapeHtml(t.sym)}</span><span class="${chgClass(t.chg)}">${escapeHtml(formatChangeStr(t.chg))}</span></div>
             <div class="ticker-val mono">${fmtNum(t.val)}</div>
             <div class="ticker-sub mono">${escapeHtml(t.sub)}</div>
           </div>`)
-        .join("");
+        .join(""));
 
       const optBull = payload.options_bullish || (payload.setups && payload.setups.bullish) || [];
       const optBear = payload.options_bearish || (payload.setups && payload.setups.bearish) || [];
@@ -1280,7 +1295,7 @@
         if (a + d > 0) advPct = Math.round((a / (a + d)) * 100);
       }
 
-      document.getElementById("kpiGrid").innerHTML = `
+      setHtml("kpiGrid", `
         <div class="kpi">
           <div class="kpi-label">Total Ideas (${escapeHtml(modeStr)})</div>
           <div class="kpi-val mono">${fmtNum(summary.ideas_count)}</div>
@@ -1302,7 +1317,7 @@
           <div class="kpi-sub mono">${escapeHtml(summary.breadth_ratio || "—")}</div>
           <div class="meter"><div class="meter-fill" style="width:${advPct}%"></div></div>
         </div>
-      `;
+      `);
 
       const cues = Array.isArray(payload.global_cues) ? payload.global_cues : [];
       const cuesHtml = cues.length
@@ -1329,7 +1344,7 @@
           }).join("")
         : `<span class="muted" style="font-size:0.74rem;">No sector metrics in this snapshot.</span>`;
 
-      document.getElementById("contextGrid").innerHTML = `
+      setHtml("contextGrid", `
         <div class="panel">
           <div class="panel-head"><span class="panel-title">Global Cues</span><span class="mono muted" style="font-size:0.68rem;">Snapshot Feed</span></div>
           <div class="chips">${cuesHtml}</div>
@@ -1338,10 +1353,10 @@
           <div class="panel-head"><span class="panel-title">Sector Strength</span><span class="mono muted" style="font-size:0.68rem;">NSE/BSE Basket</span></div>
           <div class="chips">${secHtml}</div>
         </div>
-      `;
+      `);
 
       if (state.activeTab === "OI_OVERVIEW") {
-        document.getElementById("mainWorkspace").innerHTML = renderOiOverview(payload);
+        setHtml("mainWorkspace", renderOiOverview(payload));
         const picker = document.getElementById("oiSymbolPicker");
         if (picker) {
           picker.addEventListener("change", (e) => {
@@ -1374,11 +1389,11 @@
             ${body}`;
         }
 
-        document.getElementById("mainWorkspace").innerHTML = html || `
+        setHtml("mainWorkspace", html || `
           <div class="empty-state">
             <div>No setups match the current tab, sector, or symbol filter.</div>
             <button type="button" class="btn btn-ghost" style="margin-top:10px;" onclick="resetAllFilters()">Reset Filters</button>
-          </div>`;
+          </div>`);
       }
 
       const wf = payload.walk_forward || {};
@@ -1396,7 +1411,7 @@
         ? `₹${fmtInt(summary.capital)}`
         : "Not Configured";
 
-      document.getElementById("ledgerPanel").innerHTML = `
+      setHtml("ledgerPanel", `
         <div class="panel-head">
           <div>
             <div class="panel-title">Risk &amp; Post-Cost Walk-Forward Ledger</div>
@@ -1414,13 +1429,15 @@
         <div class="disclaimer">
           <strong>Risk &amp; Sample Notice:</strong> ${escapeHtml(sampleWarningText)} Research and risk-management tool only; no investment advice or guaranteed returns.
         </div>
-      `;
+      `);
     }
 
     function resetAllFilters() {
       state.activeTab = "ALL";
-      document.getElementById("searchInput").value = "";
-      document.getElementById("sectorFilter").value = "ALL";
+      const sEl = document.getElementById("searchInput");
+      const secEl = document.getElementById("sectorFilter");
+      if (sEl) sEl.value = "";
+      if (secEl) secEl.value = "ALL";
       document.querySelectorAll("#navTabs .tab").forEach((t) => {
         t.classList.toggle("active", t.dataset.tab === "ALL");
       });
@@ -1438,9 +1455,7 @@
         if (cfg.ref) document.getElementById("ghRef").value = cfg.ref;
         if (cfg.mode) document.getElementById("ghMode").value = cfg.mode;
         if (cfg.pat) document.getElementById("ghPat").value = cfg.pat;
-      } catch (_) {
-        // ignore storage errors
-      }
+      } catch (_) {}
     }
 
     function saveDispatchConfig(includePat = true) {
@@ -1463,20 +1478,18 @@
     function clearDispatchConfig() {
       localStorage.removeItem(STORAGE_KEY);
       document.getElementById("ghPat").value = "";
-      document.getElementById("dispatchStatusText").textContent = "Cleared local browser configuration.";
+      setHtml("dispatchStatusText", "Cleared local browser configuration.");
     }
 
     async function triggerWorkflowAndPoll() {
-      const statusEl = document.getElementById("dispatchStatusText");
       const cfg = saveDispatchConfig(true);
-
       if (!cfg.owner || !cfg.repo || !cfg.workflow || !cfg.pat) {
-        statusEl.textContent = "Missing Owner, Repo, Workflow file, or local PAT. Enter them above to dispatch.";
+        setHtml("dispatchStatusText", "Missing Owner, Repo, Workflow file, or local PAT. Enter them above to dispatch.");
         return;
       }
 
       const url = `https://api.github.com/repos/${encodeURIComponent(cfg.owner)}/${encodeURIComponent(cfg.repo)}/actions/workflows/${encodeURIComponent(cfg.workflow)}/dispatches`;
-      statusEl.textContent = "Dispatching workflow...";
+      setHtml("dispatchStatusText", "Dispatching workflow...");
 
       try {
         const resp = await fetch(url, {
@@ -1497,7 +1510,7 @@
           throw new Error(`Dispatch failed (HTTP ${resp.status}) ${errBody.slice(0, 120)}`);
         }
 
-        statusEl.textContent = `Dispatched (${cfg.mode}). Polling snapshot every 10s for updated timestamp...`;
+        setHtml("dispatchStatusText", `Dispatched (${escapeHtml(cfg.mode)}). Polling snapshot every 10s for updated timestamp...`);
         const prevGen = state.lastKnownGeneratedAt;
         let attempts = 0;
 
@@ -1509,16 +1522,16 @@
           const nowGen = state.payload && state.payload.generated_at_ist;
           if (nowGen && nowGen !== prevGen) {
             clearInterval(state.dispatchPollTimer);
-            statusEl.textContent = `New snapshot published at ${nowGen}.`;
+            setHtml("dispatchStatusText", `New snapshot published at ${escapeHtml(nowGen)}.`);
           } else if (attempts >= 24) {
             clearInterval(state.dispatchPollTimer);
-            statusEl.textContent = "Polling window ended (4m). Click 'Refresh Snapshot' once GitHub Actions finishes.";
+            setHtml("dispatchStatusText", "Polling window ended (4m). Click 'Refresh Snapshot' once GitHub Actions finishes.");
           } else {
-            statusEl.textContent = `Waiting for new snapshot... (${attempts * 10}s elapsed)`;
+            setHtml("dispatchStatusText", `Waiting for new snapshot... (${attempts * 10}s elapsed)`);
           }
         }, 10000);
       } catch (err) {
-        statusEl.textContent = `Error: ${err.message}`;
+        setHtml("dispatchStatusText", `Error: ${escapeHtml(err.message)}`);
       }
     }
 
@@ -1530,53 +1543,53 @@
       }, 15000);
     }
 
-    document.getElementById("btnLatest").addEventListener("click", () => selectSnapshot("data/latest.json", null));
-    document.getElementById("btnMorning").addEventListener("click", () => {
+    document.getElementById("btnLatest")?.addEventListener("click", () => selectSnapshot("data/latest.json", null));
+    document.getElementById("btnMorning")?.addEventListener("click", () => {
       const f = findModeFile(state.selectedDate, "MORNING");
       if (f) selectSnapshot(f);
     });
-    document.getElementById("btnBtst").addEventListener("click", () => {
+    document.getElementById("btnBtst")?.addEventListener("click", () => {
       const f = findModeFile(state.selectedDate, "BTST");
       if (f) selectSnapshot(f);
     });
 
-    document.getElementById("viewCardsBtn").addEventListener("click", () => {
+    document.getElementById("viewCardsBtn")?.addEventListener("click", () => {
       state.viewMode = "CARDS";
-      document.getElementById("viewCardsBtn").classList.add("active");
-      document.getElementById("viewTableBtn").classList.remove("active");
+      document.getElementById("viewCardsBtn")?.classList.add("active");
+      document.getElementById("viewTableBtn")?.classList.remove("active");
       renderAll();
     });
-    document.getElementById("viewTableBtn").addEventListener("click", () => {
+    document.getElementById("viewTableBtn")?.addEventListener("click", () => {
       state.viewMode = "TABLE";
-      document.getElementById("viewTableBtn").classList.add("active");
-      document.getElementById("viewCardsBtn").classList.remove("active");
+      document.getElementById("viewTableBtn")?.classList.add("active");
+      document.getElementById("viewCardsBtn")?.classList.remove("active");
       renderAll();
     });
 
-    document.getElementById("historySelect").addEventListener("change", (e) => {
+    document.getElementById("historySelect")?.addEventListener("change", (e) => {
       selectSnapshot(e.target.value);
     });
 
-    document.getElementById("syncBtn").addEventListener("click", async () => {
+    document.getElementById("syncBtn")?.addEventListener("click", async () => {
       await loadManifest();
       await loadSnapshot(state.selectedFile, false);
     });
 
-    document.getElementById("autoPollBtn").addEventListener("click", (e) => {
+    document.getElementById("autoPollBtn")?.addEventListener("click", (e) => {
       state.autoPoll = !state.autoPoll;
       e.target.classList.toggle("active", state.autoPoll);
       e.target.textContent = state.autoPoll ? "Auto-Sync: 15s" : "Auto-Sync: Off";
     });
 
-    document.getElementById("toggleDispatchBtn").addEventListener("click", () => {
-      document.getElementById("dispatchPanel").classList.toggle("open");
+    document.getElementById("toggleDispatchBtn")?.addEventListener("click", () => {
+      document.getElementById("dispatchPanel")?.classList.toggle("open");
     });
-    document.getElementById("saveDispatchBtn").addEventListener("click", () => {
+    document.getElementById("saveDispatchBtn")?.addEventListener("click", () => {
       saveDispatchConfig(true);
-      document.getElementById("dispatchStatusText").textContent = "Saved configuration locally in browser storage.";
+      setHtml("dispatchStatusText", "Saved configuration locally in browser storage.");
     });
-    document.getElementById("clearDispatchBtn").addEventListener("click", clearDispatchConfig);
-    document.getElementById("triggerDispatchBtn").addEventListener("click", triggerWorkflowAndPoll);
+    document.getElementById("clearDispatchBtn")?.addEventListener("click", clearDispatchConfig);
+    document.getElementById("triggerDispatchBtn")?.addEventListener("click", triggerWorkflowAndPoll);
 
     document.querySelectorAll("#navTabs .tab").forEach((btn) => {
       btn.addEventListener("click", () => {
@@ -1587,9 +1600,9 @@
       });
     });
 
-    document.getElementById("searchInput").addEventListener("input", () => renderAll());
-    document.getElementById("sectorFilter").addEventListener("change", () => renderAll());
-    document.getElementById("resetFiltersBtn").addEventListener("click", resetAllFilters);
+    document.getElementById("searchInput")?.addEventListener("input", () => renderAll());
+    document.getElementById("sectorFilter")?.addEventListener("change", () => renderAll());
+    document.getElementById("resetFiltersBtn")?.addEventListener("click", resetAllFilters);
 
     (async () => {
       loadSavedDispatchConfig();
