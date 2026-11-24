@@ -83,7 +83,7 @@ ISIN_MAP = {
     "ASTRAL": "INE006I01046",
     "LUPIN": "INE326A01037",
     "AUROPHARMA": "INE406A01037",
-    # Additional Liquid NSE Equities for ₹20-₹50 Intraday Range Pool
+    # Liquid NSE Equities for ₹20-₹50 Intraday Range Pool
     "TATAMOTORS": "INE155A01022",
     "IOC": "INE242A01010",
     "GAIL": "INE129A01019",
@@ -114,9 +114,31 @@ ISIN_MAP = {
     "BIOCON": "INE376G01013",
     "LAURUSLABS": "INE943Q01026",
     "SYNGENE": "INE398R01022",
+    # Newly Added High-Momentum NSE Mid/Large Caps
+    "IREDA": "INE202E01016",
+    "HUDCO": "INE031A01017",
+    "MAZDOCK": "INE249Z01020",
+    "COCHINSHIP": "INE704P01025",
+    "HAVELLS": "INE176B01034",
+    "VOLTAS": "INE226A01021",
+    "CROMPTON": "INE299U01018",
+    "MOTHERSON": "INE775A01035",
+    "EXIDEIND": "INE302A01020",
+    "AMBUJACEM": "INE079A01024",
+    "ACC": "INE012A01025",
+    "DALBHARAT": "INE00R701025",
+    "CONCOR": "INE111A01025",
+    "DELHIVERY": "INE148O01028",
+    "POLICYBZR": "INE417T01026",
+    "PAYTM": "INE982J01020",
+    "NYKAA": "INE388Y01029",
+    "AARTIIND": "INE769A01020",
+    "ABFRL": "INE647O01011",
+    "OBEROIRLTY": "INE093I01010",
+    "DLF": "INE271C01023",
 }
 
-# BSE-specific stocks not already listed in NSE ISIN_MAP (avoid duplicate symbols)
+# BSE-focused equities (mapped to BSE_EQ|<ISIN> & .BO fallback)
 BSE_ISIN_MAP = {
     "BSE": "INE118H01025",
     "CDSL": "INE736A01011",
@@ -138,6 +160,22 @@ BSE_ISIN_MAP = {
     "ALKYLAMINE": "INE150B01039",
     "FINOLEX": "INE235A01022",
     "KEI": "INE878B01027",
+    # Newly Added BSE Equities
+    "ANGELONE": "INE732I01013",
+    "CAMS": "INE596I01012",
+    "KFINTECH": "INE138Y01010",
+    "MOTILALOFS": "INE338I01027",
+    "360ONE": "INE466L01038",
+    "HFCL": "INE548A01028",
+    "NBCC": "INE095N01031",
+    "IRB": "INE821I01022",
+    "GMRINFRA": "INE776C01039",
+    "JINDALSTEL": "INE749A01030",
+    "APLAPOLLO": "INE702C01027",
+    "KAJARIACER": "INE217B01036",
+    "BATAINDIA": "INE176A01028",
+    "RELAXO": "INE131B01039",
+    "TTKPRESTIG": "INE690A01028",
 }
 
 BSE_STOCKS_UNIVERSE = [s for s in BSE_ISIN_MAP.keys() if s not in ISIN_MAP]
@@ -208,7 +246,6 @@ LOT_SIZES = {
     "SBILIFE": 375,
     "ICICIPRULI": 750,
     "ICICIGI": 250,
-    # Expanded Midcap / Next 50 F&O Lot Sizes (verify live NSE contract master)
     "HAL": 150,
     "TVSMOTOR": 175,
     "DIXON": 100,
@@ -224,6 +261,25 @@ LOT_SIZES = {
     "ASTRAL": 425,
     "LUPIN": 425,
     "AUROPHARMA": 550,
+    "BSE": 375,
+    "CDSL": 350,
+    "MCX": 125,
+    "KPITTECH": 400,
+    "TATAELXSI": 100,
+    "ANGELONE": 200,
+    "CAMS": 125,
+    "JINDALSTEL": 625,
+    "APLAPOLLO": 350,
+    "DLF": 825,
+    "HAVELLS": 500,
+    "VOLTAS": 375,
+    "MOTHERSON": 3550,
+    "EXIDEIND": 1800,
+    "AMBUJACEM": 900,
+    "ACC": 300,
+    "CONCOR": 1000,
+    "POLICYBZR": 325,
+    "NYKAA": 3125,
 }
 
 
