@@ -386,8 +386,9 @@
       const all = allInst(p);
       if (!all.length) return `<div class="empty">No instruments available for Option Chain view.</div>`;
       const sel = all.find(x => String(x.symbol).toUpperCase() === String(st.chainSym).toUpperCase()) || all[0];
-      const cs = sel.chain_summary || {}, ca = sel.chain_analytics || {};
-      const rows = Array.isArray(sel.option_chain) ? sel.option_chain : [];
+      const cs = sel.chain_summary || {};
+      const ca = (sel.chain_analytics && typeof sel.chain_analytics === "object" && !Array.isArray(sel.chain_analytics)) ? sel.chain_analytics : {};
+      const rows = Array.isArray(sel.option_chain) ? sel.option_chain : (Array.isArray(ca.rows) ? ca.rows : []);
       const opts = all.map(x => {
         const k = String(x.symbol).toUpperCase();
         return `<option value="${esc(k)}" ${k === String(sel.symbol).toUpperCase() ? "selected" : ""}>${esc(k)} (${esc(x.sector || "EQ")})</option>`;
@@ -398,7 +399,7 @@
         <th class="r">PE LTP</th><th class="r">PE Chg</th><th class="r">PE OI</th><th class="c">Zone</th><th>Note</th>
       </tr></thead><tbody>${rows.map(r => {
         const z = String(r.zone_role || "");
-        const zc = z === "STRONG_SUPPORT" ? "b-bu" : (z === "STRONG_RESISTANCE" ? "b-be" : (z ? "b-wa" : ""));
+        const zc = z === "STRONG_SUPPORT" ? "b-bu" : (z === "STRONG_RESISTANCE" ? "b-be" : ((z && z !== "NEUTRAL") ? "b-wa" : ""));
         return `<tr class="mono">
           <td class="r">${intF(r.ce_oi)}</td>
           <td class="r ${clsF(r.ce_chg_oi)}">${intF(r.ce_chg_oi)} (${chgF(r.ce_chg_pct)})</td>
@@ -420,9 +421,9 @@
         </div>
         <div class="kv" style="grid-template-columns:repeat(auto-fit,minmax(150px,1fr)); margin-bottom:8px;">
           <div>Spot: <strong class="mono">${num(sel.spot ?? sel.entry)}</strong></div>
-          <div>Expiry / PCR: <strong class="mono">${num(sel.option_expiry || cs.expiry)} / ${num(cs.pcr)}</strong></div>
-          <div>OI / Pain: <strong class="mono">${num(cs.oi_build_up)} / ${num(cs.max_pain)}</strong></div>
-          <div>EOS / EOR: <strong class="mono">${num(ca.eos)} / ${num(ca.eor)}</strong></div>
+          <div>PCR / Pain: <strong class="mono">${num(cs.pcr)} / ${num(cs.max_pain)}</strong></div>
+          <div>Sup / Res: <strong class="mono">${num(cs.support_strike)} / ${num(cs.resistance_strike)}</strong></div>
+          <div>Build-up: <strong class="mono">${esc(cs.oi_build_up || "—")}</strong></div>
         </div>
         ${body}
       </div>`;
@@ -492,14 +493,15 @@
         const cues = Array.isArray(p.global_cues) ? p.global_cues : [];
         const secArr = Array.isArray(p.sectors) ? p.sectors : Object.entries(p.sectors || {}).map(([k, v]) => (typeof v === "object" && v ? { sector: k, ...v } : { sector: k, score: v }));
         setH("ctxBox", `
-          <div class="box" style="margin-bottom:0;"><strong style="font-size:.71rem;">GLOBAL CUES</strong><div class="chips">${cues.length ? cues.slice(0, 8).map(c => {
+          <div class="box" style="margin-bottom:0;"><strong style="font-size:.71rem;">GLOBAL CUES</strong><div class="chips">${cues.length ? cues.slice(0, 9).map(c => {
             const vRaw = c.val ?? c.price ?? c.last ?? c.value;
             const cRaw = c.chg ?? c.change_pct ?? c.change;
             return `<span class="dchip mono">${esc(c.name || c.symbol || "Cue")} <strong>${num(vRaw)}</strong> <span class="${clsF(cRaw)}">${chgF(cRaw)}</span></span>`;
           }).join("") : `<span class="mu" style="font-size:.71rem;">None</span>`}</div></div>
           <div class="box" style="margin-bottom:0;"><strong style="font-size:.71rem;">SECTOR STRENGTH</strong><div class="chips">${secArr.length ? secArr.slice(0, 12).map(sc => {
-            const m = sc.avg_change_pct ?? sc.score;
-            return `<span class="dchip mono">${esc(sc.sector || sc.name || "SEC")} <strong class="${clsF(m)}">${m != null ? (sc.avg_change_pct != null ? chgF(m) : num(m)) : "—"}</strong></span>`;
+            const m = sc.avg_move ?? sc.avg_change_pct ?? sc.score;
+            const ud = sc.up_down ? ` <span class="mu">(${esc(sc.up_down)})</span>` : "";
+            return `<span class="dchip mono">${esc(sc.name || sc.sector || "SEC")} <strong class="${clsF(m)}">${m != null ? chgF(m) : "—"}</strong>${ud}</span>`;
           }).join("") : `<span class="mu" style="font-size:.71rem;">None</span>`}</div></div>
         `);
 
@@ -521,7 +523,7 @@
             const body = st.view === "TABLE" ? tblHtml(sc.list, sc.b) : `<div class="cards">${sc.list.map(it => cardHtml(it, sc.b)).join("")}</div>`;
             out += `<div class="sec-h"><strong>${esc(sc.title)}</strong><span class="mono mu" style="font-size:.72rem;">${sc.list.length}</span></div>${body}`;
           }
-          setH("workBox", out || `<div class="empty">No matching setups. <button type="button" class="btn" onclick="resetF()">Reset</button></div>`);
+          setH("workBox", out || `<div class="empty">No matching setups in this snapshot (${esc(mStr)}). <button type="button" class="btn" onclick="resetF()">Reset</button></div>`);
         }
 
         const wf = p.walk_forward || {};
