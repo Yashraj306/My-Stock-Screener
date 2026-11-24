@@ -3,7 +3,7 @@
 <head>
   <meta charset="UTF-8" />
   <meta name="viewport" content="width=device-width, initial-scale=1.0" />
-  <title>Quant &amp; Hedging Desk — Institutional Market Intelligence &amp; Option Chain</title>
+  <title>My-Stock-Screener | Quant &amp; Hedging Desk Terminal</title>
   <link rel="preconnect" href="https://fonts.googleapis.com">
   <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
   <link href="https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600;700;800&family=JetBrains+Mono:wght@400;500;600;700&display=swap" rel="stylesheet">
@@ -14,11 +14,11 @@
       --surface-2: #131d30;
       --surface-3: #19263e;
       --border: #223454;
-      --border-soft: rgba(34, 52, 84, 0.62);
+      --border-soft: rgba(34, 52, 84, 0.65);
       --text: #f8fafc;
       --muted: #94a3b8;
       --accent: #38bdf8;
-      --accent-indigo: #818cf8;
+      --accent-2: #818cf8;
       --bull: #10b981;
       --bull-bg: rgba(16, 185, 129, 0.14);
       --bear: #f43f5e;
@@ -32,32 +32,34 @@
 
     body {
       background:
-        radial-gradient(ellipse 980px 440px at 88% -8%, rgba(56, 189, 248, 0.14), transparent 62%),
-        radial-gradient(ellipse 760px 400px at 8% 0%, rgba(129, 140, 248, 0.10), transparent 58%),
-        radial-gradient(ellipse 640px 320px at 50% 100%, rgba(16, 185, 129, 0.06), transparent 65%),
+        radial-gradient(ellipse 960px 420px at 88% -8%, rgba(56, 189, 248, 0.12), transparent 62%),
+        radial-gradient(ellipse 760px 380px at 8% 0%, rgba(129, 140, 248, 0.09), transparent 58%),
         var(--bg);
       color: var(--text);
       font-family: 'Inter', system-ui, -apple-system, sans-serif;
-      line-height: 1.48;
+      line-height: 1.5;
       min-height: 100vh;
       -webkit-font-smoothing: antialiased;
     }
 
-    .mono { font-family: 'JetBrains Mono', monospace; font-variant-numeric: tabular-nums; }
+    .mono {
+      font-family: 'JetBrains Mono', monospace;
+      font-variant-numeric: tabular-nums;
+    }
     .pos { color: var(--bull); }
     .neg { color: var(--bear); }
     .neu { color: var(--warn); }
     .muted { color: var(--muted); }
 
-    /* Investor Topbar */
+    /* Top Navigation & Command Bar */
     .topbar {
       position: sticky;
       top: 0;
       z-index: 50;
-      backdrop-filter: blur(16px);
+      backdrop-filter: blur(14px);
       background: rgba(6, 10, 18, 0.9);
       border-bottom: 1px solid var(--border);
-      padding: 11px 22px;
+      padding: 12px 20px;
       display: flex;
       flex-wrap: wrap;
       align-items: center;
@@ -65,32 +67,39 @@
       gap: 12px;
     }
 
-    .brand { display: flex; align-items: center; gap: 12px; }
-    .pulse-dot {
-      width: 11px;
-      height: 11px;
+    .brand { display: flex; align-items: center; gap: 11px; min-width: 0; }
+    .status-dot {
+      width: 10px;
+      height: 10px;
       border-radius: 50%;
-      background: var(--bull);
-      box-shadow: 0 0 0 4px rgba(16, 185, 129, 0.22), 0 0 14px rgba(16, 185, 129, 0.65);
+      background: var(--warn);
+      box-shadow: 0 0 0 4px rgba(245, 158, 11, 0.18);
       flex-shrink: 0;
     }
-    .brand h1 { font-size: 1rem; font-weight: 800; letter-spacing: -0.015em; display: flex; align-items: center; gap: 8px; flex-wrap: wrap; }
-    .mode-badge {
-      font-size: 0.67rem;
+    .brand-title {
+      font-size: 1rem;
       font-weight: 800;
+      letter-spacing: -0.015em;
+      display: flex;
+      align-items: center;
+      gap: 8px;
+      flex-wrap: wrap;
+    }
+    .chip {
+      font-size: 0.68rem;
+      font-weight: 700;
       padding: 2px 8px;
       border-radius: 999px;
-      letter-spacing: 0.05em;
-      border: 1px solid rgba(56, 189, 248, 0.45);
-      background: linear-gradient(135deg, rgba(56, 189, 248, 0.18), rgba(129, 140, 248, 0.18));
-      color: #bae6fd;
+      letter-spacing: 0.04em;
+      border: 1px solid var(--border);
+      background: var(--surface-2);
+      color: #cbd5e1;
     }
-    .mode-badge.btst {
-      border-color: rgba(245, 158, 11, 0.5);
-      background: linear-gradient(135deg, rgba(245, 158, 11, 0.2), rgba(244, 63, 94, 0.12));
-      color: #fde68a;
-    }
-    .brand small { display: block; color: var(--muted); font-size: 0.73rem; margin-top: 1px; }
+    .chip-mode { border-color: rgba(56, 189, 248, 0.45); background: rgba(56, 189, 248, 0.14); color: #7dd3fc; }
+    .chip-btst { border-color: rgba(245, 158, 11, 0.5); background: rgba(245, 158, 11, 0.16); color: #fcd34d; }
+    .chip-stale { border-color: rgba(244, 63, 94, 0.5); background: rgba(244, 63, 94, 0.16); color: #fda4af; }
+    .chip-fresh { border-color: rgba(16, 185, 129, 0.5); background: rgba(16, 185, 129, 0.15); color: #6ee7b7; }
+    .brand small { display: block; color: var(--muted); font-size: 0.73rem; margin-top: 2px; }
 
     .controls { display: flex; flex-wrap: wrap; align-items: center; gap: 8px; }
 
@@ -106,102 +115,104 @@
       border: 1px solid transparent;
       background: transparent;
       color: var(--muted);
-      padding: 5px 10px;
+      padding: 6px 10px;
       border-radius: 7px;
       font-size: 0.74rem;
       font-weight: 700;
       cursor: pointer;
-      transition: all 0.15s ease;
+      min-height: 32px;
+      transition: all 0.14s ease;
     }
     .seg-btn:hover:not(:disabled) { color: var(--text); }
-    .seg-btn.active-latest { background: rgba(16, 185, 129, 0.16); border-color: rgba(16, 185, 129, 0.5); color: #6ee7b7; }
-    .seg-btn.active-morning { background: rgba(56, 189, 248, 0.18); border-color: rgba(56, 189, 248, 0.55); color: #7dd3fc; }
-    .seg-btn.active-btst { background: rgba(245, 158, 11, 0.18); border-color: rgba(245, 158, 11, 0.55); color: #fcd34d; }
-    .seg-btn.active-view { background: var(--surface-3); border-color: rgba(129, 140, 248, 0.5); color: #e0e7ff; }
+    .seg-btn.active { background: var(--surface-3); border-color: rgba(56, 189, 248, 0.48); color: #e0f2fe; }
     .seg-btn:disabled { opacity: 0.35; cursor: not-allowed; }
 
-    select, input[type="search"], button.btn-ghost {
+    select, input[type="search"], input[type="text"], input[type="password"], button.btn {
       background: var(--surface);
       color: var(--text);
       border: 1px solid var(--border);
       border-radius: 8px;
-      padding: 6px 10px;
+      padding: 7px 11px;
       font-size: 0.78rem;
       font-family: inherit;
       outline: none;
-      cursor: pointer;
-      transition: border-color 0.15s ease, background 0.15s ease;
+      min-height: 34px;
+      transition: border-color 0.14s ease, background 0.14s ease;
     }
-    input[type="search"] { cursor: text; min-width: 185px; }
-    select:hover, input[type="search"]:hover, button.btn-ghost:hover { border-color: var(--accent); }
-    button.btn-ghost.live-on {
+    input[type="search"] { min-width: 195px; }
+    select, button.btn { cursor: pointer; }
+    select:hover, input:hover, button.btn:hover { border-color: var(--accent); }
+    input:focus, select:focus { border-color: var(--accent); box-shadow: 0 0 0 2px rgba(56, 189, 248, 0.15); }
+
+    button.btn-ghost.active {
       border-color: rgba(16, 185, 129, 0.55);
       background: rgba(16, 185, 129, 0.12);
       color: #6ee7b7;
       font-weight: 600;
     }
     button.btn-primary {
-      background: linear-gradient(135deg, #0ea5e9, #4f46e5);
-      border: 1px solid rgba(125, 211, 252, 0.55);
+      background: linear-gradient(135deg, #0284c7, #2563eb);
+      border-color: rgba(125, 211, 252, 0.55);
       color: #fff;
-      border-radius: 8px;
-      padding: 6px 13px;
-      font-size: 0.78rem;
       font-weight: 700;
-      cursor: pointer;
-      box-shadow: 0 4px 16px rgba(14, 165, 233, 0.22);
+    }
+    button.btn-dispatch {
+      background: linear-gradient(135deg, #0d9488, #2563eb);
+      border-color: rgba(110, 231, 183, 0.45);
+      color: #fff;
+      font-weight: 700;
     }
 
-    .container { max-width: 1460px; margin: 0 auto; padding: 18px 22px 60px; }
+    .container { max-width: 1460px; margin: 0 auto; padding: 18px 20px 64px; }
 
-    /* Pitch Architecture Banner */
-    .pitch-strip {
-      display: grid;
-      grid-template-columns: repeat(4, 1fr);
-      gap: 10px;
-      margin-bottom: 14px;
-    }
-    .pitch-card {
-      background: linear-gradient(145deg, rgba(19, 29, 48, 0.92), rgba(13, 20, 34, 0.95));
-      border: 1px solid var(--border);
-      border-radius: 11px;
-      padding: 10px 13px;
-      display: flex;
-      flex-direction: column;
-      gap: 3px;
-    }
-    .pitch-k { font-size: 0.66rem; font-weight: 800; text-transform: uppercase; letter-spacing: 0.06em; color: var(--accent); }
-    .pitch-v { font-size: 0.86rem; font-weight: 700; color: var(--text); }
-    .pitch-s { font-size: 0.71rem; color: var(--muted); }
-
-    /* Guardrails & Risk Row */
-    .guardrail-bar {
-      display: grid;
-      grid-template-columns: 1.35fr 1fr;
-      gap: 12px;
-      margin-bottom: 14px;
-    }
-    .guardrail-card {
+    /* Freshness & Market Status Banner */
+    .status-banner {
       background: var(--surface);
       border: 1px solid var(--border);
       border-radius: 12px;
       padding: 12px 15px;
+      margin-bottom: 14px;
       display: flex;
-      flex-direction: column;
-      gap: 6px;
+      flex-wrap: wrap;
+      align-items: center;
+      justify-content: space-between;
+      gap: 10px;
+      font-size: 0.78rem;
     }
-    .guardrail-top { display: flex; align-items: center; justify-content: space-between; gap: 8px; flex-wrap: wrap; }
-    .guardrail-title { font-size: 0.75rem; font-weight: 800; letter-spacing: 0.05em; text-transform: uppercase; color: #7dd3fc; }
-    .guardrail-copy { font-size: 0.79rem; color: #cbd5e1; }
-    .rule-chips { display: flex; flex-wrap: wrap; gap: 6px; margin-top: 2px; }
-    .rule-chip {
+    .status-banner.warn-banner {
+      border-color: rgba(245, 158, 11, 0.55);
+      background: linear-gradient(90deg, rgba(245, 158, 11, 0.11), var(--surface) 45%);
+    }
+    .status-banner.stale-banner {
+      border-color: rgba(244, 63, 94, 0.55);
+      background: linear-gradient(90deg, rgba(244, 63, 94, 0.11), var(--surface) 45%);
+    }
+
+    /* Optional Local Workflow Dispatch Drawer */
+    .dispatch-panel {
+      background: var(--surface);
+      border: 1px solid var(--border);
+      border-radius: 12px;
+      padding: 14px 16px;
+      margin-bottom: 14px;
+      display: none;
+    }
+    .dispatch-panel.open { display: block; }
+    .dispatch-grid {
+      display: grid;
+      grid-template-columns: repeat(auto-fit, minmax(170px, 1fr));
+      gap: 10px;
+      margin-top: 10px;
+    }
+    .field label {
+      display: block;
       font-size: 0.69rem;
-      padding: 2px 8px;
-      border-radius: 6px;
-      background: var(--surface-2);
-      border: 1px solid var(--border-soft);
+      font-weight: 700;
+      text-transform: uppercase;
       color: var(--muted);
+      margin-bottom: 4px;
     }
+    .field input, .field select { width: 100%; }
 
     /* History Ribbon */
     .history-ribbon {
@@ -224,12 +235,33 @@
       cursor: pointer;
     }
     .pill.active {
-      background: linear-gradient(135deg, rgba(56, 189, 248, 0.2), rgba(129, 140, 248, 0.2));
+      background: rgba(56, 189, 248, 0.16);
       border-color: var(--accent);
       color: #f8fafc;
     }
 
-    /* KPI & Breadth Graphic */
+    /* Live-Style Snapshot Ticker Strip */
+    .ticker-strip {
+      display: flex;
+      align-items: stretch;
+      gap: 10px;
+      overflow-x: auto;
+      padding-bottom: 6px;
+      margin-bottom: 14px;
+    }
+    .ticker-tile {
+      min-width: 175px;
+      background: var(--surface);
+      border: 1px solid var(--border);
+      border-radius: 10px;
+      padding: 9px 12px;
+      flex-shrink: 0;
+    }
+    .ticker-top { display: flex; justify-content: space-between; align-items: center; font-size: 0.72rem; font-weight: 700; }
+    .ticker-val { font-size: 0.98rem; font-weight: 800; margin-top: 3px; }
+    .ticker-sub { font-size: 0.69rem; color: var(--muted); margin-top: 2px; }
+
+    /* KPI Grid */
     .kpi-grid {
       display: grid;
       grid-template-columns: repeat(auto-fit, minmax(205px, 1fr));
@@ -241,45 +273,35 @@
       border: 1px solid var(--border);
       border-radius: 12px;
       padding: 13px 15px;
-      position: relative;
-      overflow: hidden;
-    }
-    .kpi::before {
-      content: "";
-      position: absolute;
-      inset: 0 0 auto 0;
-      height: 2.5px;
-      background: linear-gradient(90deg, var(--accent), var(--accent-indigo));
     }
     .kpi-label { font-size: 0.69rem; font-weight: 700; text-transform: uppercase; letter-spacing: 0.06em; color: var(--muted); }
-    .kpi-val { font-size: 1.3rem; font-weight: 800; margin-top: 4px; }
-    .kpi-sub { font-size: 0.74rem; margin-top: 3px; color: var(--muted); }
-    .meter-track {
-      margin-top: 7px;
-      height: 6px;
-      border-radius: 999px;
-      background: rgba(244, 63, 94, 0.25);
-      overflow: hidden;
-      display: flex;
-    }
-    .meter-bull { background: linear-gradient(90deg, #059669, #10b981); height: 100%; }
+    .kpi-val { font-size: 1.28rem; font-weight: 800; margin-top: 4px; }
+    .kpi-sub { font-size: 0.74rem; color: var(--muted); margin-top: 3px; }
+    .meter { margin-top: 7px; height: 6px; border-radius: 999px; background: rgba(244, 63, 94, 0.25); overflow: hidden; }
+    .meter-fill { height: 100%; background: linear-gradient(90deg, #059669, #10b981); }
 
-    /* Global Cues & Sectors */
-    .intel-grid {
+    /* Context & Sector Row */
+    .context-grid {
       display: grid;
       grid-template-columns: 1fr 1.35fr;
       gap: 12px;
-      margin-bottom: 16px;
+      margin-bottom: 14px;
     }
-    .intel-box {
+    .panel {
       background: var(--surface);
       border: 1px solid var(--border);
       border-radius: 12px;
-      padding: 12px 14px;
+      padding: 13px 15px;
     }
-    .intel-head { display: flex; justify-content: space-between; align-items: center; margin-bottom: 8px; }
-    .intel-heading { font-size: 0.72rem; font-weight: 800; text-transform: uppercase; letter-spacing: 0.05em; color: var(--muted); }
-    .chip-wrap { display: flex; flex-wrap: wrap; gap: 6px; }
+    .panel-head {
+      display: flex;
+      justify-content: space-between;
+      align-items: center;
+      gap: 8px;
+      margin-bottom: 9px;
+    }
+    .panel-title { font-size: 0.73rem; font-weight: 800; text-transform: uppercase; letter-spacing: 0.05em; color: #cbd5e1; }
+    .chips { display: flex; flex-wrap: wrap; gap: 6px; }
     .data-chip {
       background: var(--surface-2);
       border: 1px solid var(--border-soft);
@@ -291,13 +313,13 @@
       gap: 6px;
     }
 
-    /* Filter Bar */
+    /* Navigation Tabs & Filters */
     .filter-bar {
       background: var(--surface);
       border: 1px solid var(--border);
       border-radius: 12px;
       padding: 10px 14px;
-      margin-bottom: 18px;
+      margin-bottom: 16px;
       display: flex;
       flex-wrap: wrap;
       justify-content: space-between;
@@ -306,14 +328,15 @@
     }
     .tabs { display: flex; flex-wrap: wrap; gap: 6px; }
     .tab {
-      padding: 6px 12px;
+      padding: 6px 11px;
       border-radius: 8px;
-      font-size: 0.77rem;
+      font-size: 0.76rem;
       font-weight: 700;
       cursor: pointer;
       border: 1px solid transparent;
       background: transparent;
       color: var(--muted);
+      min-height: 32px;
     }
     .tab:hover { color: var(--text); background: var(--surface-2); }
     .tab.active {
@@ -322,122 +345,108 @@
       color: #7dd3fc;
     }
 
-    /* Sections & Cards with Visual Risk-Reward Bar */
-    .section-head {
+    /* Setup Sections & Cards */
+    .sec-head {
       display: flex;
-      align-items: baseline;
       justify-content: space-between;
+      align-items: baseline;
       gap: 10px;
-      margin: 22px 0 11px;
+      margin: 20px 0 10px;
       padding-bottom: 6px;
       border-bottom: 1px solid var(--border-soft);
     }
-    .section-title { font-size: 0.95rem; font-weight: 800; color: var(--text); }
-    .section-sub { font-size: 0.74rem; color: var(--muted); }
+    .sec-title { font-size: 0.94rem; font-weight: 800; }
+    .sec-sub { font-size: 0.73rem; color: var(--muted); }
 
     .cards-grid {
       display: grid;
-      grid-template-columns: repeat(auto-fill, minmax(365px, 1fr));
+      grid-template-columns: repeat(auto-fill, minmax(350px, 1fr));
       gap: 14px;
     }
     .card {
       background: linear-gradient(175deg, var(--surface) 0%, #090f1b 100%);
       border: 1px solid var(--border);
       border-radius: 14px;
-      padding: 15px;
+      padding: 14px;
       display: flex;
       flex-direction: column;
       gap: 10px;
     }
-    .card:hover { border-color: rgba(56, 189, 248, 0.45); }
-
     .card-top { display: flex; justify-content: space-between; align-items: flex-start; gap: 8px; }
-    .sym { font-size: 1.06rem; font-weight: 800; }
-    .sub-tags { display: flex; flex-wrap: wrap; align-items: center; gap: 5px; margin-top: 3px; font-size: 0.71rem; color: var(--muted); }
-    .tag-pill {
-      padding: 1px 7px;
-      border-radius: 5px;
-      background: var(--surface-2);
-      border: 1px solid var(--border-soft);
-      color: #cbd5e1;
-      font-weight: 600;
-    }
+    .sym { font-size: 1.05rem; font-weight: 800; }
+    .meta-line { display: flex; flex-wrap: wrap; gap: 6px; align-items: center; font-size: 0.71rem; color: var(--muted); margin-top: 3px; }
 
     .badge {
-      padding: 4px 8px;
+      padding: 3px 8px;
       border-radius: 6px;
-      font-size: 0.69rem;
+      font-size: 0.68rem;
       font-weight: 800;
       letter-spacing: 0.03em;
       white-space: nowrap;
     }
-    .badge-bull { background: var(--bull-bg); color: #6ee7b7; border: 1px solid rgba(16,185,129,0.4); }
-    .badge-bear { background: var(--bear-bg); color: #fda4af; border: 1px solid rgba(244,63,94,0.4); }
-    .badge-warn { background: var(--warn-bg); color: #fde68a; border: 1px solid rgba(245,158,11,0.4); }
+    .badge-bull { background: var(--bull-bg); color: #6ee7b7; border: 1px solid rgba(16, 185, 129, 0.4); }
+    .badge-bear { background: var(--bear-bg); color: #fda4af; border: 1px solid rgba(244, 63, 94, 0.4); }
+    .badge-warn { background: var(--warn-bg); color: #fde68a; border: 1px solid rgba(245, 158, 11, 0.4); }
 
     .levels {
       display: grid;
       grid-template-columns: repeat(4, 1fr);
       gap: 6px;
-      background: rgba(7, 11, 19, 0.82);
+      background: rgba(7, 11, 19, 0.84);
       border: 1px solid var(--border-soft);
-      border-radius: 10px;
-      padding: 8px 9px;
+      border-radius: 9px;
+      padding: 8px;
     }
-    .lvl span { display: block; font-size: 0.63rem; font-weight: 700; color: var(--muted); text-transform: uppercase; }
-    .lvl strong { font-size: 0.85rem; font-weight: 700; margin-top: 2px; display: block; }
+    .lvl span { display: block; font-size: 0.62rem; font-weight: 700; color: var(--muted); text-transform: uppercase; }
+    .lvl strong { display: block; font-size: 0.84rem; font-weight: 700; margin-top: 2px; }
 
-    /* Visual Risk -> Entry -> Reward Graphic */
-    .rr-visual {
+    .rr-box {
       background: rgba(19, 29, 48, 0.55);
       border: 1px solid var(--border-soft);
       border-radius: 8px;
-      padding: 7px 9px;
+      padding: 6px 9px;
     }
-    .rr-labels { display: flex; justify-content: space-between; font-size: 0.66rem; color: var(--muted); margin-bottom: 4px; }
-    .rr-bar { height: 7px; border-radius: 999px; background: var(--surface-3); overflow: hidden; display: flex; gap: 2px; }
-    .rr-seg-sl { background: var(--bear); height: 100%; }
-    .rr-seg-t1 { background: #38bdf8; height: 100%; }
-    .rr-seg-t2 { background: var(--bull); height: 100%; }
+    .rr-head { display: flex; justify-content: space-between; font-size: 0.66rem; color: var(--muted); margin-bottom: 4px; }
+    .rr-track { height: 6px; border-radius: 999px; background: var(--surface-3); overflow: hidden; display: flex; gap: 2px; }
+    .rr-sl { background: var(--bear); height: 100%; }
+    .rr-t1 { background: var(--accent); height: 100%; }
+    .rr-t2 { background: var(--bull); height: 100%; }
 
-    .kv-strip {
+    .kv-grid {
       display: grid;
       grid-template-columns: repeat(2, 1fr);
       gap: 5px 10px;
-      font-size: 0.74rem;
+      font-size: 0.73rem;
       color: var(--muted);
       background: rgba(19, 29, 48, 0.45);
       border-radius: 8px;
       padding: 8px 10px;
     }
-    .kv-strip strong { color: #e2e8f0; }
+    .kv-grid strong { color: #e2e8f0; }
 
     .rationale {
-      font-size: 0.77rem;
+      font-size: 0.76rem;
       color: #cbd5e1;
-      background: rgba(25, 38, 62, 0.5);
-      padding: 8px 10px;
-      border-radius: 8px;
+      background: rgba(25, 38, 62, 0.52);
       border-left: 3px solid var(--accent);
+      border-radius: 8px;
+      padding: 8px 10px;
     }
 
-    .chain-btn {
-      width: 100%;
-      padding: 8px 12px;
-      border-radius: 9px;
-      border: 1px solid rgba(56, 189, 248, 0.35);
-      background: rgba(56, 189, 248, 0.08);
-      color: #7dd3fc;
-      font-size: 0.77rem;
-      font-weight: 700;
-      cursor: pointer;
+    /* Tables (Setups & Option Chain / OI Overview) */
+    .table-wrap {
+      overflow-x: auto;
+      border-radius: 12px;
+      border: 1px solid var(--border);
+      background: var(--surface);
+      max-height: 520px;
+      overflow-y: auto;
     }
-    .chain-btn:hover { background: rgba(56, 189, 248, 0.18); }
-
-    /* Compact Execution Table */
-    .exec-table-wrap { overflow-x: auto; border-radius: 12px; border: 1px solid var(--border); background: var(--surface); }
-    table.exec-table { width: 100%; border-collapse: collapse; font-size: 0.75rem; }
-    table.exec-table th {
+    table.data-table { width: 100%; border-collapse: collapse; font-size: 0.75rem; }
+    table.data-table th {
+      position: sticky;
+      top: 0;
+      z-index: 2;
       background: #090f1b;
       color: var(--muted);
       font-weight: 700;
@@ -446,94 +455,80 @@
       text-align: left;
       white-space: nowrap;
     }
-    table.exec-table th.num, table.exec-table td.num { text-align: right; }
-    table.exec-table td { padding: 7px 9px; border-bottom: 1px solid var(--border-soft); white-space: nowrap; }
+    table.data-table th.num, table.data-table td.num { text-align: right; }
+    table.data-table th.center, table.data-table td.center { text-align: center; }
+    table.data-table td { padding: 7px 9px; border-bottom: 1px solid var(--border-soft); white-space: nowrap; }
+    table.data-table tr:hover td { background: rgba(56, 189, 248, 0.05); }
+    tr.atm-row td { background: rgba(56, 189, 248, 0.1); }
 
-    /* Option Chain Panel */
-    .oc-panel {
-      margin-top: 24px;
-      background: var(--surface);
-      border: 1px solid #2b436b;
-      border-radius: 16px;
-      padding: 18px;
-      box-shadow: 0 22px 54px rgba(0, 0, 0, 0.48);
-    }
-    .oc-header {
-      display: flex;
-      flex-wrap: wrap;
-      justify-content: space-between;
-      align-items: center;
-      gap: 12px;
-      padding-bottom: 12px;
-      border-bottom: 1px solid var(--border);
-      margin-bottom: 12px;
-    }
-    .struct-strip {
+    .oi-summary-grid {
       display: grid;
       grid-template-columns: repeat(auto-fit, minmax(175px, 1fr));
       gap: 8px;
       margin-bottom: 12px;
     }
-    .struct-box {
+    .oi-stat {
       background: var(--surface-2);
       border: 1px solid var(--border-soft);
       border-radius: 9px;
       padding: 8px 10px;
-      font-size: 0.73rem;
     }
-    .struct-box span { display: block; color: var(--muted); font-size: 0.65rem; text-transform: uppercase; font-weight: 700; }
-    .struct-box strong { font-size: 0.85rem; margin-top: 2px; display: block; }
+    .oi-stat span { display: block; font-size: 0.65rem; font-weight: 700; text-transform: uppercase; color: var(--muted); }
+    .oi-stat strong { display: block; font-size: 0.85rem; margin-top: 2px; }
 
-    .legend-strip { display: flex; flex-wrap: wrap; gap: 8px; margin-bottom: 12px; font-size: 0.73rem; }
-    .box-pill { padding: 3px 9px; border-radius: 6px; font-weight: 700; display: inline-block; }
-    .box-strong-sup { background: var(--bull-bg); color: #6ee7b7; border: 1.5px solid var(--bull); }
-    .box-strong-res { background: var(--bear-bg); color: #fda4af; border: 1.5px solid var(--bear); }
-    .box-weak-sr { background: var(--warn-bg); color: #fde68a; border: 1.5px solid var(--warn); }
+    .cell-sup { background: var(--bull-bg) !important; border: 1.5px solid var(--bull) !important; color: #a7f3d0 !important; font-weight: 700; border-radius: 5px; }
+    .cell-res { background: var(--bear-bg) !important; border: 1.5px solid var(--bear) !important; color: #fecdd3 !important; font-weight: 700; border-radius: 5px; }
+    .cell-weak { background: var(--warn-bg) !important; border: 1.5px solid var(--warn) !important; color: #fef08a !important; font-weight: 700; border-radius: 5px; }
 
-    .table-wrap { overflow-x: auto; max-height: 440px; overflow-y: auto; border-radius: 10px; border: 1px solid var(--border); }
-    table.oc-table { width: 100%; border-collapse: collapse; font-size: 0.75rem; }
-    table.oc-table th {
-      position: sticky;
-      top: 0;
-      background: #090f1b;
-      color: var(--muted);
-      font-weight: 700;
-      padding: 8px 9px;
-      border-bottom: 1px solid var(--border);
-      text-align: right;
-      z-index: 2;
-    }
-    table.oc-table th.center, table.oc-table td.center { text-align: center; }
-    table.oc-table td { padding: 7px 9px; border-bottom: 1px solid var(--border-soft); text-align: right; vertical-align: middle; }
-    tr.atm-row { background: rgba(56, 189, 248, 0.09); }
-    .cell-box-green { background: var(--bull-bg) !important; border: 1.5px solid var(--bull) !important; color: #a7f3d0 !important; font-weight: 700; border-radius: 5px; }
-    .cell-box-red { background: var(--bear-bg) !important; border: 1.5px solid var(--bear) !important; color: #fecdd3 !important; font-weight: 700; border-radius: 5px; }
-    .cell-box-yellow { background: var(--warn-bg) !important; border: 1.5px solid var(--warn) !important; color: #fef08a !important; font-weight: 700; border-radius: 5px; }
-    .impact-col { text-align: left !important; min-width: 230px; font-size: 0.73rem; color: #cbd5e1; }
-
-    .empty-box { background: var(--surface); border: 1px dashed var(--border); border-radius: 12px; padding: 28px; text-align: center; color: var(--muted); }
-    .wf-banner {
+    /* Risk & Walk-Forward Ledger */
+    .ledger-panel {
       margin-top: 20px;
       background: var(--surface);
       border: 1px solid var(--border);
-      border-radius: 12px;
-      padding: 13px 16px;
-      display: flex;
-      flex-wrap: wrap;
-      justify-content: space-between;
-      align-items: center;
+      border-radius: 14px;
+      padding: 15px 16px;
+    }
+    .ledger-grid {
+      display: grid;
+      grid-template-columns: repeat(auto-fit, minmax(150px, 1fr));
       gap: 10px;
-      font-size: 0.79rem;
+      margin-top: 10px;
+    }
+    .ledger-cell {
+      background: var(--surface-2);
+      border: 1px solid var(--border-soft);
+      border-radius: 9px;
+      padding: 9px 11px;
+    }
+    .ledger-cell span { display: block; font-size: 0.67rem; font-weight: 700; text-transform: uppercase; color: var(--muted); }
+    .ledger-cell strong { display: block; font-size: 0.95rem; margin-top: 2px; }
+
+    .disclaimer {
+      margin-top: 12px;
+      padding: 10px 12px;
+      border-radius: 8px;
+      background: rgba(245, 158, 11, 0.08);
+      border: 1px solid rgba(245, 158, 11, 0.3);
+      font-size: 0.75rem;
+      color: #fde68a;
     }
 
-    @media (max-width: 1024px) {
-      .pitch-strip { grid-template-columns: repeat(2, 1fr); }
+    .empty-state {
+      background: var(--surface);
+      border: 1px dashed var(--border);
+      border-radius: 12px;
+      padding: 28px 18px;
+      text-align: center;
+      color: var(--muted);
     }
+
     @media (max-width: 900px) {
-      .guardrail-bar, .intel-grid { grid-template-columns: 1fr; }
+      .context-grid { grid-template-columns: 1fr; }
     }
-    @media (max-width: 640px) {
-      .pitch-strip, .cards-grid { grid-template-columns: 1fr; }
+    @media (max-width: 600px) {
+      .topbar { padding: 10px 14px; }
+      .container { padding: 14px 14px 54px; }
+      .cards-grid { grid-template-columns: 1fr; }
       .levels { grid-template-columns: repeat(2, 1fr); }
     }
   </style>
@@ -541,474 +536,453 @@
 <body>
   <header class="topbar">
     <div class="brand">
-      <div class="pulse-dot" id="statusDot"></div>
+      <div class="status-dot" id="headerStatusDot"></div>
       <div>
-        <h1>
-          <span id="deskTitle">Quant &amp; Hedging Desk</span>
-          <span class="mode-badge mono" id="modeChip">LIVE</span>
-        </h1>
-        <small id="lastUpdated">Loading institutional market snapshot...</small>
+        <div class="brand-title">
+          <span id="brandTitle">My-Stock-Screener — Quant &amp; Hedging Desk</span>
+          <span class="chip chip-mode mono" id="modeBadge">MODE</span>
+          <span class="chip mono" id="freshnessBadge">CHECKING DATA</span>
+        </div>
+        <small id="metaSubtitle">Loading snapshot manifest and market data...</small>
       </div>
     </div>
 
     <div class="controls">
-      <div class="mode-switcher seg-group" role="group" aria-label="Screener Mode Switcher">
-        <button type="button" class="seg-btn" id="btnLatest">LATEST</button>
-        <button type="button" class="seg-btn" id="btnMorning">☀ MORNING</button>
-        <button type="button" class="seg-btn" id="btnBtst">🌙 BTST</button>
+      <div class="seg-group" role="group" aria-label="Snapshot Mode">
+        <button type="button" class="seg-btn active" id="btnLatest">LATEST</button>
+        <button type="button" class="seg-btn" id="btnMorning">MORNING</button>
+        <button type="button" class="seg-btn" id="btnBtst">BTST</button>
       </div>
 
-      <div class="seg-group" role="group" aria-label="Display Mode">
-        <button type="button" class="seg-btn active-view" id="viewCardsBtn">Cards</button>
+      <div class="seg-group" role="group" aria-label="Layout View">
+        <button type="button" class="seg-btn active" id="viewCardsBtn">Cards</button>
         <button type="button" class="seg-btn" id="viewTableBtn">Table</button>
       </div>
 
-      <button type="button" class="btn-ghost live-on" id="liveTickBtn" title="Toggle Live Tick Polling">● LIVE TICK (10s)</button>
-
-      <select id="historySelect" title="Select Historical Session">
-        <option value="data/latest.json">Latest Run (Fresh)</option>
+      <select id="historySelect" title="Select Historical Snapshot">
+        <option value="data/latest.json">Latest Snapshot (data/latest.json)</option>
       </select>
 
-      <button class="btn-primary" id="refreshBtn" type="button">↻ Refresh</button>
+      <button type="button" class="btn btn-primary" id="syncBtn">Refresh Snapshot</button>
+      <button type="button" class="btn btn-ghost active" id="autoPollBtn" title="Poll snapshot files every 15s (batch snapshot sync, not tick streaming)">Auto-Sync: 15s</button>
+      <button type="button" class="btn btn-dispatch" id="toggleDispatchBtn">Refresh &amp; Run</button>
     </div>
   </header>
 
   <main class="container">
-    <section class="pitch-strip" id="pitchStrip"></section>
+    <section class="status-banner" id="statusBanner" role="status" aria-live="polite"></section>
 
-    <section class="guardrail-bar" id="guardrailBar"></section>
+    <section class="dispatch-panel" id="dispatchPanel" aria-label="GitHub Workflow Dispatch Configuration">
+      <div style="display:flex; justify-content:space-between; align-items:center; flex-wrap:wrap; gap:8px;">
+        <div>
+          <strong style="font-size:0.84rem;">GitHub Actions Workflow Dispatch (Local Browser Storage Only)</strong>
+          <div class="muted" style="font-size:0.72rem;">
+            Never commit tokens to code. Your fine-grained PAT is saved only in this browser's <code>localStorage</code> when you enter it and can be cleared anytime.
+          </div>
+        </div>
+        <button type="button" class="btn btn-ghost" id="clearDispatchBtn">Clear Saved Config</button>
+      </div>
 
-    <div class="history-ribbon" id="historyPills"></div>
+      <div class="dispatch-grid">
+        <div class="field">
+          <label for="ghOwner">GitHub Owner</label>
+          <input type="text" id="ghOwner" placeholder="e.g. Yashraj306" autocomplete="off" />
+        </div>
+        <div class="field">
+          <label for="ghRepo">Repository Name</label>
+          <input type="text" id="ghRepo" placeholder="e.g. My-Stock-Screener" autocomplete="off" />
+        </div>
+        <div class="field">
+          <label for="ghWorkflow">Workflow File</label>
+          <input type="text" id="ghWorkflow" placeholder="screener.yml" value="screener.yml" autocomplete="off" />
+        </div>
+        <div class="field">
+          <label for="ghRef">Branch / Ref</label>
+          <input type="text" id="ghRef" placeholder="main" value="main" autocomplete="off" />
+        </div>
+        <div class="field">
+          <label for="ghMode">Run Mode</label>
+          <select id="ghMode">
+            <option value="MORNING">MORNING</option>
+            <option value="BTST">BTST</option>
+          </select>
+        </div>
+        <div class="field">
+          <label for="ghPat">Fine-Grained PAT (Local Only)</label>
+          <input type="password" id="ghPat" placeholder="github_pat_..." autocomplete="off" />
+        </div>
+      </div>
 
-    <section class="kpi-grid" id="kpiGrid"></section>
+      <div style="display:flex; flex-wrap:wrap; align-items:center; justify-content:space-between; gap:10px; margin-top:12px;">
+        <div class="controls">
+          <button type="button" class="btn btn-dispatch" id="triggerDispatchBtn">Trigger Workflow &amp; Poll Snapshot</button>
+          <button type="button" class="btn btn-ghost" id="saveDispatchBtn">Save Locally</button>
+        </div>
+        <span class="mono muted" id="dispatchStatusText" style="font-size:0.74rem;">Ready.</span>
+      </div>
+    </section>
 
-    <section class="intel-grid" id="intelGrid"></section>
+    <nav class="history-ribbon" id="historyPills" aria-label="Historical Snapshots"></nav>
 
-    <section class="filter-bar">
-      <div class="tabs" id="categoryTabs">
-        <button class="tab active" data-tab="ALL">All Setups</button>
-        <button class="tab" data-tab="INDEX">Index Ideas</button>
-        <button class="tab" data-tab="OPT_BULL">Stock Options Bull</button>
-        <button class="tab" data-tab="OPT_BEAR">Stock Options Bear</button>
-        <button class="tab" data-tab="EQ_INTRA">Intraday Equity (10)</button>
+    <section class="ticker-strip" id="tickerStrip" aria-label="Market Snapshot Strip"></nav>
+
+    <section class="kpi-grid" id="kpiGrid" aria-label="Key Market Metrics"></section>
+
+    <section class="context-grid" id="contextGrid" aria-label="Global Cues and Sector Strength"></section>
+
+    <section class="filter-bar" aria-label="Setup Filters">
+      <div class="tabs" id="navTabs" role="tablist">
+        <button type="button" class="tab active" data-tab="ALL" role="tab">All Setups</button>
+        <button type="button" class="tab" data-tab="INDEX" role="tab">Index</button>
+        <button type="button" class="tab" data-tab="OPT_BULL" role="tab">Options Bullish</button>
+        <button type="button" class="tab" data-tab="OPT_BEAR" role="tab">Options Bearish</button>
+        <button type="button" class="tab" data-tab="EQ_INTRA" role="tab">Equity Intraday</button>
+        <button type="button" class="tab" data-tab="OI_OVERVIEW" role="tab">Option Chain / OI Overview</button>
       </div>
       <div class="controls">
         <select id="sectorFilter" title="Filter by Sector">
           <option value="ALL">All Sectors</option>
         </select>
-        <input type="search" id="searchInput" placeholder="Search symbol (e.g. NIFTY, RELIANCE)..." />
+        <input type="search" id="searchInput" placeholder="Filter symbol (e.g. NIFTY, RELIANCE)..." aria-label="Search symbol" />
+        <button type="button" class="btn btn-ghost" id="resetFiltersBtn">Reset</button>
       </div>
     </section>
 
-    <div id="contentArea"></div>
+    <div id="mainWorkspace"></div>
 
-    <section class="oc-panel" id="optionChainPanel">
-      <div class="oc-header">
-        <div>
-          <h2 id="ocTitle" style="font-size:1.02rem; font-weight:800;">Live Option Chain &amp; Structural Levels</h2>
-          <small id="ocMeta" style="color:var(--muted);">OI Change, Contracts Added, % Change &amp; Support/Resistance Impact</small>
-        </div>
-        <div class="controls">
-          <select id="ocSymbolSelect" title="Select Symbol for Live Option Chain"></select>
-          <span class="mono" id="ocTickClock" style="font-size:0.75rem; color:var(--accent);">Tick: —</span>
-        </div>
-      </div>
-
-      <div class="struct-strip" id="ocStructStrip"></div>
-
-      <div class="legend-strip">
-        <span class="box-pill box-strong-sup">🟢 Strong Support (Green Box)</span>
-        <span class="box-pill box-strong-res">🔴 Strong Resistance (Red Box)</span>
-        <span class="box-pill box-weak-sr">🟡 Weak Support / Weak Resistance &amp; Shift (Yellow Box)</span>
-      </div>
-
-      <div id="ocBody"></div>
-    </section>
-
-    <section class="wf-banner" id="wfBanner"></section>
+    <section class="ledger-panel" id="ledgerPanel" aria-label="Risk and Walk-Forward Ledger"></section>
   </main>
   <script>
-    let currentPayload = null;
-    let allSnapshots = [];
-    let activeTab = 'ALL';
-    let viewMode = 'CARDS';
-    let selectedFile = 'data/latest.json';
-    let selectedDate = null;
-    let selectedChainSymbol = null;
-    let liveTickEnabled = true;
-    let tickTimer = null;
+    const STORAGE_KEY = "mss_gh_dispatch_v1";
+    const IST_OFFSET_MS = (5 * 60 + 30) * 60 * 1000;
 
-    const fmtNum = (v) => (v === null || v === undefined || v === '') ? '—' : v;
-    const fmtInt = (v) => {
+    const state = {
+      payload: null,
+      snapshots: [],
+      activeTab: "ALL",
+      viewMode: "CARDS",
+      selectedFile: "data/latest.json",
+      selectedDate: null,
+      selectedChainSymbol: null,
+      autoPoll: true,
+      pollTimer: null,
+      dispatchPollTimer: null,
+      lastKnownGeneratedAt: null,
+      loadError: null,
+    };
+
+    function escapeHtml(val) {
+      if (val === null || val === undefined) return "";
+      return String(val)
+        .replace(/&/g, "&amp;")
+        .replace(/</g, "&lt;")
+        .replace(/>/g, "&gt;")
+        .replace(/"/g, "&quot;")
+        .replace(/'/g, "&#39;");
+    }
+
+    function fmtNum(v, decimals = null) {
+      if (v === null || v === undefined || v === "") return "—";
       const n = Number(v);
-      return Number.isFinite(n) ? n.toLocaleString('en-IN') : '—';
-    };
-    const chgClass = (txt) => {
-      const s = String(txt || '');
-      if (s.includes('-')) return 'neg';
-      if (s.includes('+') || parseFloat(s) > 0) return 'pos';
-      return 'neu';
-    };
-
-    function compactTimingLabel(rawTiming) {
-      const t = String(rawTiming || '').toUpperCase();
-      if (!t) return 'IN-ZONE';
-      if (t.includes('EXTENDED') && t.includes('TOP')) return 'EXTENDED TOP';
-      if (t.includes('EXTENDED') && t.includes('DOWN')) return 'EXTENDED LOW';
-      if (t.includes('MODERATELY') && t.includes('UP')) return 'STRETCHED UP';
-      if (t.includes('MODERATELY') && t.includes('DOWN')) return 'STRETCHED DN';
-      if (t.includes('HEALTHY') || t.includes('IN-ZONE')) return 'IN-ZONE';
-      return t.slice(0, 14);
-    }
-
-    function computeEffectiveRange(item) {
-      if (item.avg_range_rs !== undefined && item.avg_range_rs !== null && Number(item.avg_range_rs) > 0) {
-        return `₹${Number(item.avg_range_rs).toFixed(1)}`;
+      if (Number.isFinite(n) && decimals !== null) {
+        return n.toLocaleString("en-IN", { minimumFractionDigits: decimals, maximumFractionDigits: decimals });
       }
-      const e = Number(item.entry);
-      const t1 = Number(item.target_1);
-      if (Number.isFinite(e) && Number.isFinite(t1) && e > 0 && t1 > 0 && e !== t1) {
-        const estDailyRange = Math.abs(t1 - e) / 1.8;
-        return `~₹${estDailyRange.toFixed(1)}`;
+      return escapeHtml(v);
+    }
+
+    function fmtInt(v) {
+      const n = Number(v);
+      return Number.isFinite(n) ? n.toLocaleString("en-IN") : "—";
+    }
+
+    function chgClass(val) {
+      const s = String(val ?? "");
+      if (s.includes("-")) return "neg";
+      const num = parseFloat(s.replace("%", ""));
+      if (Number.isFinite(num)) {
+        if (num > 0) return "pos";
+        if (num < 0) return "neg";
       }
-      return '—';
+      return "muted";
     }
 
-    async function fetchJsonNoCache(url) {
-      const sep = url.includes('?') ? '&' : '?';
-      const res = await fetch(`${url}${sep}_ts=${Date.now()}`, { cache: 'no-store' });
-      if (!res.ok) throw new Error(`HTTP ${res.status}`);
-      return res.json();
+    function formatChangeStr(val) {
+      if (val === null || val === undefined || val === "") return "—";
+      const str = String(val).trim();
+      if (str.endsWith("%")) return str;
+      const num = Number(str);
+      if (Number.isFinite(num)) {
+        return `${num >= 0 ? "+" : ""}${num.toFixed(2)}%`;
+      }
+      return escapeHtml(str);
     }
 
-    function getAllSetups(payload) {
+    async function fetchJson(url, timeoutMs = 10000) {
+      const controller = new AbortController();
+      const timer = setTimeout(() => controller.abort(), timeoutMs);
+      try {
+        const sep = url.includes("?") ? "&" : "?";
+        const resp = await fetch(`${url}${sep}_ts=${Date.now()}`, {
+          cache: "no-store",
+          signal: controller.signal,
+        });
+        if (!resp.ok) {
+          throw new Error(`HTTP ${resp.status} while fetching ${url}`);
+        }
+        return await resp.json();
+      } finally {
+        clearTimeout(timer);
+      }
+    }
+
+    function getNowIstParts() {
+      const nowUtc = Date.now();
+      const istDate = new Date(nowUtc + IST_OFFSET_MS);
+      const day = istDate.getUTCDay();
+      const mins = istDate.getUTCHours() * 60 + istDate.getUTCMinutes();
+      const isWeekday = day >= 1 && day <= 5;
+      const isMarketHours = isWeekday && mins >= (9 * 60 + 15) && mins <= (15 * 60 + 30);
+      const istLabel = istDate.toISOString().replace("T", " ").slice(0, 19) + " IST";
+      return { nowUtc, isWeekday, isMarketHours, istLabel };
+    }
+
+    function parseSnapshotAgeMinutes(generatedAtStr) {
+      if (!generatedAtStr) return null;
+      const m = String(generatedAtStr).trim().match(/^(\d{4}-\d{2}-\d{2})[T\s](\d{2}):(\d{2}):(\d{2})/);
+      if (!m) return null;
+      const [, ymd, hh, mm, ss] = m;
+      const [y, mo, d] = ymd.split("-").map(Number);
+      const snapIstAsUtcMs = Date.UTC(y, mo - 1, d, Number(hh), Number(mm), Number(ss));
+      const snapActualUtcMs = snapIstAsUtcMs - IST_OFFSET_MS;
+      const diffMin = Math.round((Date.now() - snapActualUtcMs) / 60000);
+      return Number.isFinite(diffMin) ? diffMin : null;
+    }
+
+    function getAllInstruments(payload) {
       if (!payload) return [];
-      return [
-        ...(payload.index_trades || []),
-        ...(payload.options_bullish || (payload.setups || {}).bullish || []),
-        ...(payload.options_bearish || (payload.setups || {}).bearish || []),
-        ...(payload.equity_intraday || []),
+      const seen = new Set();
+      const out = [];
+      const lists = [
+        payload.index_trades || [],
+        payload.options_bullish || (payload.setups && payload.setups.bullish) || [],
+        payload.options_bearish || (payload.setups && payload.setups.bearish) || [],
+        payload.equity_intraday || [],
       ];
-    }
-
-    function findModeFileForDate(targetDate, targetMode) {
-      const mUpper = targetMode.toUpperCase();
-      if (targetDate) {
-        const exact = allSnapshots.find(
-          (s) => s.date === targetDate && String(s.mode || '').toUpperCase() === mUpper
-        );
-        if (exact) return exact.file;
+      for (const arr of lists) {
+        for (const item of arr) {
+          if (!item || !item.symbol) continue;
+          const sym = String(item.symbol).toUpperCase();
+          if (!seen.has(sym)) {
+            seen.add(sym);
+            out.push(item);
+          }
+        }
       }
-      const latestOfMode = allSnapshots.find(
-        (s) => String(s.mode || '').toUpperCase() === mUpper
-      );
-      return latestOfMode ? latestOfMode.file : null;
+      return out;
     }
 
-    function updateModeButtons(activeModeRaw) {
-      const activeMode = String(activeModeRaw || '').toUpperCase();
-      const btnLatest = document.getElementById('btnLatest');
-      const btnMorning = document.getElementById('btnMorning');
-      const btnBtst = document.getElementById('btnBtst');
+    function findModeFile(targetDate, modeName) {
+      const m = String(modeName || "").toUpperCase();
+      if (targetDate) {
+        const match = state.snapshots.find(
+          (s) => s.date === targetDate && String(s.mode || "").toUpperCase() === m
+        );
+        if (match) return match.file;
+      }
+      const fallback = state.snapshots.find((s) => String(s.mode || "").toUpperCase() === m);
+      return fallback ? fallback.file : null;
+    }
 
-      const morningFile = findModeFileForDate(selectedDate, 'MORNING');
-      const btstFile = findModeFileForDate(selectedDate, 'BTST');
+    function syncModeButtons() {
+      const activeMode = String((state.payload && state.payload.mode) || "").toUpperCase();
+      const morningFile = findModeFile(state.selectedDate, "MORNING");
+      const btstFile = findModeFile(state.selectedDate, "BTST");
 
+      const btnLatest = document.getElementById("btnLatest");
+      const btnMorning = document.getElementById("btnMorning");
+      const btnBtst = document.getElementById("btnBtst");
+
+      btnLatest.classList.toggle("active", state.selectedFile === "data/latest.json");
       btnMorning.disabled = !morningFile;
       btnBtst.disabled = !btstFile;
 
-      btnLatest.className = 'seg-btn' + (selectedFile === 'data/latest.json' ? ' active-latest' : '');
-      btnMorning.className = 'seg-btn' + (activeMode === 'MORNING' && selectedFile !== 'data/latest.json' ? ' active-morning' : '');
-      btnBtst.className = 'seg-btn' + (activeMode === 'BTST' && selectedFile !== 'data/latest.json' ? ' active-btst' : '');
+      const morningSelected = state.selectedFile === morningFile || (state.selectedFile === "data/latest.json" && activeMode === "MORNING");
+      const btstSelected = state.selectedFile === btstFile || (state.selectedFile === "data/latest.json" && activeMode === "BTST");
 
-      if (selectedFile === 'data/latest.json') {
-        if (activeMode === 'MORNING') btnMorning.classList.add('active-morning');
-        if (activeMode === 'BTST') btnBtst.classList.add('active-btst');
-      }
+      btnMorning.classList.toggle("active", Boolean(morningSelected && morningFile));
+      btnBtst.classList.toggle("active", Boolean(btstSelected && btstFile));
     }
 
     async function loadManifest() {
       try {
-        const manifest = await fetchJsonNoCache('data/manifest.json');
-        allSnapshots = manifest.snapshots || [];
-        const sel = document.getElementById('historySelect');
-        const pills = document.getElementById('historyPills');
+        const manifest = await fetchJson("data/manifest.json");
+        state.snapshots = Array.isArray(manifest.snapshots) ? manifest.snapshots : [];
+        const sel = document.getElementById("historySelect");
+        const pills = document.getElementById("historyPills");
 
-        sel.innerHTML = `<option value="data/latest.json">Latest Run (Fresh)</option>`;
-        pills.innerHTML = `<button class="pill ${selectedFile === 'data/latest.json' ? 'active' : ''}" data-file="data/latest.json">● Latest</button>`;
+        const currentVal = state.selectedFile;
+        sel.innerHTML = `<option value="data/latest.json">Latest Snapshot (data/latest.json)</option>`;
+        pills.innerHTML = `<button type="button" class="pill ${currentVal === "data/latest.json" ? "active" : ""}" data-file="data/latest.json">Latest</button>`;
 
         const seenDates = new Set();
-        allSnapshots.forEach((snap) => {
-          const opt = document.createElement('option');
+        for (const snap of state.snapshots) {
+          const opt = document.createElement("option");
           opt.value = snap.file;
-          opt.textContent = `${snap.date} [${snap.mode}] — ${snap.ideas_count} Ideas (${snap.breadth_tone})`;
+          opt.textContent = `${snap.date} [${snap.mode || "RUN"}] — ${snap.ideas_count ?? 0} Setups (${snap.breadth_tone || "MIXED"})`;
           sel.appendChild(opt);
 
-          if (!seenDates.has(snap.date) && seenDates.size < 14) {
+          if (snap.date && !seenDates.has(snap.date) && seenDates.size < 14) {
             seenDates.add(snap.date);
-            const btn = document.createElement('button');
-            btn.className = `pill ${selectedFile === snap.file ? 'active' : ''}`;
+            const btn = document.createElement("button");
+            btn.type = "button";
+            btn.className = `pill ${state.selectedDate === snap.date && currentVal !== "data/latest.json" ? "active" : ""}`;
             btn.dataset.file = snap.file;
             btn.dataset.date = snap.date;
-            btn.textContent = `${snap.date} (${snap.ideas_count})`;
-            btn.onclick = () => switchSnapshot(snap.file, snap.date);
+            btn.textContent = `${snap.date} (${snap.ideas_count ?? 0})`;
+            btn.addEventListener("click", () => selectSnapshot(snap.file, snap.date));
             pills.appendChild(btn);
           }
+        }
+
+        pills.querySelector('[data-file="data/latest.json"]').addEventListener("click", () => {
+          selectSnapshot("data/latest.json", null);
         });
-
-        pills.querySelector('[data-file="data/latest.json"]').onclick = () => switchSnapshot('data/latest.json', null);
-        sel.value = selectedFile;
-      } catch (e) {
-        console.warn('Manifest not ready yet:', e);
-      }
-    }
-
-    async function switchSnapshot(filePath, dateOverride = null) {
-      selectedFile = filePath;
-      if (dateOverride !== null) {
-        selectedDate = dateOverride;
-      } else if (filePath === 'data/latest.json') {
-        selectedDate = null;
-      } else {
-        const found = allSnapshots.find((s) => s.file === filePath);
-        if (found) selectedDate = found.date;
-      }
-
-      document.getElementById('historySelect').value = filePath;
-      document.querySelectorAll('.pill').forEach(p => {
-        const isMatch = p.dataset.file === filePath || (selectedDate && p.dataset.date === selectedDate);
-        p.classList.toggle('active', Boolean(isMatch));
-      });
-      await loadSnapshot(filePath);
-    }
-
-    async function loadSnapshot(filePath, isBackgroundTick = false) {
-      const btn = document.getElementById('refreshBtn');
-      if (!isBackgroundTick) btn.textContent = '↻ Syncing...';
-      try {
-        const data = await fetchJsonNoCache(filePath);
-        currentPayload = data;
-        if (!selectedDate && data.session_date) {
-          selectedDate = data.session_date;
-        }
-        renderDashboard(data);
-        updateModeButtons(data.mode);
-        document.getElementById('ocTickClock').textContent = `Tick: ${new Date().toLocaleTimeString('en-IN')}`;
+        sel.value = Array.from(sel.options).some((o) => o.value === currentVal) ? currentVal : "data/latest.json";
       } catch (err) {
-        if (!isBackgroundTick) {
-          document.getElementById('contentArea').innerHTML = `
-            <div class="empty-box">
-              <h3>Snapshot not published yet (${filePath})</h3>
-              <p style="margin-top:6px;">Run the GitHub Actions screener workflow to generate <code>docs/data/latest.json</code> and daily archives.</p>
-            </div>`;
-          document.getElementById('ocBody').innerHTML = `<div class="empty-box">Option chain feed unavailable until snapshot generation completes.</div>`;
-        }
-        updateModeButtons('');
-      } finally {
-        if (!isBackgroundTick) btn.textContent = '↻ Refresh';
+        console.warn("Manifest load issue:", err.message);
       }
     }
 
-    function populateSectorsAndChainSelector(payload) {
-      const allItems = getAllSetups(payload);
-      const sectors = Array.from(new Set(allItems.map(x => x.sector).filter(Boolean))).sort();
-      const sel = document.getElementById('sectorFilter');
+    async function selectSnapshot(filePath, dateOverride = null, isPoll = false) {
+      state.selectedFile = filePath;
+      if (dateOverride !== null) {
+        state.selectedDate = dateOverride;
+      } else if (filePath === "data/latest.json") {
+        state.selectedDate = null;
+      } else {
+        const found = state.snapshots.find((s) => s.file === filePath);
+        if (found) state.selectedDate = found.date;
+      }
+
+      document.getElementById("historySelect").value = filePath;
+      document.querySelectorAll("#historyPills .pill").forEach((el) => {
+        const match =
+          (filePath === "data/latest.json" && el.dataset.file === "data/latest.json") ||
+          (state.selectedDate && el.dataset.date === state.selectedDate && filePath !== "data/latest.json");
+        el.classList.toggle("active", Boolean(match));
+      });
+
+      await loadSnapshot(filePath, isPoll);
+    }
+
+    async function loadSnapshot(filePath, isPoll = false) {
+      const syncBtn = document.getElementById("syncBtn");
+      if (!isPoll) syncBtn.textContent = "Syncing...";
+
+      try {
+        const data = await fetchJson(filePath);
+        state.payload = data;
+        state.loadError = null;
+        if (!state.selectedDate && data.session_date) {
+          state.selectedDate = data.session_date;
+        }
+        state.lastKnownGeneratedAt = data.generated_at_ist || null;
+        renderAll();
+        syncModeButtons();
+      } catch (err) {
+        state.loadError = err.message || String(err);
+        if (!isPoll) {
+          renderAll();
+        }
+        syncModeButtons();
+      } finally {
+        if (!isPoll) syncBtn.textContent = "Refresh Snapshot";
+      }
+    }
+
+    function populateFilters() {
+      const items = getAllInstruments(state.payload);
+      const sectors = Array.from(new Set(items.map((x) => x.sector).filter(Boolean))).sort();
+      const sel = document.getElementById("sectorFilter");
       const prev = sel.value;
       sel.innerHTML = `<option value="ALL">All Sectors (${sectors.length})</option>` +
-        sectors.map(s => `<option value="${s}">${s}</option>`).join('');
+        sectors.map((s) => `<option value="${escapeHtml(s)}">${escapeHtml(s)}</option>`).join("");
       if (sectors.includes(prev)) sel.value = prev;
 
-      const symList = Array.from(new Set(allItems.map(x => x.symbol).filter(Boolean)));
-      const ocSel = document.getElementById('ocSymbolSelect');
-      if (!selectedChainSymbol || !symList.includes(selectedChainSymbol)) {
-        selectedChainSymbol = symList.includes('NIFTY') ? 'NIFTY' : (symList[0] || null);
+      if (!state.selectedChainSymbol || !items.some((x) => x.symbol === state.selectedChainSymbol)) {
+        const hasNifty = items.some((x) => String(x.symbol).toUpperCase() === "NIFTY");
+        state.selectedChainSymbol = hasNifty ? "NIFTY" : (items[0] ? items[0].symbol : null);
       }
-      ocSel.innerHTML = symList.map(sym =>
-        `<option value="${sym}" ${sym === selectedChainSymbol ? 'selected' : ''}>${sym}</option>`
-      ).join('');
     }
 
-    function renderOptionChainPanel(payload) {
-      const allItems = getAllSetups(payload);
-      const item = allItems.find(x => x.symbol === selectedChainSymbol) || allItems[0];
-      const titleEl = document.getElementById('ocTitle');
-      const metaEl = document.getElementById('ocMeta');
-      const structEl = document.getElementById('ocStructStrip');
-      const bodyEl = document.getElementById('ocBody');
-
-      if (!item) {
-        titleEl.textContent = 'Live Option Chain & Structural Levels';
-        structEl.innerHTML = '';
-        bodyEl.innerHTML = `<div class="empty-box">No instruments available in this snapshot.</div>`;
-        return;
-      }
-
-      const cs = item.chain_summary || {};
-      const ca = item.chain_analytics || {};
-      const rows = Array.isArray(item.option_chain) ? item.option_chain : [];
-
-      titleEl.textContent = `Live Option Chain — ${item.symbol} (Spot: ${fmtNum(item.spot || item.entry)})`;
-      metaEl.innerHTML = `
-        Expiry: <strong class="mono">${fmtNum(item.option_expiry || cs.expiry)}</strong> •
-        PCR: <strong class="mono">${fmtNum(cs.pcr)}</strong> •
-        OI Build-up: <strong class="mono">${fmtNum(cs.oi_build_up)}</strong> •
-        Max Pain: <strong class="mono">${fmtNum(cs.max_pain)}</strong>
-      `;
-
-      structEl.innerHTML = `
-        <div class="struct-box">
-          <span>Market Regime State</span>
-          <strong class="mono">${fmtNum(ca.sentiment_state)}</strong>
-        </div>
-        <div class="struct-box">
-          <span>Strong / Weak Support</span>
-          <strong class="pos mono">${fmtNum(ca.strong_support)} / ${fmtNum(ca.weak_support)} (${fmtNum(ca.support_shift)} ${fmtNum(ca.support_shift_pct)}%)</strong>
-        </div>
-        <div class="struct-box">
-          <span>Strong / Weak Resistance</span>
-          <strong class="neg mono">${fmtNum(ca.strong_resistance)} / ${fmtNum(ca.weak_resistance)} (${fmtNum(ca.resistance_shift)} ${fmtNum(ca.resistance_shift_pct)}%)</strong>
-        </div>
-        <div class="struct-box">
-          <span>EOS (±1 Divergence)</span>
-          <strong class="pos mono">${fmtNum(ca.eos)} <small class="muted">(${fmtNum(ca.eos_minus_1)} / ${fmtNum(ca.eos_plus_1)})</small></strong>
-        </div>
-        <div class="struct-box">
-          <span>EOR (±1 Divergence)</span>
-          <strong class="neg mono">${fmtNum(ca.eor)} <small class="muted">(${fmtNum(ca.eor_minus_1)} / ${fmtNum(ca.eor_plus_1)})</small></strong>
-        </div>
-      `;
-
-      if (!rows.length) {
-        bodyEl.innerHTML = `
-          <div class="empty-box">
-            <strong>Option chain strike rows unavailable for ${item.symbol} in this run.</strong>
-            <p style="margin-top:6px; font-size:0.78rem;">Verify live F&amp;O contract mapping and market-hours Upstox feed for ${item.symbol}.</p>
-          </div>`;
-        return;
-      }
-
-      const bodyHtml = rows.map(r => {
-        const isStrongSup = r.zone_role === 'STRONG_SUPPORT';
-        const isStrongRes = r.zone_role === 'STRONG_RESISTANCE';
-        const isWeakZone = r.zone_role === 'WEAK_SUPPORT' || r.zone_role === 'WEAK_RESISTANCE';
-
-        const peBoxCls = isStrongSup ? 'cell-box-green' : (r.zone_role === 'WEAK_SUPPORT' ? 'cell-box-yellow' : '');
-        const ceBoxCls = isStrongRes ? 'cell-box-red' : (r.zone_role === 'WEAK_RESISTANCE' ? 'cell-box-yellow' : '');
-        const strikeBoxCls = isStrongSup ? 'cell-box-green' : (isStrongRes ? 'cell-box-red' : (isWeakZone ? 'cell-box-yellow' : ''));
-
-        const roleTag = isStrongSup
-          ? '<span class="box-pill box-strong-sup">STRONG SUPPORT</span>'
-          : isStrongRes
-          ? '<span class="box-pill box-strong-res">STRONG RESISTANCE</span>'
-          : r.zone_role === 'WEAK_SUPPORT'
-          ? '<span class="box-pill box-weak-sr">WEAK SUPPORT / SHIFT</span>'
-          : r.zone_role === 'WEAK_RESISTANCE'
-          ? '<span class="box-pill box-weak-sr">WEAK RESISTANCE / SHIFT</span>'
-          : '<span class="muted">—</span>';
-
-        return `
-          <tr class="mono ${r.is_atm ? 'atm-row' : ''}">
-            <td class="${ceBoxCls}">${fmtInt(r.ce_oi)}</td>
-            <td class="${ceBoxCls} ${r.ce_chg_oi >= 0 ? 'pos' : 'neg'}">${r.ce_chg_oi >= 0 ? '+' : ''}${fmtInt(r.ce_chg_oi)} (${r.ce_chg_pct >= 0 ? '+' : ''}${fmtNum(r.ce_chg_pct)}%)</td>
-            <td class="${ceBoxCls}">${r.ce_contracts >= 0 ? '+' : ''}${fmtInt(r.ce_contracts)}</td>
-            <td>${fmtNum(r.ce_ltp)}</td>
-            <td class="center ${strikeBoxCls}">${fmtNum(r.strike)}${r.is_atm ? ' ★' : ''}</td>
-            <td>${fmtNum(r.pe_ltp)}</td>
-            <td class="${peBoxCls}">${r.pe_contracts >= 0 ? '+' : ''}${fmtInt(r.pe_contracts)}</td>
-            <td class="${peBoxCls} ${r.pe_chg_oi >= 0 ? 'pos' : 'neg'}">${r.pe_chg_oi >= 0 ? '+' : ''}${fmtInt(r.pe_chg_oi)} (${r.pe_chg_pct >= 0 ? '+' : ''}${fmtNum(r.pe_chg_pct)}%)</td>
-            <td class="${peBoxCls}">${fmtInt(r.pe_oi)}</td>
-            <td class="center">${roleTag}</td>
-            <td class="impact-col">${r.impact_note || ''}</td>
-          </tr>`;
-      }).join('');
-
-      bodyEl.innerHTML = `
-        <div class="table-wrap">
-          <table class="oc-table">
-            <thead>
-              <tr>
-                <th>Call OI</th>
-                <th>Call OI Chg (%)</th>
-                <th>Call Cntr</th>
-                <th>CE LTP</th>
-                <th class="center">Strike</th>
-                <th>PE LTP</th>
-                <th>Put Cntr</th>
-                <th>Put OI Chg (%)</th>
-                <th>Put OI</th>
-                <th class="center">Zone Box</th>
-                <th style="text-align:left;">OI Change Impact</th>
-              </tr>
-            </thead>
-            <tbody>${bodyHtml}</tbody>
-          </table>
-        </div>`;
+    function filterSetups(arr) {
+      const q = document.getElementById("searchInput").value.trim().toUpperCase();
+      const sec = document.getElementById("sectorFilter").value;
+      return (arr || []).filter((item) => {
+        if (!item) return false;
+        const symMatch = !q || String(item.symbol || "").toUpperCase().includes(q);
+        const secMatch = sec === "ALL" || String(item.sector || "") === sec;
+        return symMatch && secMatch;
+      });
     }
 
-    function openChainForSymbol(sym) {
-      selectedChainSymbol = sym;
-      document.getElementById('ocSymbolSelect').value = sym;
-      if (currentPayload) renderOptionChainPanel(currentPayload);
-      document.getElementById('optionChainPanel').scrollIntoView({ behavior: 'smooth', block: 'start' });
-    }
-
-    function buildRiskRewardGraphic(item) {
+    function buildRrBar(item) {
       const entry = Number(item.entry);
       const sl = Number(item.stop_loss);
       const t1 = Number(item.target_1);
       const t2 = Number(item.target_2);
-      if (!Number.isFinite(entry) || !Number.isFinite(sl) || !Number.isFinite(t1) || !Number.isFinite(t2)) {
-        return '';
-      }
+      if (![entry, sl, t1, t2].every(Number.isFinite)) return "";
+
       const risk = Math.max(Math.abs(entry - sl), 0.01);
-      const rew1 = Math.max(Math.abs(t1 - entry), 0.01);
-      const rew2 = Math.max(Math.abs(t2 - t1), 0.01);
-      const total = risk + rew1 + rew2;
-      const slPct = Math.round((risk / total) * 100);
-      const t1Pct = Math.round((rew1 / total) * 100);
-      const t2Pct = Math.max(100 - slPct - t1Pct, 5);
-      const rrRatio = ((rew1 + rew2) / risk).toFixed(1);
+      const leg1 = Math.max(Math.abs(t1 - entry), 0.01);
+      const leg2 = Math.max(Math.abs(t2 - t1), 0.01);
+      const total = risk + leg1 + leg2;
+      const slPct = Math.max(5, Math.round((risk / total) * 100));
+      const t1Pct = Math.max(5, Math.round((leg1 / total) * 100));
+      const t2Pct = Math.max(5, 100 - slPct - t1Pct);
+      const rrRatio = ((leg1 + leg2) / risk).toFixed(1);
 
       return `
-        <div class="rr-visual mono">
-          <div class="rr-labels">
+        <div class="rr-box mono">
+          <div class="rr-head">
             <span class="neg">Risk: ${risk.toFixed(1)}</span>
-            <span style="color:#e2e8f0;">R:R = 1 : ${rrRatio}</span>
-            <span class="pos">Reward: +${(rew1 + rew2).toFixed(1)}</span>
+            <span>R:R 1:${rrRatio}</span>
+            <span class="pos">Reward: +${(leg1 + leg2).toFixed(1)}</span>
           </div>
-          <div class="rr-bar">
-            <div class="rr-seg-sl" style="width:${slPct}%" title="Stop Loss Risk"></div>
-            <div class="rr-seg-t1" style="width:${t1Pct}%" title="Target 1 Leg"></div>
-            <div class="rr-seg-t2" style="width:${t2Pct}%" title="Target 2 Extension"></div>
+          <div class="rr-track">
+            <div class="rr-sl" style="width:${slPct}%"></div>
+            <div class="rr-t1" style="width:${t1Pct}%"></div>
+            <div class="rr-t2" style="width:${t2Pct}%"></div>
           </div>
         </div>`;
     }
 
-    function renderCard(item, tagLabel) {
-      const isBull = String(item.side || '').toUpperCase().includes('BULL') || String(item.action || '').toUpperCase().includes('BUY');
-      const badgeCls = isBull ? 'badge-bull' : 'badge-bear';
-      const optPlan = item.option_plan || {};
-      const planText = optPlan.strategy_name || optPlan.summary || (item.equity_bucket || 'Cash / Intraday Execution');
-      const rngText = computeEffectiveRange(item);
-      const timingShort = compactTimingLabel(item.extension_status);
-      const qtyUnit = tagLabel === 'INDEX' ? 'units (1 lot)' : (tagLabel === 'EQ INTRA' ? 'shares' : 'qty');
+    function renderSetupCard(item, bucketLabel) {
+      const sideUpper = String(item.side || item.action || "").toUpperCase();
+      const isBull = sideUpper.includes("BULL") || sideUpper.includes("BUY");
+      const badgeCls = isBull ? "badge-bull" : "badge-bear";
+      const plan = item.option_plan || {};
+      const planDesc = plan.strategy_name || plan.summary || item.equity_bucket || "Cash / Intraday Execution";
+      const rangeVal = item.avg_range_rs !== undefined && item.avg_range_rs !== null && Number(item.avg_range_rs) > 0
+        ? `₹${Number(item.avg_range_rs).toFixed(1)}`
+        : "—";
 
       return `
         <article class="card">
           <div class="card-top">
             <div>
               <div class="sym mono">
-                ${item.symbol}
-                <span class="${chgClass(item.change_pct)}" style="font-size:0.83rem; margin-left:4px;">(${item.change_pct >= 0 ? '+' : ''}${fmtNum(item.change_pct)}%)</span>
+                ${escapeHtml(item.symbol)}
+                <span class="${chgClass(item.change_pct)}" style="font-size:0.82rem; margin-left:4px;">${formatChangeStr(item.change_pct)}</span>
               </div>
-              <div class="sub-tags">
-                <span class="tag-pill">${item.sector || 'EQUITY'}</span>
-                <span class="tag-pill">${tagLabel}</span>
-                <span>Score: <strong class="mono">${fmtNum(item.score)}</strong></span>
-                <span>Rng: <strong class="mono">${rngText}</strong></span>
+              <div class="meta-line">
+                <span class="chip">${escapeHtml(item.sector || "EQUITY")}</span>
+                <span class="chip">${escapeHtml(bucketLabel)}</span>
+                ${item.score !== undefined ? `<span>Score: <strong class="mono">${fmtNum(item.score)}</strong></span>` : ""}
+                <span>Avg Range: <strong class="mono">${escapeHtml(rangeVal)}</strong></span>
               </div>
             </div>
-            <span class="badge ${badgeCls}">${item.side || 'SETUP'}</span>
+            <span class="badge ${badgeCls}">${escapeHtml(item.side || "SETUP")}</span>
           </div>
 
           <div class="levels mono">
@@ -1018,49 +992,50 @@
             <div class="lvl"><span>Target 2</span><strong class="pos">${fmtNum(item.target_2)}</strong></div>
           </div>
 
-          ${buildRiskRewardGraphic(item)}
+          ${buildRrBar(item)}
 
-          <div class="kv-strip">
+          <div class="kv-grid">
             <div>Best Zone: <strong class="mono">${fmtNum(item.best_entry_low)}–${fmtNum(item.best_entry_high)}</strong></div>
             <div>VWAP / OI Tgt: <strong class="mono">${fmtNum(item.vwap)} / ${fmtNum(item.oi_target)}</strong></div>
-            <div>Sizing: <strong class="mono">${fmtNum(item.qty)} ${qtyUnit}</strong></div>
-            <div>Timing: <strong class="mono">${timingShort}</strong></div>
-            <div style="grid-column: 1 / -1;">Execution: <strong>${fmtNum(planText)}</strong></div>
+            <div>Qty: <strong class="mono">${fmtNum(item.qty)}</strong></div>
+            <div>Sizing: <strong class="mono">${escapeHtml(item.sizing_status || "Standard")}</strong></div>
+            <div style="grid-column: 1 / -1;">Execution: <strong>${escapeHtml(planDesc)}</strong></div>
           </div>
 
-          <div class="rationale">${item.why_trade || item.entry_action || 'Systematic technical & relative strength alignment.'}</div>
+          <div class="rationale">${escapeHtml(item.why_trade || item.entry_action || "Technical and relative strength alignment.")}</div>
 
-          <button type="button" class="chain-btn" onclick="openChainForSymbol('${item.symbol}')">
-            📊 Inspect Option Chain &amp; S/R Zones (${item.symbol})
+          <button type="button" class="btn btn-ghost" style="width:100%;" onclick="inspectSymbolChain('${escapeHtml(String(item.symbol || "").toUpperCase())}')">
+            Inspect Option Chain / OI (${escapeHtml(item.symbol)})
           </button>
         </article>`;
     }
 
-    function renderExecutionTable(items, tagLabel) {
-      const rows = items.map(item => {
-        const isBull = String(item.side || '').toUpperCase().includes('BULL');
-        const timingShort = compactTimingLabel(item.extension_status);
-        const timingCls = timingShort.includes('EXTENDED') ? 'badge-warn' : (isBull ? 'badge-bull' : 'badge-bear');
+    function renderSetupTable(items, bucketLabel) {
+      const rows = items.map((item) => {
+        const sideUpper = String(item.side || item.action || "").toUpperCase();
+        const isBull = sideUpper.includes("BULL") || sideUpper.includes("BUY");
+        const rangeVal = item.avg_range_rs !== undefined && item.avg_range_rs !== null && Number(item.avg_range_rs) > 0
+          ? `₹${Number(item.avg_range_rs).toFixed(1)}`
+          : "—";
         return `
           <tr class="mono">
-            <td><strong>${item.symbol}</strong> <span class="muted" style="font-size:0.69rem;">(${item.sector || 'EQ'})</span></td>
-            <td><span class="badge ${isBull ? 'badge-bull' : 'badge-bear'}">${item.side || tagLabel}</span></td>
-            <td class="num ${chgClass(item.change_pct)}">${item.change_pct >= 0 ? '+' : ''}${fmtNum(item.change_pct)}%</td>
+            <td><strong>${escapeHtml(item.symbol)}</strong> <span class="muted" style="font-size:0.69rem;">(${escapeHtml(item.sector || "EQ")})</span></td>
+            <td><span class="badge ${isBull ? "badge-bull" : "badge-bear"}">${escapeHtml(item.side || bucketLabel)}</span></td>
+            <td class="num ${chgClass(item.change_pct)}">${formatChangeStr(item.change_pct)}</td>
             <td class="num">${fmtNum(item.entry)}</td>
             <td class="num neg">${fmtNum(item.stop_loss)}</td>
             <td class="num pos">${fmtNum(item.target_1)}</td>
             <td class="num pos">${fmtNum(item.target_2)}</td>
             <td class="num">${fmtNum(item.oi_target)}</td>
-            <td class="num">${computeEffectiveRange(item)}</td>
+            <td class="num">${escapeHtml(rangeVal)}</td>
             <td class="num">${fmtNum(item.qty)}</td>
-            <td><span class="badge ${timingCls}">${timingShort}</span></td>
-            <td><button type="button" class="btn-ghost" style="padding:3px 8px; font-size:0.71rem;" onclick="openChainForSymbol('${item.symbol}')">Chain</button></td>
+            <td><button type="button" class="btn btn-ghost" style="padding:3px 8px; min-height:26px; font-size:0.7rem;" onclick="inspectSymbolChain('${escapeHtml(String(item.symbol || "").toUpperCase())}')">OI Chain</button></td>
           </tr>`;
-      }).join('');
+      }).join("");
 
       return `
-        <div class="exec-table-wrap">
-          <table class="exec-table">
+        <div class="table-wrap">
+          <table class="data-table">
             <thead>
               <tr>
                 <th>Symbol</th>
@@ -1071,9 +1046,8 @@
                 <th class="num">Target 1</th>
                 <th class="num">Target 2</th>
                 <th class="num">OI Target</th>
-                <th class="num">Avg Rng</th>
+                <th class="num">Avg Range</th>
                 <th class="num">Qty</th>
-                <th>Timing</th>
                 <th>Chain</th>
               </tr>
             </thead>
@@ -1082,292 +1056,546 @@
         </div>`;
     }
 
-    function parseAdvDecPct(breadthRatioStr) {
-      const m = String(breadthRatioStr || '').match(/(\d+)\s*Adv\s*\/\s*(\d+)\s*Dec/i);
-      if (!m) return 50;
-      const adv = Number(m[1]);
-      const dec = Number(m[2]);
-      const tot = adv + dec;
-      return tot > 0 ? Math.round((adv / tot) * 100) : 50;
-    }
+    function renderOiOverview(payload) {
+      const all = getAllInstruments(payload);
+      if (!all.length) {
+        return `<div class="empty-state">No instruments present in this snapshot for Option Chain / OI inspection.</div>`;
+      }
 
-    function renderDashboard(data) {
-      const s = data.summary || {};
-      const sg = data.session_guardrails || {};
-      const modeStr = String(data.mode || 'LIVE').toUpperCase();
+      const selected = all.find((x) => String(x.symbol).toUpperCase() === String(state.selectedChainSymbol).toUpperCase()) || all[0];
+      const cs = selected.chain_summary || {};
+      const ca = selected.chain_analytics || {};
+      const chainRows = Array.isArray(selected.option_chain) ? selected.option_chain : [];
 
-      document.getElementById('deskTitle').textContent = data.title || 'Quant & Hedging Desk';
-      const chip = document.getElementById('modeChip');
-      chip.textContent = modeStr;
-      chip.className = 'mode-chip mono' + (modeStr === 'BTST' ? ' btst' : '');
+      const optionsHtml = all
+        .map((x) => {
+          const sym = String(x.symbol).toUpperCase();
+          const selAttr = sym === String(selected.symbol).toUpperCase() ? "selected" : "";
+          return `<option value="${escapeHtml(sym)}" ${selAttr}>${escapeHtml(sym)} (${escapeHtml(x.sector || "EQ")})</option>`;
+        })
+        .join("");
 
-      document.getElementById('lastUpdated').textContent =
-        `Session ${data.session_date || '—'} • Generated ${data.generated_at_ist || '—'} • Feed: ${s.data_source || '—'}`;
+      const statsHtml = `
+        <div class="oi-summary-grid">
+          <div class="oi-stat"><span>Spot / Entry</span><strong class="mono">${fmtNum(selected.spot ?? selected.entry)}</strong></div>
+          <div class="oi-stat"><span>Expiry / PCR</span><strong class="mono">${fmtNum(selected.option_expiry || cs.expiry)} • ${fmtNum(cs.pcr)}</strong></div>
+          <div class="oi-stat"><span>OI Build-up / Max Pain</span><strong class="mono">${fmtNum(cs.oi_build_up)} • ${fmtNum(cs.max_pain)}</strong></div>
+          <div class="oi-stat"><span>Regime / Shift</span><strong class="mono">${fmtNum(ca.sentiment_state)} (${fmtNum(ca.support_shift)}/${fmtNum(ca.resistance_shift)})</strong></div>
+          <div class="oi-stat"><span>EOS / EOR</span><strong class="mono"><span class="pos">${fmtNum(ca.eos)}</span> / <span class="neg">${fmtNum(ca.eor)}</span></strong></div>
+        </div>`;
 
-      const tone = String(s.breadth_tone || 'MIXED').toUpperCase();
-      document.getElementById('statusDot').style.background = tone === 'BULLISH' ? 'var(--bull)' : (tone === 'BEARISH' ? 'var(--bear)' : 'var(--warn)');
+      let chainTableHtml = "";
+      if (chainRows.length) {
+        const bodyRows = chainRows.map((r) => {
+          const role = String(r.zone_role || "");
+          const isSup = role === "STRONG_SUPPORT";
+          const isRes = role === "STRONG_RESISTANCE";
+          const isWeak = role === "WEAK_SUPPORT" || role === "WEAK_RESISTANCE";
+          const peCls = isSup ? "cell-sup" : (role === "WEAK_SUPPORT" ? "cell-weak" : "");
+          const ceCls = isRes ? "cell-res" : (role === "WEAK_RESISTANCE" ? "cell-weak" : "");
+          const stCls = isSup ? "cell-sup" : (isRes ? "cell-res" : (isWeak ? "cell-weak" : ""));
+          const roleBadge = isSup
+            ? `<span class="badge badge-bull">STRONG SUPPORT</span>`
+            : isRes
+            ? `<span class="badge badge-bear">STRONG RESISTANCE</span>`
+            : isWeak
+            ? `<span class="badge badge-warn">${escapeHtml(role)}</span>`
+            : `<span class="muted">—</span>`;
 
-      const idxCount = (data.index_trades || []).length;
-      const optCount = (data.options_bullish || []).length + (data.options_bearish || []).length;
-      const eqCount = (data.equity_intraday || []).length;
+          return `
+            <tr class="mono ${r.is_atm ? "atm-row" : ""}">
+              <td class="num ${ceCls}">${fmtInt(r.ce_oi)}</td>
+              <td class="num ${ceCls} ${chgClass(r.ce_chg_oi)}">${fmtInt(r.ce_chg_oi)} (${formatChangeStr(r.ce_chg_pct)})</td>
+              <td class="num">${fmtNum(r.ce_ltp)}</td>
+              <td class="center ${stCls}">${fmtNum(r.strike)}${r.is_atm ? " ATM" : ""}</td>
+              <td class="num">${fmtNum(r.pe_ltp)}</td>
+              <td class="num ${peCls} ${chgClass(r.pe_chg_oi)}">${fmtInt(r.pe_chg_oi)} (${formatChangeStr(r.pe_chg_pct)})</td>
+              <td class="num ${peCls}">${fmtInt(r.pe_oi)}</td>
+              <td class="center">${roleBadge}</td>
+              <td>${escapeHtml(r.impact_note || "")}</td>
+            </tr>`;
+        }).join("");
 
-      document.getElementById('pitchStrip').innerHTML = `
-        <div class="pitch-card">
-          <span class="pitch-k">01 • Multi-Asset Architecture</span>
-          <span class="pitch-v mono">${idxCount} Index + ${optCount} Options + ${eqCount} Equity</span>
-          <span class="pitch-s">Strict zero-overlap separation between F&amp;O and cash baskets</span>
-        </div>
-        <div class="pitch-card">
-          <span class="pitch-k">02 • Intraday Velocity Engine</span>
-          <span class="pitch-v">₹20–₹50 Daily Range Filter</span>
-          <span class="pitch-s">Dedicated 10-stock cash basket; distinct MORNING vs BTST rotation</span>
-        </div>
-        <div class="pitch-card">
-          <span class="pitch-k">03 • Institutional OI Analytics</span>
-          <span class="pitch-v">WTT / WTB &amp; EOS / EOR (±1)</span>
-          <span class="pitch-s">Real-time strike dominance, contracts delta &amp; trap detection</span>
-        </div>
-        <div class="pitch-card">
-          <span class="pitch-k">04 • Walk-Forward Governance</span>
-          <span class="pitch-v">Chronological Cost-Adjusted Ledger</span>
-          <span class="pitch-s">Includes STT, exchange, GST, brokerage &amp; drawdown audit</span>
-        </div>
-      `;
+        chainTableHtml = `
+          <div class="table-wrap">
+            <table class="data-table">
+              <thead>
+                <tr>
+                  <th class="num">Call OI</th>
+                  <th class="num">Call OI Chg</th>
+                  <th class="num">CE LTP</th>
+                  <th class="center">Strike</th>
+                  <th class="num">PE LTP</th>
+                  <th class="num">Put OI Chg</th>
+                  <th class="num">Put OI</th>
+                  <th class="center">Zone</th>
+                  <th>OI Structure Note</th>
+                </tr>
+              </thead>
+              <tbody>${bodyRows}</tbody>
+            </table>
+          </div>`;
+      } else {
+        chainTableHtml = `<div class="empty-state">Strike-level option chain rows were not included for <strong>${escapeHtml(selected.symbol)}</strong> in this snapshot. Summary metrics above reflect available chain fields.</div>`;
+      }
 
-      const rulesHtml = (sg.rules || []).slice(0, 3).map(r => `<span class="rule-chip">${r}</span>`).join('');
-      const capText = s.capital_configured
-        ? `Capital: ₹${fmtInt(s.capital)} • Risk/Trade: ${fmtNum(s.risk_pct)}%`
-        : `Capital: Not Configured (1-Lot / Baseline Sizing) • Risk/Trade: ${fmtNum(s.risk_pct)}%`;
-
-      document.getElementById('guardrailBar').innerHTML = `
-        <div class="guardrail-card">
-          <div class="guardrail-top">
-            <span class="guardrail-title">Session Guardrail: ${fmtNum(sg.window_status || 'STANDARD SESSION')}</span>
-            <span class="mono muted" style="font-size:0.71rem;">9:15–9:25 Calib • 2:30 PM Cutoff</span>
-          </div>
-          <div class="guardrail-copy">${fmtNum(sg.window_note || 'Monitor WTT/WTB shifts and EOS/EOR boundaries before entry.')}</div>
-          <div class="rule-chips">${rulesHtml}</div>
-        </div>
-        <div class="guardrail-card">
-          <div class="guardrail-top">
-            <span class="guardrail-title">Risk &amp; Allocation Governance</span>
-            <span class="mono muted" style="font-size:0.71rem;">Max Sector Cap Enforced</span>
-          </div>
-          <div class="guardrail-copy mono">${capText}</div>
-          <div class="rule-chips">
-            <span class="rule-chip">Stock Options: Top 5 Bull / 5 Bear</span>
-            <span class="rule-chip">Intraday Equity: ${eqCount} Dedicated Stocks</span>
-          </div>
-        </div>
-      `;
-
-      const advPct = parseAdvDecPct(s.breadth_ratio);
-      document.getElementById('kpiGrid').innerHTML = `
-        <div class="kpi">
-          <div class="kpi-label">NIFTY 50</div>
-          <div class="kpi-val mono">${fmtNum(s.nifty_spot)}</div>
-          <div class="kpi-sub mono ${chgClass(s.nifty_chg)}">${fmtNum(s.nifty_chg)}</div>
-        </div>
-        <div class="kpi">
-          <div class="kpi-label">BANK NIFTY</div>
-          <div class="kpi-val mono">${fmtNum(s.bnf_spot)}</div>
-          <div class="kpi-sub mono ${chgClass(s.bnf_chg)}">${fmtNum(s.bnf_chg)}</div>
-        </div>
-        <div class="kpi">
-          <div class="kpi-label">FIN NIFTY</div>
-          <div class="kpi-val mono">${fmtNum(s.fin_spot)}</div>
-          <div class="kpi-sub mono ${chgClass(s.fin_chg)}">${fmtNum(s.fin_chg)}</div>
-        </div>
-        <div class="kpi">
-          <div class="kpi-label">Market Breadth (${advPct}% Adv)</div>
-          <div class="kpi-val ${tone === 'BULLISH' ? 'pos' : (tone === 'BEARISH' ? 'neg' : 'neu')}">${tone}</div>
-          <div class="kpi-sub mono">${fmtNum(s.breadth_ratio)} • &gt;EMA20: ${fmtNum(s.above_ema20)}%</div>
-          <div class="meter-track"><div class="meter-bull" style="width:${advPct}%"></div></div>
-        </div>
-        <div class="kpi">
-          <div class="kpi-label">Active Ideas (${modeStr})</div>
-          <div class="kpi-val mono">${fmtNum(s.ideas_count)}</div>
-          <div class="kpi-sub mono">${idxCount} Idx + ${optCount} Opt + ${eqCount} Eq = ${idxCount + optCount + eqCount}</div>
-        </div>
-      `;
-
-      const cues = Array.isArray(data.global_cues) ? data.global_cues : [];
-      const validCues = cues.filter(c => {
-        const v = c.price ?? c.last ?? c.value ?? c.change_pct ?? c.change;
-        return v !== null && v !== undefined && String(v).trim() !== '' && String(v).trim() !== '—';
-      });
-      const cuesHtml = validCues.length
-        ? validCues.slice(0, 8).map(c => {
-            const name = c.name || c.symbol || 'Cue';
-            const val = c.price ?? c.last ?? c.value ?? '';
-            const chg = c.change_pct !== undefined && c.change_pct !== null
-              ? `${Number(c.change_pct) >= 0 ? '+' : ''}${c.change_pct}%`
-              : (c.change || '');
-            return `<span class="data-chip mono"><span>${name}</span>${val !== '' ? `<strong>${fmtNum(val)}</strong>` : ''}<span class="${chgClass(chg)}">${fmtNum(chg)}</span></span>`;
-          }).join('')
-        : `<span class="muted" style="font-size:0.75rem;">Overnight global index quotes not reported in this snapshot (using domestic NSE/BSE breadth &amp; RS).</span>`;
-
-      const sectorsArr = Array.isArray(data.sectors)
-        ? data.sectors
-        : Object.entries(data.sectors || {}).map(([k, v]) => ({ sector: k, ...(typeof v === 'object' ? v : { score: v }) }));
-
-      const sectorPerfFallback = {};
-      getAllSetups(data).forEach(item => {
-        const sec = String(item.sector || '').toUpperCase();
-        const chg = Number(item.change_pct);
-        if (!sec || sec === 'INDEX' || !Number.isFinite(chg)) return;
-        if (!sectorPerfFallback[sec]) sectorPerfFallback[sec] = [];
-        sectorPerfFallback[sec].push(chg);
-      });
-
-      const secHtml = sectorsArr.length
-        ? sectorsArr.slice(0, 10).map(secObj => {
-            const sName = String(secObj.sector || secObj.name || 'SECTOR').toUpperCase();
-            let rawVal = secObj.avg_change_pct ?? secObj.change_pct ?? secObj.rs_score ?? secObj.score;
-            if ((rawVal === null || rawVal === undefined || rawVal === '') && sectorPerfFallback[sName]) {
-              const arr = sectorPerfFallback[sName];
-              rawVal = arr.reduce((a, b) => a + b, 0) / arr.length;
-            }
-            const numVal = Number(rawVal);
-            const sVal = Number.isFinite(numVal)
-              ? `${numVal >= 0 ? '+' : ''}${numVal.toFixed(2)}%`
-              : 'Active';
-            return `<span class="data-chip mono"><span>${sName}</span><strong class="${chgClass(sVal)}">${sVal}</strong></span>`;
-          }).join('')
-        : `<span class="muted" style="font-size:0.75rem;">Sector rotation metrics unavailable.</span>`;
-
-      document.getElementById('intelGrid').innerHTML = `
-        <div class="intel-box">
-          <div class="intel-head">
-            <span class="intel-heading">Global Macro &amp; Overnight Cues</span>
-            <span class="mono muted" style="font-size:0.68rem;">Macro Context</span>
-          </div>
-          <div class="chip-wrap">${cuesHtml}</div>
-        </div>
-        <div class="intel-box">
-          <div class="intel-head">
-            <span class="intel-heading">Sector Strength &amp; Rotation</span>
-            <span class="mono muted" style="font-size:0.68rem;">Relative Momentum</span>
-          </div>
-          <div class="chip-wrap">${secHtml}</div>
-        </div>
-      `;
-
-      populateSectorsAndChainSelector(data);
-
-      const q = document.getElementById('searchInput').value.trim().toUpperCase();
-      const sec = document.getElementById('sectorFilter').value;
-      const filterFn = (arr) => (arr || []).filter(item => {
-        const matchSym = !q || String(item.symbol || '').toUpperCase().includes(q);
-        const matchSec = sec === 'ALL' || String(item.sector || '') === sec;
-        return matchSym && matchSec;
-      });
-
-      const sections = [
-        { key: 'INDEX', title: 'Index Option & Hedging Desk', sub: 'NIFTY • BANKNIFTY • FINNIFTY • SENSEX', tag: 'INDEX', items: filterFn(data.index_trades) },
-        { key: 'OPT_BULL', title: 'Stock Options — Bullish Candidates', sub: 'High-conviction CE / Bull Spread setups (Zero Equity Overlap)', tag: 'OPT BULL', items: filterFn(data.options_bullish || (data.setups || {}).bullish) },
-        { key: 'OPT_BEAR', title: 'Stock Options — Bearish Candidates', sub: 'High-conviction PE / Bear Spread setups (Zero Equity Overlap)', tag: 'OPT BEAR', items: filterFn(data.options_bearish || (data.setups || {}).bearish) },
-        { key: 'EQ_INTRA', title: `Intraday Equity Basket (${modeStr})`, sub: '10 Non-Overlapping Stocks • ₹20–₹50 Daily Range Priority', tag: 'EQ INTRA', items: filterFn(data.equity_intraday) },
-      ].filter(secObj => activeTab === 'ALL' || activeTab === secObj.key);
-
-      let html = '';
-      sections.forEach(secObj => {
-        if (!secObj.items.length) return;
-        const bodyContent = viewMode === 'TABLE'
-          ? renderExecutionTable(secObj.items, secObj.tag)
-          : `<div class="cards-grid">${secObj.items.map(i => renderCard(i, secObj.tag)).join('')}</div>`;
-        html += `
-          <div class="section-head">
+      return `
+        <div class="panel">
+          <div class="panel-head">
             <div>
-              <div class="section-title">${secObj.title}</div>
-              <div class="section-sub">${secObj.sub}</div>
+              <div class="panel-title">Option Chain &amp; Open Interest Overview</div>
+              <div class="muted" style="font-size:0.73rem;">Snapshot OI structure for selected instrument (not tick-by-tick streaming)</div>
             </div>
-            <span class="mono muted" style="font-size:0.77rem;">${secObj.items.length} setups</span>
+            <select id="oiSymbolPicker" aria-label="Choose symbol for Option Chain">${optionsHtml}</select>
           </div>
-          ${bodyContent}`;
+          ${statsHtml}
+          ${chainTableHtml}
+        </div>`;
+    }
+    function inspectSymbolChain(sym) {
+      state.selectedChainSymbol = sym;
+      state.activeTab = "OI_OVERVIEW";
+      document.querySelectorAll("#navTabs .tab").forEach((t) => {
+        t.classList.toggle("active", t.dataset.tab === "OI_OVERVIEW");
       });
+      renderAll();
+      document.querySelector(".filter-bar")?.scrollIntoView({ behavior: "smooth" });
+    }
 
-      document.getElementById('contentArea').innerHTML = html || `<div class="empty-box">No setups match the active tab, sector, or symbol search filter.</div>`;
-      renderOptionChainPanel(data);
+    function renderStatusBanner(payload) {
+      const banner = document.getElementById("statusBanner");
+      const badge = document.getElementById("freshnessBadge");
+      const dot = document.getElementById("headerStatusDot");
+      const nowInfo = getNowIstParts();
 
-      const wf = data.walk_forward || {};
-      const costsVal = wf.total_costs !== undefined ? wf.total_costs : (wf.total_est_charges || 0);
-      document.getElementById('wfBanner').innerHTML = `
+      if (state.loadError && !payload) {
+        banner.className = "status-banner stale-banner";
+        badge.className = "chip chip-stale mono";
+        badge.textContent = "SNAPSHOT UNAVAILABLE";
+        dot.style.background = "var(--bear)";
+        banner.innerHTML = `
+          <div><strong>Data Load Error:</strong> ${escapeHtml(state.loadError)} — Ensure <code>docs/data/latest.json</code> has been published by <code>screener.py</code>.</div>
+          <div class="mono muted">Clock: ${escapeHtml(nowInfo.istLabel)}</div>
+        `;
+        return;
+      }
+
+      const genStr = payload && payload.generated_at_ist ? payload.generated_at_ist : null;
+      const ageMin = parseSnapshotAgeMinutes(genStr);
+      const isStale = ageMin !== null && ageMin > 180;
+      const marketLabel = nowInfo.isMarketHours
+        ? "NSE/BSE Market Hours (Snapshot Batch Sync)"
+        : "Market Closed / Outside Regular Session (Snapshot Data)";
+
+      if (isStale) {
+        banner.className = "status-banner stale-banner";
+        badge.className = "chip chip-stale mono";
+        badge.textContent = `STALE (${ageMin}m old)`;
+        dot.style.background = "var(--bear)";
+      } else if (ageMin !== null && ageMin <= 30) {
+        banner.className = "status-banner";
+        badge.className = "chip chip-fresh mono";
+        badge.textContent = `RECENT (${ageMin}m ago)`;
+        dot.style.background = "var(--bull)";
+      } else {
+        banner.className = "status-banner warn-banner";
+        badge.className = "chip chip-mode mono";
+        badge.textContent = ageMin !== null ? `SNAPSHOT (${ageMin}m ago)` : "SNAPSHOT DATA";
+        dot.style.background = "var(--warn)";
+      }
+
+      const guardNote = (payload && payload.session_guardrails && payload.session_guardrails.window_note)
+        ? payload.session_guardrails.window_note
+        : "Batch screener snapshot; verify live quotes and risk limits prior to execution.";
+
+      banner.innerHTML = `
         <div>
-          <strong>Walk-Forward Audit Ledger:</strong>
-          Closed: <span class="mono">${fmtNum(wf.closed_trades)}</span> •
-          Win Rate: <span class="mono">${wf.net_win_rate_pct !== null && wf.net_win_rate_pct !== undefined ? wf.net_win_rate_pct + '%' : 'N/A'}</span> •
-          Est. Charges: <span class="mono">₹${fmtNum(costsVal)}</span> •
-          Net P&amp;L: <span class="mono">₹${fmtNum(wf.total_net_pnl)}</span> •
-          Max Drawdown: <span class="mono">₹${fmtNum(wf.max_drawdown_net_pnl)}</span>
+          <strong>${escapeHtml(marketLabel)}:</strong> ${escapeHtml(guardNote)}
+          <span class="muted"> • Note: Auto-sync re-reads batch JSON files; it is not a tick-by-tick live feed.</span>
         </div>
-        <div class="neu" style="font-size:0.74rem;">${wf.sample_warning || 'Research & risk-management analytics only; not guaranteed performance.'}</div>
+        <div class="mono muted">Generated: ${escapeHtml(genStr || "—")} • Now: ${escapeHtml(nowInfo.istLabel)}</div>
       `;
     }
 
-    function startLiveTickTimer() {
-      if (tickTimer) clearInterval(tickTimer);
-      tickTimer = setInterval(async () => {
-        if (!liveTickEnabled) return;
-        await loadSnapshot(selectedFile, true);
-      }, 10000);
+    function renderAll() {
+      const payload = state.payload;
+      renderStatusBanner(payload);
+
+      if (!payload) {
+        document.getElementById("tickerStrip").innerHTML = "";
+        document.getElementById("kpiGrid").innerHTML = "";
+        document.getElementById("contextGrid").innerHTML = "";
+        document.getElementById("mainWorkspace").innerHTML = `<div class="empty-state">Waiting for valid snapshot data.</div>`;
+        document.getElementById("ledgerPanel").innerHTML = "";
+        return;
+      }
+
+      const summary = payload.summary || {};
+      const modeStr = String(payload.mode || "RUN").toUpperCase();
+      const modeBadge = document.getElementById("modeBadge");
+      modeBadge.textContent = modeStr;
+      modeBadge.className = `chip mono ${modeStr === "BTST" ? "chip-btst" : "chip-mode"}`;
+
+      document.getElementById("brandTitle").textContent = payload.title || "My-Stock-Screener — Quant & Hedging Desk";
+      document.getElementById("metaSubtitle").textContent =
+        `Session: ${payload.session_date || "—"} • Source: ${summary.data_source || "—"} • Capital Configured: ${summary.capital_configured ? "Yes" : "No"}`;
+
+      populateFilters();
+
+      const tickers = [
+        { sym: "NIFTY 50", val: summary.nifty_spot, chg: summary.nifty_chg, sub: "Index Spot" },
+        { sym: "BANK NIFTY", val: summary.bnf_spot, chg: summary.bnf_chg, sub: "Index Spot" },
+        { sym: "FIN NIFTY", val: summary.fin_spot, chg: summary.fin_chg, sub: "Index Spot" },
+        { sym: "BREADTH", val: summary.breadth_tone || "MIXED", chg: summary.breadth_ratio || "—", sub: `>EMA20: ${fmtNum(summary.above_ema20)}%` },
+      ];
+      for (const idx of (payload.index_trades || [])) {
+        if (String(idx.symbol).toUpperCase() === "SENSEX") {
+          tickers.splice(3, 0, {
+            sym: "SENSEX",
+            val: idx.spot ?? idx.entry,
+            chg: idx.change_pct,
+            sub: "BSE Index",
+          });
+        }
+      }
+      document.getElementById("tickerStrip").innerHTML = tickers
+        .map((t) => `
+          <div class="ticker-tile">
+            <div class="ticker-top mono"><span>${escapeHtml(t.sym)}</span><span class="${chgClass(t.chg)}">${escapeHtml(formatChangeStr(t.chg))}</span></div>
+            <div class="ticker-val mono">${fmtNum(t.val)}</div>
+            <div class="ticker-sub mono">${escapeHtml(t.sub)}</div>
+          </div>`)
+        .join("");
+
+      const optBull = payload.options_bullish || (payload.setups && payload.setups.bullish) || [];
+      const optBear = payload.options_bearish || (payload.setups && payload.setups.bearish) || [];
+      const eqIntra = payload.equity_intraday || [];
+      const idxTrades = payload.index_trades || [];
+
+      const advDecMatch = String(summary.breadth_ratio || "").match(/(\d+)\s*Adv\s*\/\s*(\d+)\s*Dec/i);
+      let advPct = 50;
+      if (advDecMatch) {
+        const a = Number(advDecMatch[1]);
+        const d = Number(advDecMatch[2]);
+        if (a + d > 0) advPct = Math.round((a / (a + d)) * 100);
+      }
+
+      document.getElementById("kpiGrid").innerHTML = `
+        <div class="kpi">
+          <div class="kpi-label">Total Ideas (${escapeHtml(modeStr)})</div>
+          <div class="kpi-val mono">${fmtNum(summary.ideas_count)}</div>
+          <div class="kpi-sub mono">${idxTrades.length} Idx • ${optBull.length + optBear.length} Opt • ${eqIntra.length} Eq</div>
+        </div>
+        <div class="kpi">
+          <div class="kpi-label">Options Basket</div>
+          <div class="kpi-val mono">${optBull.length + optBear.length}</div>
+          <div class="kpi-sub mono">${optBull.length} Bullish / ${optBear.length} Bearish</div>
+        </div>
+        <div class="kpi">
+          <div class="kpi-label">Equity Intraday</div>
+          <div class="kpi-val mono">${eqIntra.length}</div>
+          <div class="kpi-sub">Separate from stock options</div>
+        </div>
+        <div class="kpi">
+          <div class="kpi-label">Market Breadth</div>
+          <div class="kpi-val ${chgClass(summary.breadth_tone === "BULLISH" ? 1 : (summary.breadth_tone === "BEARISH" ? -1 : 0))}">${escapeHtml(summary.breadth_tone || "MIXED")}</div>
+          <div class="kpi-sub mono">${escapeHtml(summary.breadth_ratio || "—")}</div>
+          <div class="meter"><div class="meter-fill" style="width:${advPct}%"></div></div>
+        </div>
+      `;
+
+      const cues = Array.isArray(payload.global_cues) ? payload.global_cues : [];
+      const cuesHtml = cues.length
+        ? cues.slice(0, 8).map((c) => {
+            const label = c.name || c.symbol || "Cue";
+            const val = c.price ?? c.last ?? c.value ?? "";
+            const chg = c.change_pct !== undefined && c.change_pct !== null ? formatChangeStr(c.change_pct) : (c.change || "");
+            return `<span class="data-chip mono"><span>${escapeHtml(label)}</span>${val !== "" ? `<strong>${fmtNum(val)}</strong>` : ""}${chg ? `<span class="${chgClass(chg)}">${escapeHtml(chg)}</span>` : ""}</span>`;
+          }).join("")
+        : `<span class="muted" style="font-size:0.74rem;">No global cue entries in this snapshot.</span>`;
+
+      const rawSec = payload.sectors;
+      const secList = Array.isArray(rawSec)
+        ? rawSec
+        : Object.entries(rawSec || {}).map(([k, v]) => (typeof v === "object" && v !== null ? { sector: k, ...v } : { sector: k, score: v }));
+
+      const secHtml = secList.length
+        ? secList.slice(0, 12).map((sc) => {
+            const name = sc.sector || sc.name || "SECTOR";
+            const metric = sc.avg_change_pct !== undefined && sc.avg_change_pct !== null
+              ? formatChangeStr(sc.avg_change_pct)
+              : (sc.score !== undefined && sc.score !== null ? fmtNum(sc.score) : "—");
+            return `<span class="data-chip mono"><span>${escapeHtml(name)}</span><strong class="${chgClass(metric)}">${escapeHtml(metric)}</strong></span>`;
+          }).join("")
+        : `<span class="muted" style="font-size:0.74rem;">No sector metrics in this snapshot.</span>`;
+
+      document.getElementById("contextGrid").innerHTML = `
+        <div class="panel">
+          <div class="panel-head"><span class="panel-title">Global Cues</span><span class="mono muted" style="font-size:0.68rem;">Snapshot Feed</span></div>
+          <div class="chips">${cuesHtml}</div>
+        </div>
+        <div class="panel">
+          <div class="panel-head"><span class="panel-title">Sector Strength</span><span class="mono muted" style="font-size:0.68rem;">NSE/BSE Basket</span></div>
+          <div class="chips">${secHtml}</div>
+        </div>
+      `;
+
+      if (state.activeTab === "OI_OVERVIEW") {
+        document.getElementById("mainWorkspace").innerHTML = renderOiOverview(payload);
+        const picker = document.getElementById("oiSymbolPicker");
+        if (picker) {
+          picker.addEventListener("change", (e) => {
+            state.selectedChainSymbol = e.target.value;
+            renderAll();
+          });
+        }
+      } else {
+        const blocks = [
+          { key: "INDEX", title: "Index Trades & Option Plans", sub: "Index setups from latest run", bucket: "INDEX", items: filterSetups(idxTrades) },
+          { key: "OPT_BULL", title: "Stock Options — Bullish", sub: "Bullish option plans / spreads", bucket: "OPT BULL", items: filterSetups(optBull) },
+          { key: "OPT_BEAR", title: "Stock Options — Bearish", sub: "Bearish option plans / spreads", bucket: "OPT BEAR", items: filterSetups(optBear) },
+          { key: "EQ_INTRA", title: "Equity Intraday Setups", sub: "Intraday equity candidates (separate from stock options)", bucket: "EQ INTRA", items: filterSetups(eqIntra) },
+        ].filter((b) => state.activeTab === "ALL" || state.activeTab === b.key);
+
+        let html = "";
+        for (const b of blocks) {
+          if (!b.items.length) continue;
+          const body = state.viewMode === "TABLE"
+            ? renderSetupTable(b.items, b.bucket)
+            : `<div class="cards-grid">${b.items.map((it) => renderSetupCard(it, b.bucket)).join("")}</div>`;
+          html += `
+            <div class="sec-head">
+              <div>
+                <div class="sec-title">${escapeHtml(b.title)}</div>
+                <div class="sec-sub">${escapeHtml(b.sub)}</div>
+              </div>
+              <span class="mono muted" style="font-size:0.76rem;">${b.items.length} items</span>
+            </div>
+            ${body}`;
+        }
+
+        document.getElementById("mainWorkspace").innerHTML = html || `
+          <div class="empty-state">
+            <div>No setups match the current tab, sector, or symbol filter.</div>
+            <button type="button" class="btn btn-ghost" style="margin-top:10px;" onclick="resetAllFilters()">Reset Filters</button>
+          </div>`;
+      }
+
+      const wf = payload.walk_forward || {};
+      const closedCount = Number(wf.closed_trades ?? 0);
+      const costsVal = wf.total_costs !== undefined ? wf.total_costs : (wf.total_est_charges ?? 0);
+      const winRateStr = wf.net_win_rate_pct !== null && wf.net_win_rate_pct !== undefined
+        ? `${fmtNum(wf.net_win_rate_pct)}% (Post-Cost)`
+        : "N/A";
+      const smallSample = !Number.isFinite(closedCount) || closedCount < 30;
+      const sampleWarningText = smallSample
+        ? `Small sample warning (n = ${escapeHtml(wf.closed_trades ?? 0)} closed trades; n < 30). Do not extrapolate early walk-forward metrics as guaranteed performance.`
+        : (wf.sample_warning || "Post-cost walk-forward ledger reflects historical logged signals and estimated transaction costs.");
+
+      const capDisplay = summary.capital_configured
+        ? `₹${fmtInt(summary.capital)}`
+        : "Not Configured";
+
+      document.getElementById("ledgerPanel").innerHTML = `
+        <div class="panel-head">
+          <div>
+            <div class="panel-title">Risk &amp; Post-Cost Walk-Forward Ledger</div>
+            <div class="muted" style="font-size:0.72rem;">Capital: <span class="mono">${escapeHtml(capDisplay)}</span> • Risk/Trade: <span class="mono">${fmtNum(summary.risk_pct)}%</span> • Max Alloc: <span class="mono">${fmtNum(summary.max_allocation_pct)}%</span></div>
+          </div>
+          <span class="badge ${smallSample ? "badge-warn" : "badge-bull"} mono">n = ${escapeHtml(wf.closed_trades ?? 0)}</span>
+        </div>
+        <div class="ledger-grid mono">
+          <div class="ledger-cell"><span>Closed Trades (n)</span><strong>${fmtNum(wf.closed_trades ?? 0)}</strong></div>
+          <div class="ledger-cell"><span>Net Win Rate</span><strong>${escapeHtml(winRateStr)}</strong></div>
+          <div class="ledger-cell"><span>Est. Costs / Charges</span><strong>₹${fmtNum(costsVal)}</strong></div>
+          <div class="ledger-cell"><span>Total Net P&amp;L</span><strong>₹${fmtNum(wf.total_net_pnl ?? 0)}</strong></div>
+          <div class="ledger-cell"><span>Max Net Drawdown</span><strong>₹${fmtNum(wf.max_drawdown_net_pnl ?? 0)}</strong></div>
+        </div>
+        <div class="disclaimer">
+          <strong>Risk &amp; Sample Notice:</strong> ${escapeHtml(sampleWarningText)} Research and risk-management tool only; no investment advice or guaranteed returns.
+        </div>
+      `;
     }
 
-    document.getElementById('viewCardsBtn').addEventListener('click', () => {
-      viewMode = 'CARDS';
-      document.getElementById('viewCardsBtn').classList.add('active-view');
-      document.getElementById('viewTableBtn').classList.remove('active-view');
-      if (currentPayload) renderDashboard(currentPayload);
+    function resetAllFilters() {
+      state.activeTab = "ALL";
+      document.getElementById("searchInput").value = "";
+      document.getElementById("sectorFilter").value = "ALL";
+      document.querySelectorAll("#navTabs .tab").forEach((t) => {
+        t.classList.toggle("active", t.dataset.tab === "ALL");
+      });
+      renderAll();
+    }
+
+    function loadSavedDispatchConfig() {
+      try {
+        const raw = localStorage.getItem(STORAGE_KEY);
+        if (!raw) return;
+        const cfg = JSON.parse(raw);
+        if (cfg.owner) document.getElementById("ghOwner").value = cfg.owner;
+        if (cfg.repo) document.getElementById("ghRepo").value = cfg.repo;
+        if (cfg.workflow) document.getElementById("ghWorkflow").value = cfg.workflow;
+        if (cfg.ref) document.getElementById("ghRef").value = cfg.ref;
+        if (cfg.mode) document.getElementById("ghMode").value = cfg.mode;
+        if (cfg.pat) document.getElementById("ghPat").value = cfg.pat;
+      } catch (_) {
+        // ignore storage errors
+      }
+    }
+
+    function saveDispatchConfig(includePat = true) {
+      const existing = (() => {
+        try { return JSON.parse(localStorage.getItem(STORAGE_KEY) || "{}"); } catch (_) { return {}; }
+      })();
+      const patInput = document.getElementById("ghPat").value.trim();
+      const payload = {
+        owner: document.getElementById("ghOwner").value.trim(),
+        repo: document.getElementById("ghRepo").value.trim(),
+        workflow: document.getElementById("ghWorkflow").value.trim() || "screener.yml",
+        ref: document.getElementById("ghRef").value.trim() || "main",
+        mode: document.getElementById("ghMode").value,
+        pat: includePat ? patInput : (existing.pat || ""),
+      };
+      localStorage.setItem(STORAGE_KEY, JSON.stringify(payload));
+      return payload;
+    }
+
+    function clearDispatchConfig() {
+      localStorage.removeItem(STORAGE_KEY);
+      document.getElementById("ghPat").value = "";
+      document.getElementById("dispatchStatusText").textContent = "Cleared local browser configuration.";
+    }
+
+    async function triggerWorkflowAndPoll() {
+      const statusEl = document.getElementById("dispatchStatusText");
+      const cfg = saveDispatchConfig(true);
+
+      if (!cfg.owner || !cfg.repo || !cfg.workflow || !cfg.pat) {
+        statusEl.textContent = "Missing Owner, Repo, Workflow file, or local PAT. Enter them above to dispatch.";
+        return;
+      }
+
+      const url = `https://api.github.com/repos/${encodeURIComponent(cfg.owner)}/${encodeURIComponent(cfg.repo)}/actions/workflows/${encodeURIComponent(cfg.workflow)}/dispatches`;
+      statusEl.textContent = "Dispatching workflow...";
+
+      try {
+        const resp = await fetch(url, {
+          method: "POST",
+          headers: {
+            "Authorization": `Bearer ${cfg.pat}`,
+            "Accept": "application/vnd.github+json",
+            "Content-Type": "application/json",
+          },
+          body: JSON.stringify({
+            ref: cfg.ref || "main",
+            inputs: { mode: cfg.mode },
+          }),
+        });
+
+        if (resp.status !== 204 && !resp.ok) {
+          const errBody = await resp.text().catch(() => "");
+          throw new Error(`Dispatch failed (HTTP ${resp.status}) ${errBody.slice(0, 120)}`);
+        }
+
+        statusEl.textContent = `Dispatched (${cfg.mode}). Polling snapshot every 10s for updated timestamp...`;
+        const prevGen = state.lastKnownGeneratedAt;
+        let attempts = 0;
+
+        if (state.dispatchPollTimer) clearInterval(state.dispatchPollTimer);
+        state.dispatchPollTimer = setInterval(async () => {
+          attempts += 1;
+          await loadManifest();
+          await loadSnapshot("data/latest.json", true);
+          const nowGen = state.payload && state.payload.generated_at_ist;
+          if (nowGen && nowGen !== prevGen) {
+            clearInterval(state.dispatchPollTimer);
+            statusEl.textContent = `New snapshot published at ${nowGen}.`;
+          } else if (attempts >= 24) {
+            clearInterval(state.dispatchPollTimer);
+            statusEl.textContent = "Polling window ended (4m). Click 'Refresh Snapshot' once GitHub Actions finishes.";
+          } else {
+            statusEl.textContent = `Waiting for new snapshot... (${attempts * 10}s elapsed)`;
+          }
+        }, 10000);
+      } catch (err) {
+        statusEl.textContent = `Error: ${err.message}`;
+      }
+    }
+
+    function startAutoPoll() {
+      if (state.pollTimer) clearInterval(state.pollTimer);
+      state.pollTimer = setInterval(async () => {
+        if (!state.autoPoll) return;
+        await loadSnapshot(state.selectedFile, true);
+      }, 15000);
+    }
+
+    document.getElementById("btnLatest").addEventListener("click", () => selectSnapshot("data/latest.json", null));
+    document.getElementById("btnMorning").addEventListener("click", () => {
+      const f = findModeFile(state.selectedDate, "MORNING");
+      if (f) selectSnapshot(f);
+    });
+    document.getElementById("btnBtst").addEventListener("click", () => {
+      const f = findModeFile(state.selectedDate, "BTST");
+      if (f) selectSnapshot(f);
     });
 
-    document.getElementById('viewTableBtn').addEventListener('click', () => {
-      viewMode = 'TABLE';
-      document.getElementById('viewTableBtn').classList.add('active-view');
-      document.getElementById('viewCardsBtn').classList.remove('active-view');
-      if (currentPayload) renderDashboard(currentPayload);
+    document.getElementById("viewCardsBtn").addEventListener("click", () => {
+      state.viewMode = "CARDS";
+      document.getElementById("viewCardsBtn").classList.add("active");
+      document.getElementById("viewTableBtn").classList.remove("active");
+      renderAll();
+    });
+    document.getElementById("viewTableBtn").addEventListener("click", () => {
+      state.viewMode = "TABLE";
+      document.getElementById("viewTableBtn").classList.add("active");
+      document.getElementById("viewCardsBtn").classList.remove("active");
+      renderAll();
     });
 
-    document.getElementById('liveTickBtn').addEventListener('click', (e) => {
-      liveTickEnabled = !liveTickEnabled;
-      e.target.classList.toggle('live-on', liveTickEnabled);
-      e.target.textContent = liveTickEnabled ? '● LIVE TICK (10s)' : '○ LIVE TICK PAUSED';
+    document.getElementById("historySelect").addEventListener("change", (e) => {
+      selectSnapshot(e.target.value);
     });
 
-    document.getElementById('ocSymbolSelect').addEventListener('change', (e) => {
-      selectedChainSymbol = e.target.value;
-      if (currentPayload) renderOptionChainPanel(currentPayload);
-    });
-
-    document.getElementById('btnLatest').addEventListener('click', () => switchSnapshot('data/latest.json', null));
-    document.getElementById('btnMorning').addEventListener('click', () => {
-      const f = findModeFileForDate(selectedDate, 'MORNING');
-      if (f) switchSnapshot(f);
-    });
-    document.getElementById('btnBtst').addEventListener('click', () => {
-      const f = findModeFileForDate(selectedDate, 'BTST');
-      if (f) switchSnapshot(f);
-    });
-
-    document.getElementById('historySelect').addEventListener('change', (e) => switchSnapshot(e.target.value));
-    document.getElementById('refreshBtn').addEventListener('click', async () => {
+    document.getElementById("syncBtn").addEventListener("click", async () => {
       await loadManifest();
-      await loadSnapshot(selectedFile, false);
+      await loadSnapshot(state.selectedFile, false);
     });
-    document.getElementById('searchInput').addEventListener('input', () => currentPayload && renderDashboard(currentPayload));
-    document.getElementById('sectorFilter').addEventListener('change', () => currentPayload && renderDashboard(currentPayload));
-    document.querySelectorAll('.tab').forEach(btn => {
-      btn.addEventListener('click', () => {
-        document.querySelectorAll('.tab').forEach(b => b.classList.remove('active'));
-        btn.classList.add('active');
-        activeTab = btn.dataset.tab;
-        if (currentPayload) renderDashboard(currentPayload);
+
+    document.getElementById("autoPollBtn").addEventListener("click", (e) => {
+      state.autoPoll = !state.autoPoll;
+      e.target.classList.toggle("active", state.autoPoll);
+      e.target.textContent = state.autoPoll ? "Auto-Sync: 15s" : "Auto-Sync: Off";
+    });
+
+    document.getElementById("toggleDispatchBtn").addEventListener("click", () => {
+      document.getElementById("dispatchPanel").classList.toggle("open");
+    });
+    document.getElementById("saveDispatchBtn").addEventListener("click", () => {
+      saveDispatchConfig(true);
+      document.getElementById("dispatchStatusText").textContent = "Saved configuration locally in browser storage.";
+    });
+    document.getElementById("clearDispatchBtn").addEventListener("click", clearDispatchConfig);
+    document.getElementById("triggerDispatchBtn").addEventListener("click", triggerWorkflowAndPoll);
+
+    document.querySelectorAll("#navTabs .tab").forEach((btn) => {
+      btn.addEventListener("click", () => {
+        document.querySelectorAll("#navTabs .tab").forEach((b) => b.classList.remove("active"));
+        btn.classList.add("active");
+        state.activeTab = btn.dataset.tab;
+        renderAll();
       });
     });
+
+    document.getElementById("searchInput").addEventListener("input", () => renderAll());
+    document.getElementById("sectorFilter").addEventListener("change", () => renderAll());
+    document.getElementById("resetFiltersBtn").addEventListener("click", resetAllFilters);
 
     (async () => {
+      loadSavedDispatchConfig();
       await loadManifest();
-      await loadSnapshot(selectedFile, false);
-      startLiveTickTimer();
+      await loadSnapshot(state.selectedFile, false);
+      startAutoPoll();
     })();
   </script>
 </body>
