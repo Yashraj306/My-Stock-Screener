@@ -3,1645 +3,629 @@
 <head>
   <meta charset="UTF-8" />
   <meta name="viewport" content="width=device-width, initial-scale=1.0" />
-  <title>My-Stock-Screener | Quant &amp; Hedging Desk Terminal</title>
-  <link rel="preconnect" href="https://fonts.googleapis.com">
-  <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
-  <link href="https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600;700;800&family=JetBrains+Mono:wght@400;500;600;700&display=swap" rel="stylesheet">
+  <title>My-Stock-Screener | Quant &amp; Hedging Desk</title>
+  <link href="https://fonts.googleapis.com/css2?family=Inter:wght@400;600;700;800&family=JetBrains+Mono:wght@500;700&display=swap" rel="stylesheet">
   <style>
     :root {
-      --bg: #060a12;
-      --surface: #0d1422;
-      --surface-2: #131d30;
-      --surface-3: #19263e;
-      --border: #223454;
-      --border-soft: rgba(34, 52, 84, 0.65);
-      --text: #f8fafc;
-      --muted: #94a3b8;
-      --accent: #38bdf8;
-      --accent-2: #818cf8;
-      --bull: #10b981;
-      --bull-bg: rgba(16, 185, 129, 0.14);
-      --bear: #f43f5e;
-      --bear-bg: rgba(244, 63, 94, 0.14);
-      --warn: #f59e0b;
-      --warn-bg: rgba(245, 158, 11, 0.15);
+      --bg:#060a12; --s1:#0d1422; --s2:#131d30; --bd:#223454; --tx:#f8fafc; --mu:#94a3b8;
+      --ac:#38bdf8; --bu:#10b981; --be:#f43f5e; --wa:#f59e0b;
     }
-
-    * { box-sizing: border-box; margin: 0; padding: 0; }
-    html { scroll-behavior: smooth; }
-
+    * { box-sizing:border-box; margin:0; padding:0; }
     body {
-      background:
-        radial-gradient(ellipse 960px 420px at 88% -8%, rgba(56, 189, 248, 0.12), transparent 62%),
-        radial-gradient(ellipse 760px 380px at 8% 0%, rgba(129, 140, 248, 0.09), transparent 58%),
-        var(--bg);
-      color: var(--text);
-      font-family: 'Inter', system-ui, -apple-system, sans-serif;
-      line-height: 1.5;
-      min-height: 100vh;
-      -webkit-font-smoothing: antialiased;
+      background:var(--bg); color:var(--tx); font-family:'Inter',system-ui,sans-serif;
+      line-height:1.45; min-height:100vh;
     }
-
-    .mono { font-family: 'JetBrains Mono', monospace; font-variant-numeric: tabular-nums; }
-    .pos { color: var(--bull); }
-    .neg { color: var(--bear); }
-    .neu { color: var(--warn); }
-    .muted { color: var(--muted); }
-
+    .mono { font-family:'JetBrains Mono',monospace; font-variant-numeric:tabular-nums; }
+    .pos { color:var(--bu); } .neg { color:var(--be); } .neu { color:var(--wa); } .mu { color:var(--mu); }
     .topbar {
-      position: sticky;
-      top: 0;
-      z-index: 50;
-      backdrop-filter: blur(14px);
-      background: rgba(6, 10, 18, 0.9);
-      border-bottom: 1px solid var(--border);
-      padding: 12px 20px;
-      display: flex;
-      flex-wrap: wrap;
-      align-items: center;
-      justify-content: space-between;
-      gap: 12px;
+      position:sticky; top:0; z-index:40; background:rgba(6,10,18,.94); backdrop-filter:blur(10px);
+      border-bottom:1px solid var(--bd); padding:10px 16px; display:flex; flex-wrap:wrap; gap:10px;
+      align-items:center; justify-content:space-between;
     }
-
-    .brand { display: flex; align-items: center; gap: 11px; min-width: 0; }
-    .status-dot {
-      width: 10px;
-      height: 10px;
-      border-radius: 50%;
-      background: var(--warn);
-      box-shadow: 0 0 0 4px rgba(245, 158, 11, 0.18);
-      flex-shrink: 0;
-    }
-    .brand-title {
-      font-size: 1rem;
-      font-weight: 800;
-      letter-spacing: -0.015em;
-      display: flex;
-      align-items: center;
-      gap: 8px;
-      flex-wrap: wrap;
-    }
+    .row { display:flex; flex-wrap:wrap; gap:8px; align-items:center; }
     .chip {
-      font-size: 0.68rem;
-      font-weight: 700;
-      padding: 2px 8px;
-      border-radius: 999px;
-      letter-spacing: 0.04em;
-      border: 1px solid var(--border);
-      background: var(--surface-2);
-      color: #cbd5e1;
+      font-size:.68rem; font-weight:700; padding:2px 8px; border-radius:999px;
+      border:1px solid var(--bd); background:var(--s2); color:#cbd5e1;
     }
-    .chip-mode { border-color: rgba(56, 189, 248, 0.45); background: rgba(56, 189, 248, 0.14); color: #7dd3fc; }
-    .chip-btst { border-color: rgba(245, 158, 11, 0.5); background: rgba(245, 158, 11, 0.16); color: #fcd34d; }
-    .chip-stale { border-color: rgba(244, 63, 94, 0.5); background: rgba(244, 63, 94, 0.16); color: #fda4af; }
-    .chip-fresh { border-color: rgba(16, 185, 129, 0.5); background: rgba(16, 185, 129, 0.15); color: #6ee7b7; }
-    .brand small { display: block; color: var(--muted); font-size: 0.73rem; margin-top: 2px; }
-
-    .controls { display: flex; flex-wrap: wrap; align-items: center; gap: 8px; }
-
-    .seg-group {
-      display: inline-flex;
-      background: var(--surface);
-      border: 1px solid var(--border);
-      border-radius: 9px;
-      padding: 2px;
-      gap: 2px;
+    .b-bu { background:rgba(16,185,129,.15); color:#6ee7b7; border-color:rgba(16,185,129,.45); }
+    .b-be { background:rgba(244,63,94,.15); color:#fda4af; border-color:rgba(244,63,94,.45); }
+    .b-wa { background:rgba(245,158,11,.15); color:#fde68a; border-color:rgba(245,158,11,.45); }
+    select, input, button.btn {
+      background:var(--s1); color:var(--tx); border:1px solid var(--bd); border-radius:8px;
+      padding:6px 10px; font-size:.76rem; font-family:inherit; min-height:32px;
     }
-    .seg-btn {
-      border: 1px solid transparent;
-      background: transparent;
-      color: var(--muted);
-      padding: 6px 10px;
-      border-radius: 7px;
-      font-size: 0.74rem;
-      font-weight: 700;
-      cursor: pointer;
-      min-height: 32px;
-      transition: all 0.14s ease;
+    button.btn { cursor:pointer; font-weight:600; }
+    button.btn-pri { background:#0284c7; border-color:#7dd3fc; color:#fff; }
+    button.btn-run { background:#0d9488; border-color:#6ee7b7; color:#fff; }
+    .wrap { max-width:1440px; margin:0 auto; padding:14px 16px 56px; }
+    .banner, .panel, .kpi, .card, .ledger {
+      background:var(--s1); border:1px solid var(--bd); border-radius:12px; padding:12px 14px;
     }
-    .seg-btn:hover:not(:disabled) { color: var(--text); }
-    .seg-btn.active { background: var(--surface-3); border-color: rgba(56, 189, 248, 0.48); color: #e0f2fe; }
-    .seg-btn:disabled { opacity: 0.35; cursor: not-allowed; }
-
-    select, input[type="search"], input[type="text"], input[type="password"], button.btn {
-      background: var(--surface);
-      color: var(--text);
-      border: 1px solid var(--border);
-      border-radius: 8px;
-      padding: 7px 11px;
-      font-size: 0.78rem;
-      font-family: inherit;
-      outline: none;
-      min-height: 34px;
-      transition: border-color 0.14s ease, background 0.14s ease;
-    }
-    input[type="search"] { min-width: 195px; }
-    select, button.btn { cursor: pointer; }
-    select:hover, input:hover, button.btn:hover { border-color: var(--accent); }
-    input:focus, select:focus { border-color: var(--accent); box-shadow: 0 0 0 2px rgba(56, 189, 248, 0.15); }
-
-    button.btn-ghost.active {
-      border-color: rgba(16, 185, 129, 0.55);
-      background: rgba(16, 185, 129, 0.12);
-      color: #6ee7b7;
-      font-weight: 600;
-    }
-    button.btn-primary {
-      background: linear-gradient(135deg, #0284c7, #2563eb);
-      border-color: rgba(125, 211, 252, 0.55);
-      color: #fff;
-      font-weight: 700;
-    }
-    button.btn-dispatch {
-      background: linear-gradient(135deg, #0d9488, #2563eb);
-      border-color: rgba(110, 231, 183, 0.45);
-      color: #fff;
-      font-weight: 700;
-    }
-
-    .container { max-width: 1460px; margin: 0 auto; padding: 18px 20px 64px; }
-
-    .status-banner {
-      background: var(--surface);
-      border: 1px solid var(--border);
-      border-radius: 12px;
-      padding: 12px 15px;
-      margin-bottom: 14px;
-      display: flex;
-      flex-wrap: wrap;
-      align-items: center;
-      justify-content: space-between;
-      gap: 10px;
-      font-size: 0.78rem;
-    }
-    .status-banner.warn-banner {
-      border-color: rgba(245, 158, 11, 0.55);
-      background: linear-gradient(90deg, rgba(245, 158, 11, 0.11), var(--surface) 45%);
-    }
-    .status-banner.stale-banner {
-      border-color: rgba(244, 63, 94, 0.55);
-      background: linear-gradient(90deg, rgba(244, 63, 94, 0.11), var(--surface) 45%);
-    }
-
-    .dispatch-panel {
-      background: var(--surface);
-      border: 1px solid var(--border);
-      border-radius: 12px;
-      padding: 14px 16px;
-      margin-bottom: 14px;
-      display: none;
-    }
-    .dispatch-panel.open { display: block; }
-    .dispatch-grid {
-      display: grid;
-      grid-template-columns: repeat(auto-fit, minmax(170px, 1fr));
-      gap: 10px;
-      margin-top: 10px;
-    }
-    .field label {
-      display: block;
-      font-size: 0.69rem;
-      font-weight: 700;
-      text-transform: uppercase;
-      color: var(--muted);
-      margin-bottom: 4px;
-    }
-    .field input, .field select { width: 100%; }
-
-    .history-ribbon {
-      display: flex;
-      align-items: center;
-      gap: 7px;
-      overflow-x: auto;
-      padding-bottom: 8px;
-      margin-bottom: 14px;
-    }
-    .pill {
-      white-space: nowrap;
-      padding: 5px 11px;
-      border-radius: 999px;
-      font-size: 0.73rem;
-      font-weight: 600;
-      border: 1px solid var(--border);
-      background: var(--surface);
-      color: var(--muted);
-      cursor: pointer;
-    }
-    .pill.active {
-      background: rgba(56, 189, 248, 0.16);
-      border-color: var(--accent);
-      color: #f8fafc;
-    }
-
-    .ticker-strip {
-      display: flex;
-      align-items: stretch;
-      gap: 10px;
-      overflow-x: auto;
-      padding-bottom: 6px;
-      margin-bottom: 14px;
-    }
-    .ticker-tile {
-      min-width: 175px;
-      background: var(--surface);
-      border: 1px solid var(--border);
-      border-radius: 10px;
-      padding: 9px 12px;
-      flex-shrink: 0;
-    }
-    .ticker-top { display: flex; justify-content: space-between; align-items: center; font-size: 0.72rem; font-weight: 700; }
-    .ticker-val { font-size: 0.98rem; font-weight: 800; margin-top: 3px; }
-    .ticker-sub { font-size: 0.69rem; color: var(--muted); margin-top: 2px; }
-
-    .kpi-grid {
-      display: grid;
-      grid-template-columns: repeat(auto-fit, minmax(205px, 1fr));
-      gap: 12px;
-      margin-bottom: 14px;
-    }
-    .kpi {
-      background: linear-gradient(180deg, var(--surface) 0%, #090f1b 100%);
-      border: 1px solid var(--border);
-      border-radius: 12px;
-      padding: 13px 15px;
-    }
-    .kpi-label { font-size: 0.69rem; font-weight: 700; text-transform: uppercase; letter-spacing: 0.06em; color: var(--muted); }
-    .kpi-val { font-size: 1.28rem; font-weight: 800; margin-top: 4px; }
-    .kpi-sub { font-size: 0.74rem; color: var(--muted); margin-top: 3px; }
-    .meter { margin-top: 7px; height: 6px; border-radius: 999px; background: rgba(244, 63, 94, 0.25); overflow: hidden; }
-    .meter-fill { height: 100%; background: linear-gradient(90deg, #059669, #10b981); }
-
-    .context-grid {
-      display: grid;
-      grid-template-columns: 1fr 1.35fr;
-      gap: 12px;
-      margin-bottom: 14px;
-    }
-    .panel {
-      background: var(--surface);
-      border: 1px solid var(--border);
-      border-radius: 12px;
-      padding: 13px 15px;
-    }
-    .panel-head {
-      display: flex;
-      justify-content: space-between;
-      align-items: center;
-      gap: 8px;
-      margin-bottom: 9px;
-    }
-    .panel-title { font-size: 0.73rem; font-weight: 800; text-transform: uppercase; letter-spacing: 0.05em; color: #cbd5e1; }
-    .chips { display: flex; flex-wrap: wrap; gap: 6px; }
-    .data-chip {
-      background: var(--surface-2);
-      border: 1px solid var(--border-soft);
-      border-radius: 8px;
-      padding: 4px 9px;
-      font-size: 0.73rem;
-      display: inline-flex;
-      align-items: center;
-      gap: 6px;
-    }
-
-    .filter-bar {
-      background: var(--surface);
-      border: 1px solid var(--border);
-      border-radius: 12px;
-      padding: 10px 14px;
-      margin-bottom: 16px;
-      display: flex;
-      flex-wrap: wrap;
-      justify-content: space-between;
-      align-items: center;
-      gap: 10px;
-    }
-    .tabs { display: flex; flex-wrap: wrap; gap: 6px; }
+    .banner { margin-bottom:12px; display:flex; flex-wrap:wrap; justify-content:space-between; gap:8px; font-size:.76rem; }
+    .dispatch { display:none; margin-bottom:12px; }
+    .dispatch.open { display:block; }
+    .d-grid { display:grid; grid-template-columns:repeat(auto-fit,minmax(150px,1fr)); gap:8px; margin-top:8px; }
+    .d-grid label { display:block; font-size:.66rem; font-weight:700; color:var(--mu); margin-bottom:3px; text-transform:uppercase; }
+    .d-grid input, .d-grid select { width:100%; }
+    .strip { display:flex; gap:8px; overflow-x:auto; padding-bottom:6px; margin-bottom:12px; }
+    .tile { min-width:165px; background:var(--s1); border:1px solid var(--bd); border-radius:10px; padding:8px 11px; flex-shrink:0; }
+    .grid-4 { display:grid; grid-template-columns:repeat(auto-fit,minmax(195px,1fr)); gap:10px; margin-bottom:12px; }
+    .grid-2 { display:grid; grid-template-columns:repeat(auto-fit,minmax(290px,1fr)); gap:10px; margin-bottom:12px; }
+    .tabs { display:flex; flex-wrap:wrap; gap:6px; }
     .tab {
-      padding: 6px 11px;
-      border-radius: 8px;
-      font-size: 0.76rem;
-      font-weight: 700;
-      cursor: pointer;
-      border: 1px solid transparent;
-      background: transparent;
-      color: var(--muted);
-      min-height: 32px;
+      padding:6px 10px; border-radius:8px; border:1px solid transparent; background:transparent;
+      color:var(--mu); font-size:.75rem; font-weight:700; cursor:pointer;
     }
-    .tab:hover { color: var(--text); background: var(--surface-2); }
-    .tab.active {
-      background: rgba(56, 189, 248, 0.15);
-      border-color: rgba(56, 189, 248, 0.5);
-      color: #7dd3fc;
-    }
-
-    .sec-head {
-      display: flex;
-      justify-content: space-between;
-      align-items: baseline;
-      gap: 10px;
-      margin: 20px 0 10px;
-      padding-bottom: 6px;
-      border-bottom: 1px solid var(--border-soft);
-    }
-    .sec-title { font-size: 0.94rem; font-weight: 800; }
-    .sec-sub { font-size: 0.73rem; color: var(--muted); }
-
-    .cards-grid {
-      display: grid;
-      grid-template-columns: repeat(auto-fill, minmax(350px, 1fr));
-      gap: 14px;
-    }
-    .card {
-      background: linear-gradient(175deg, var(--surface) 0%, #090f1b 100%);
-      border: 1px solid var(--border);
-      border-radius: 14px;
-      padding: 14px;
-      display: flex;
-      flex-direction: column;
-      gap: 10px;
-    }
-    .card-top { display: flex; justify-content: space-between; align-items: flex-start; gap: 8px; }
-    .sym { font-size: 1.05rem; font-weight: 800; }
-    .meta-line { display: flex; flex-wrap: wrap; gap: 6px; align-items: center; font-size: 0.71rem; color: var(--muted); margin-top: 3px; }
-
-    .badge {
-      padding: 3px 8px;
-      border-radius: 6px;
-      font-size: 0.68rem;
-      font-weight: 800;
-      letter-spacing: 0.03em;
-      white-space: nowrap;
-    }
-    .badge-bull { background: var(--bull-bg); color: #6ee7b7; border: 1px solid rgba(16, 185, 129, 0.4); }
-    .badge-bear { background: var(--bear-bg); color: #fda4af; border: 1px solid rgba(244, 63, 94, 0.4); }
-    .badge-warn { background: var(--warn-bg); color: #fde68a; border: 1px solid rgba(245, 158, 11, 0.4); }
-
-    .levels {
-      display: grid;
-      grid-template-columns: repeat(4, 1fr);
-      gap: 6px;
-      background: rgba(7, 11, 19, 0.84);
-      border: 1px solid var(--border-soft);
-      border-radius: 9px;
-      padding: 8px;
-    }
-    .lvl span { display: block; font-size: 0.62rem; font-weight: 700; color: var(--muted); text-transform: uppercase; }
-    .lvl strong { display: block; font-size: 0.84rem; font-weight: 700; margin-top: 2px; }
-
-    .rr-box {
-      background: rgba(19, 29, 48, 0.55);
-      border: 1px solid var(--border-soft);
-      border-radius: 8px;
-      padding: 6px 9px;
-    }
-    .rr-head { display: flex; justify-content: space-between; font-size: 0.66rem; color: var(--muted); margin-bottom: 4px; }
-    .rr-track { height: 6px; border-radius: 999px; background: var(--surface-3); overflow: hidden; display: flex; gap: 2px; }
-    .rr-sl { background: var(--bear); height: 100%; }
-    .rr-t1 { background: var(--accent); height: 100%; }
-    .rr-t2 { background: var(--bull); height: 100%; }
-
-    .kv-grid {
-      display: grid;
-      grid-template-columns: repeat(2, 1fr);
-      gap: 5px 10px;
-      font-size: 0.73rem;
-      color: var(--muted);
-      background: rgba(19, 29, 48, 0.45);
-      border-radius: 8px;
-      padding: 8px 10px;
-    }
-    .kv-grid strong { color: #e2e8f0; }
-
-    .rationale {
-      font-size: 0.76rem;
-      color: #cbd5e1;
-      background: rgba(25, 38, 62, 0.52);
-      border-left: 3px solid var(--accent);
-      border-radius: 8px;
-      padding: 8px 10px;
-    }
-
-    .table-wrap {
-      overflow-x: auto;
-      border-radius: 12px;
-      border: 1px solid var(--border);
-      background: var(--surface);
-      max-height: 520px;
-      overflow-y: auto;
-    }
-    table.data-table { width: 100%; border-collapse: collapse; font-size: 0.75rem; }
-    table.data-table th {
-      position: sticky;
-      top: 0;
-      z-index: 2;
-      background: #090f1b;
-      color: var(--muted);
-      font-weight: 700;
-      padding: 8px 9px;
-      border-bottom: 1px solid var(--border);
-      text-align: left;
-      white-space: nowrap;
-    }
-    table.data-table th.num, table.data-table td.num { text-align: right; }
-    table.data-table th.center, table.data-table td.center { text-align: center; }
-    table.data-table td { padding: 7px 9px; border-bottom: 1px solid var(--border-soft); white-space: nowrap; }
-    table.data-table tr:hover td { background: rgba(56, 189, 248, 0.05); }
-    tr.atm-row td { background: rgba(56, 189, 248, 0.1); }
-
-    .oi-summary-grid {
-      display: grid;
-      grid-template-columns: repeat(auto-fit, minmax(175px, 1fr));
-      gap: 8px;
-      margin-bottom: 12px;
-    }
-    .oi-stat {
-      background: var(--surface-2);
-      border: 1px solid var(--border-soft);
-      border-radius: 9px;
-      padding: 8px 10px;
-    }
-    .oi-stat span { display: block; font-size: 0.65rem; font-weight: 700; text-transform: uppercase; color: var(--muted); }
-    .oi-stat strong { display: block; font-size: 0.85rem; margin-top: 2px; }
-
-    .cell-sup { background: var(--bull-bg) !important; border: 1.5px solid var(--bull) !important; color: #a7f3d0 !important; font-weight: 700; border-radius: 5px; }
-    .cell-res { background: var(--bear-bg) !important; border: 1.5px solid var(--bear) !important; color: #fecdd3 !important; font-weight: 700; border-radius: 5px; }
-    .cell-weak { background: var(--warn-bg) !important; border: 1.5px solid var(--warn) !important; color: #fef08a !important; font-weight: 700; border-radius: 5px; }
-
-    .ledger-panel {
-      margin-top: 20px;
-      background: var(--surface);
-      border: 1px solid var(--border);
-      border-radius: 14px;
-      padding: 15px 16px;
-    }
-    .ledger-grid {
-      display: grid;
-      grid-template-columns: repeat(auto-fit, minmax(150px, 1fr));
-      gap: 10px;
-      margin-top: 10px;
-    }
-    .ledger-cell {
-      background: var(--surface-2);
-      border: 1px solid var(--border-soft);
-      border-radius: 9px;
-      padding: 9px 11px;
-    }
-    .ledger-cell span { display: block; font-size: 0.67rem; font-weight: 700; text-transform: uppercase; color: var(--muted); }
-    .ledger-cell strong { display: block; font-size: 0.95rem; margin-top: 2px; }
-
-    .disclaimer {
-      margin-top: 12px;
-      padding: 10px 12px;
-      border-radius: 8px;
-      background: rgba(245, 158, 11, 0.08);
-      border: 1px solid rgba(245, 158, 11, 0.3);
-      font-size: 0.75rem;
-      color: #fde68a;
-    }
-
-    .empty-state {
-      background: var(--surface);
-      border: 1px dashed var(--border);
-      border-radius: 12px;
-      padding: 28px 18px;
-      text-align: center;
-      color: var(--muted);
-    }
-
-    @media (max-width: 900px) {
-      .context-grid { grid-template-columns: 1fr; }
-    }
-    @media (max-width: 600px) {
-      .topbar { padding: 10px 14px; }
-      .container { padding: 14px 14px 54px; }
-      .cards-grid { grid-template-columns: 1fr; }
-      .levels { grid-template-columns: repeat(2, 1fr); }
-    }
+    .tab.active { background:rgba(56,189,248,.16); border-color:rgba(56,189,248,.5); color:#7dd3fc; }
+    .sec-h { display:flex; justify-content:space-between; align-items:baseline; margin:16px 0 8px; padding-bottom:5px; border-bottom:1px solid var(--bd); }
+    .cards { display:grid; grid-template-columns:repeat(auto-fill,minmax(330px,1fr)); gap:12px; }
+    .card { display:flex; flex-direction:column; gap:8px; }
+    .lvls { display:grid; grid-template-columns:repeat(4,1fr); gap:6px; background:#080d17; border:1px solid var(--bd); border-radius:8px; padding:7px; }
+    .lvls span { display:block; font-size:.6rem; color:var(--mu); text-transform:uppercase; }
+    .lvls strong { display:block; font-size:.82rem; margin-top:2px; }
+    .kv { display:grid; grid-template-columns:1fr 1fr; gap:4px 8px; font-size:.72rem; color:var(--mu); background:var(--s2); border-radius:8px; padding:7px 9px; }
+    .kv strong { color:var(--tx); }
+    .rat { font-size:.74rem; color:#cbd5e1; background:var(--s2); border-left:3px solid var(--ac); border-radius:7px; padding:7px 9px; }
+    .t-wrap { overflow-x:auto; border:1px solid var(--bd); border-radius:10px; background:var(--s1); max-height:480px; }
+    table { width:100%; border-collapse:collapse; font-size:.74rem; }
+    th, td { padding:6px 8px; border-bottom:1px solid rgba(34,52,84,.6); white-space:nowrap; }
+    th { position:sticky; top:0; background:#090f1b; color:var(--mu); text-align:left; }
+    th.r, td.r { text-align:right; } th.c, td.c { text-align:center; }
+    .chips { display:flex; flex-wrap:wrap; gap:6px; margin-top:6px; }
+    .dchip { background:var(--s2); border:1px solid var(--bd); border-radius:7px; padding:3px 8px; font-size:.72rem; }
+    .warn-box { margin-top:10px; padding:9px 11px; border-radius:8px; background:rgba(245,158,11,.1); border:1px solid rgba(245,158,11,.35); font-size:.74rem; color:#fde68a; }
+    .empty { background:var(--s1); border:1px dashed var(--bd); border-radius:10px; padding:22px; text-align:center; color:var(--mu); }
   </style>
 </head>
 <body>
   <header class="topbar">
-    <div class="brand">
-      <div class="status-dot" id="headerStatusDot"></div>
-      <div>
-        <div class="brand-title">
-          <span id="brandTitle">My-Stock-Screener — Quant &amp; Hedging Desk</span>
-          <span class="chip chip-mode mono" id="modeBadge">MODE</span>
-          <span class="chip mono" id="freshnessBadge">CHECKING DATA</span>
-        </div>
-        <small id="metaSubtitle">Loading snapshot manifest and market data...</small>
+    <div>
+      <div class="row">
+        <strong id="bTitle" style="font-size:.96rem;">My-Stock-Screener</strong>
+        <span class="chip mono b-bu" id="bMode">MODE</span>
+        <span class="chip mono" id="bFresh">CHECKING</span>
       </div>
+      <div class="mu" id="bSub" style="font-size:.71rem; margin-top:2px;">Loading snapshot...</div>
     </div>
-
-    <div class="controls">
-      <div class="seg-group" role="group" aria-label="Snapshot Mode">
-        <button type="button" class="seg-btn active" id="btnLatest">LATEST</button>
-        <button type="button" class="seg-btn" id="btnMorning">MORNING</button>
-        <button type="button" class="seg-btn" id="btnBtst">BTST</button>
+    <div class="row">
+      <div class="row">
+        <button type="button" class="tab active" id="btnLatest">LATEST</button>
+        <button type="button" class="tab" id="btnMorning" disabled>MORNING</button>
+        <button type="button" class="tab" id="btnBtst" disabled>BTST</button>
       </div>
-
-      <div class="seg-group" role="group" aria-label="Layout View">
-        <button type="button" class="seg-btn active" id="viewCardsBtn">Cards</button>
-        <button type="button" class="seg-btn" id="viewTableBtn">Table</button>
+      <div class="row">
+        <button type="button" class="tab active" id="vCards">Cards</button>
+        <button type="button" class="tab" id="vTable">Table</button>
       </div>
-
-      <select id="historySelect" title="Select Historical Snapshot">
-        <option value="data/latest.json">Latest Snapshot (data/latest.json)</option>
-      </select>
-
-      <button type="button" class="btn btn-primary" id="syncBtn">Refresh Snapshot</button>
-      <button type="button" class="btn btn-ghost active" id="autoPollBtn" title="Poll snapshot files every 15s (batch snapshot sync, not tick streaming)">Auto-Sync: 15s</button>
-      <button type="button" class="btn btn-dispatch" id="toggleDispatchBtn">Refresh &amp; Run</button>
+      <select id="histSel"><option value="data/latest.json">Latest Snapshot</option></select>
+      <button type="button" class="btn btn-pri" id="btnSync">Refresh</button>
+      <button type="button" class="btn" id="btnAuto">Auto: 15s</button>
+      <button type="button" class="btn btn-run" id="btnRunToggle">Refresh &amp; Run</button>
     </div>
   </header>
 
-  <main class="container">
-    <section class="status-banner" id="statusBanner" role="status" aria-live="polite"></section>
+  <main class="wrap">
+    <section class="banner" id="bannerBox"></section>
 
-    <section class="dispatch-panel" id="dispatchPanel" aria-label="GitHub Actions Workflow Dispatch Configuration">
-      <div style="display:flex; justify-content:space-between; align-items:center; flex-wrap:wrap; gap:8px;">
-        <div>
-          <strong style="font-size:0.84rem;">GitHub Actions Workflow Dispatch (Local Browser Storage Only)</strong>
-          <div class="muted" style="font-size:0.72rem;">
-            Never commit tokens to code. Your fine-grained PAT is saved only in this browser's <code>localStorage</code> when you enter it and can be cleared anytime.
-          </div>
-        </div>
-        <button type="button" class="btn btn-ghost" id="clearDispatchBtn">Clear Saved Config</button>
+    <section class="panel dispatch" id="dispatchBox">
+      <div class="row" style="justify-content:space-between;">
+        <strong style="font-size:.82rem;">GitHub Workflow Dispatch (Local Browser Storage Only)</strong>
+        <button type="button" class="btn" id="btnClearCfg">Clear Config</button>
       </div>
-
-      <div class="dispatch-grid">
-        <div class="field">
-          <label for="ghOwner">GitHub Owner</label>
-          <input type="text" id="ghOwner" placeholder="e.g. Yashraj306" autocomplete="off" />
-        </div>
-        <div class="field">
-          <label for="ghRepo">Repository Name</label>
-          <input type="text" id="ghRepo" placeholder="e.g. My-Stock-Screener" autocomplete="off" />
-        </div>
-        <div class="field">
-          <label for="ghWorkflow">Workflow File</label>
-          <input type="text" id="ghWorkflow" placeholder="screener.yml" value="screener.yml" autocomplete="off" />
-        </div>
-        <div class="field">
-          <label for="ghRef">Branch / Ref</label>
-          <input type="text" id="ghRef" placeholder="main" value="main" autocomplete="off" />
-        </div>
-        <div class="field">
-          <label for="ghMode">Run Mode</label>
-          <select id="ghMode">
-            <option value="MORNING">MORNING</option>
-            <option value="BTST">BTST</option>
-          </select>
-        </div>
-        <div class="field">
-          <label for="ghPat">Fine-Grained PAT (Local Only)</label>
-          <input type="password" id="ghPat" placeholder="github_pat_..." autocomplete="off" />
-        </div>
+      <div class="d-grid">
+        <div><label>Owner</label><input type="text" id="ghOwner" placeholder="Yashraj306" /></div>
+        <div><label>Repo</label><input type="text" id="ghRepo" placeholder="My-Stock-Screener" /></div>
+        <div><label>Workflow</label><input type="text" id="ghWf" value="screener.yml" /></div>
+        <div><label>Ref</label><input type="text" id="ghRef" value="main" /></div>
+        <div><label>Mode</label><select id="ghMode"><option value="MORNING">MORNING</option><option value="BTST">BTST</option></select></div>
+        <div><label>PAT (Local)</label><input type="password" id="ghPat" placeholder="github_pat_..." /></div>
       </div>
-
-      <div style="display:flex; flex-wrap:wrap; align-items:center; justify-content:space-between; gap:10px; margin-top:12px;">
-        <div class="controls">
-          <button type="button" class="btn btn-dispatch" id="triggerDispatchBtn">Trigger Workflow &amp; Poll Snapshot</button>
-          <button type="button" class="btn btn-ghost" id="saveDispatchBtn">Save Locally</button>
+      <div class="row" style="justify-content:space-between; margin-top:10px;">
+        <div class="row">
+          <button type="button" class="btn btn-run" id="btnTrigger">Trigger &amp; Poll</button>
+          <button type="button" class="btn" id="btnSaveCfg">Save Local</button>
         </div>
-        <span class="mono muted" id="dispatchStatusText" style="font-size:0.74rem;">Ready.</span>
+        <span class="mono mu" id="dStatus" style="font-size:.72rem;">Ready.</span>
       </div>
     </section>
 
-    <nav class="history-ribbon" id="historyPills" aria-label="Historical Snapshots"></nav>
+    <nav class="strip" id="histPills"></nav>
+    <section class="strip" id="tickerBox"></nav>
+    <section class="grid-4" id="kpiBox"></section>
+    <section class="grid-2" id="ctxBox"></section>
 
-    <section class="ticker-strip" id="tickerStrip" aria-label="Market Snapshot Strip"></nav>
-
-    <section class="kpi-grid" id="kpiGrid" aria-label="Key Market Metrics"></section>
-
-    <section class="context-grid" id="contextGrid" aria-label="Global Cues and Sector Strength"></section>
-
-    <section class="filter-bar" id="filterBar" aria-label="Setup Filters">
-      <div class="tabs" id="navTabs" role="tablist">
-        <button type="button" class="tab active" data-tab="ALL" role="tab">All Setups</button>
-        <button type="button" class="tab" data-tab="INDEX" role="tab">Index</button>
-        <button type="button" class="tab" data-tab="OPT_BULL" role="tab">Options Bullish</button>
-        <button type="button" class="tab" data-tab="OPT_BEAR" role="tab">Options Bearish</button>
-        <button type="button" class="tab" data-tab="EQ_INTRA" role="tab">Equity Intraday</button>
-        <button type="button" class="tab" data-tab="OI_OVERVIEW" role="tab">Option Chain / OI Overview</button>
-      </div>
-      <div class="controls">
-        <select id="sectorFilter" title="Filter by Sector">
-          <option value="ALL">All Sectors</option>
-        </select>
-        <input type="search" id="searchInput" placeholder="Filter symbol (e.g. NIFTY, RELIANCE)..." aria-label="Search symbol" />
-        <button type="button" class="btn btn-ghost" id="resetFiltersBtn">Reset</button>
+    <section class="panel" id="filterBox" style="margin-bottom:12px;">
+      <div class="row" style="justify-content:space-between;">
+        <div class="tabs" id="tabBar">
+          <button type="button" class="tab active" data-t="ALL">All</button>
+          <button type="button" class="tab" data-t="IDX">Index</button>
+          <button type="button" class="tab" data-t="OBULL">Opt Bullish</button>
+          <button type="button" class="tab" data-t="OBEAR">Opt Bearish</button>
+          <button type="button" class="tab" data-t="EQ">Equity Intraday</button>
+          <button type="button" class="tab" data-t="OI">Option Chain / OI</button>
+        </div>
+        <div class="row">
+          <select id="secSel"><option value="ALL">All Sectors</option></select>
+          <input type="search" id="symSearch" placeholder="Search symbol..." />
+          <button type="button" class="btn" id="btnReset">Reset</button>
+        </div>
       </div>
     </section>
 
-    <div id="mainWorkspace"></div>
-
-    <section class="ledger-panel" id="ledgerPanel" aria-label="Risk and Walk-Forward Ledger"></section>
+    <div id="workBox"></div>
+    <section class="ledger" id="ledgerBox" style="margin-top:16px;"></section>
   </main>
-  <script>
-    const STORAGE_KEY = "mss_gh_dispatch_v1";
-    const IST_OFFSET_MS = (5 * 60 + 30) * 60 * 1000;
 
-    const state = {
-      payload: null,
-      snapshots: [],
-      activeTab: "ALL",
-      viewMode: "CARDS",
-      selectedFile: "data/latest.json",
-      selectedDate: null,
-      selectedChainSymbol: null,
-      autoPoll: true,
-      pollTimer: null,
-      dispatchPollTimer: null,
-      lastKnownGeneratedAt: null,
-      loadError: null,
+  <script>
+    const KEY = "mss_gh_dispatch_v1";
+    const IST_MS = 330 * 60 * 1000;
+    const st = {
+      data: null, snaps: [], tab: "ALL", view: "CARDS",
+      file: "data/latest.json", date: null, chainSym: null,
+      auto: true, pTimer: null, dTimer: null, lastGen: null, err: null
     };
 
-    function setHtml(id, html) {
-      const el = document.getElementById(id);
-      if (el) el.innerHTML = html;
-    }
-
-    function escapeHtml(val) {
-      if (val === null || val === undefined) return "";
-      return String(val)
-        .replace(/&/g, "&amp;")
-        .replace(/</g, "&lt;")
-        .replace(/>/g, "&gt;")
-        .replace(/"/g, "&quot;")
-        .replace(/'/g, "&#39;");
-    }
-
-    function fmtNum(v, decimals = null) {
-      if (v === null || v === undefined || v === "") return "—";
+    const setH = (id, h) => { const e = document.getElementById(id); if (e) e.innerHTML = h; };
+    const esc = (v) => v == null ? "" : String(v).replace(/[&<>"']/g, m => ({"&":"&amp;","<":"&lt;",">":"&gt;",'"':"&quot;","'":"&#39;"}[m]));
+    const num = (v, d = null) => {
+      if (v == null || v === "") return "—";
       const n = Number(v);
-      if (Number.isFinite(n) && decimals !== null) {
-        return n.toLocaleString("en-IN", { minimumFractionDigits: decimals, maximumFractionDigits: decimals });
-      }
-      return escapeHtml(v);
-    }
-
-    function fmtInt(v) {
-      const n = Number(v);
-      return Number.isFinite(n) ? n.toLocaleString("en-IN") : "—";
-    }
-
-    function chgClass(val) {
-      const s = String(val ?? "");
+      return (Number.isFinite(n) && d != null) ? n.toLocaleString("en-IN", { minimumFractionDigits: d, maximumFractionDigits: d }) : esc(v);
+    };
+    const intF = (v) => { const n = Number(v); return Number.isFinite(n) ? n.toLocaleString("en-IN") : "—"; };
+    const chgF = (v) => {
+      if (v == null || v === "") return "—";
+      const s = String(v).trim();
+      if (s.endsWith("%")) return s;
+      const n = Number(s);
+      return Number.isFinite(n) ? `${n >= 0 ? "+" : ""}${n.toFixed(2)}%` : esc(s);
+    };
+    const clsF = (v) => {
+      const s = String(v ?? "");
       if (s.includes("-")) return "neg";
-      const num = parseFloat(s.replace("%", ""));
-      if (Number.isFinite(num)) {
-        if (num > 0) return "pos";
-        if (num < 0) return "neg";
-      }
-      return "muted";
-    }
+      const n = parseFloat(s.replace("%", ""));
+      return Number.isFinite(n) ? (n > 0 ? "pos" : (n < 0 ? "neg" : "mu")) : "mu";
+    };
 
-    function formatChangeStr(val) {
-      if (val === null || val === undefined || val === "") return "—";
-      const str = String(val).trim();
-      if (str.endsWith("%")) return str;
-      const num = Number(str);
-      if (Number.isFinite(num)) {
-        return `${num >= 0 ? "+" : ""}${num.toFixed(2)}%`;
-      }
-      return escapeHtml(str);
-    }
-
-    async function fetchJson(url, timeoutMs = 10000) {
-      const controller = new AbortController();
-      const timer = setTimeout(() => controller.abort(), timeoutMs);
+    async function getJson(url) {
+      const ac = new AbortController();
+      const tm = setTimeout(() => ac.abort(), 10000);
       try {
-        const sep = url.includes("?") ? "&" : "?";
-        const resp = await fetch(`${url}${sep}_ts=${Date.now()}`, {
-          cache: "no-store",
-          signal: controller.signal,
-        });
-        if (!resp.ok) {
-          throw new Error(`HTTP ${resp.status} while fetching ${url}`);
-        }
-        return await resp.json();
-      } finally {
-        clearTimeout(timer);
-      }
+        const r = await fetch(`${url}${url.includes("?") ? "&" : "?"}_t=${Date.now()}`, { cache: "no-store", signal: ac.signal });
+        if (!r.ok) throw new Error(`HTTP ${r.status}`);
+        return await r.json();
+      } finally { clearTimeout(tm); }
     }
 
-    function getNowIstParts() {
-      const nowUtc = Date.now();
-      const istDate = new Date(nowUtc + IST_OFFSET_MS);
-      const day = istDate.getUTCDay();
-      const mins = istDate.getUTCHours() * 60 + istDate.getUTCMinutes();
-      const isWeekday = day >= 1 && day <= 5;
-      const isMarketHours = isWeekday && mins >= (9 * 60 + 15) && mins <= (15 * 60 + 30);
-      const istLabel = istDate.toISOString().replace("T", " ").slice(0, 19) + " IST";
-      return { nowUtc, isWeekday, isMarketHours, istLabel };
+    function istInfo() {
+      const d = new Date(Date.now() + IST_MS);
+      const day = d.getUTCDay();
+      const mins = d.getUTCHours() * 60 + d.getUTCMinutes();
+      const open = day >= 1 && day <= 5 && mins >= 555 && mins <= 930;
+      return { open, nowStr: d.toISOString().replace("T", " ").slice(0, 19) + " IST" };
     }
 
-    function parseSnapshotAgeMinutes(generatedAtStr) {
-      if (!generatedAtStr) return null;
-      const m = String(generatedAtStr).trim().match(/^(\d{4}-\d{2}-\d{2})[T\s](\d{2}):(\d{2}):(\d{2})/);
+    function ageMins(genStr) {
+      if (!genStr) return null;
+      const m = String(genStr).trim().match(/^(\d{4}-\d{2}-\d{2})[T\s](\d{2}):(\d{2}):(\d{2})/);
       if (!m) return null;
       const [, ymd, hh, mm, ss] = m;
       const [y, mo, d] = ymd.split("-").map(Number);
-      const snapIstAsUtcMs = Date.UTC(y, mo - 1, d, Number(hh), Number(mm), Number(ss));
-      const snapActualUtcMs = snapIstAsUtcMs - IST_OFFSET_MS;
-      const diffMin = Math.round((Date.now() - snapActualUtcMs) / 60000);
-      return Number.isFinite(diffMin) ? diffMin : null;
+      const actualUtc = Date.UTC(y, mo - 1, d, Number(hh), Number(mm), Number(ss)) - IST_MS;
+      const diff = Math.round((Date.now() - actualUtc) / 60000);
+      return Number.isFinite(diff) ? diff : null;
     }
 
-    function getAllInstruments(payload) {
-      if (!payload) return [];
-      const seen = new Set();
-      const out = [];
+    function allInst(p) {
+      if (!p) return [];
+      const seen = new Set(), out = [];
       const lists = [
-        payload.index_trades || [],
-        payload.options_bullish || (payload.setups && payload.setups.bullish) || [],
-        payload.options_bearish || (payload.setups && payload.setups.bearish) || [],
-        payload.equity_intraday || [],
+        p.index_trades, p.options_bullish, p.setups && p.setups.bullish,
+        p.options_bearish, p.setups && p.setups.bearish, p.equity_intraday
       ];
-      for (const arr of lists) {
-        if (!Array.isArray(arr)) continue;
-        for (const item of arr) {
-          if (!item || !item.symbol) continue;
-          const sym = String(item.symbol).toUpperCase();
-          if (!seen.has(sym)) {
-            seen.add(sym);
-            out.push(item);
-          }
+      for (const a of lists) {
+        if (!Array.isArray(a)) continue;
+        for (const x of a) {
+          if (!x || !x.symbol) continue;
+          const k = String(x.symbol).toUpperCase();
+          if (!seen.has(k)) { seen.add(k); out.push(x); }
         }
       }
       return out;
     }
 
-    function findModeFile(targetDate, modeName) {
-      const m = String(modeName || "").toUpperCase();
-      if (targetDate) {
-        const match = state.snapshots.find(
-          (s) => s.date === targetDate && String(s.mode || "").toUpperCase() === m
-        );
-        if (match) return match.file;
+    function modeFile(dt, mName) {
+      const u = String(mName || "").toUpperCase();
+      if (dt) {
+        const hit = st.snaps.find(s => s.date === dt && String(s.mode || "").toUpperCase() === u);
+        if (hit) return hit.file;
       }
-      const fallback = state.snapshots.find((s) => String(s.mode || "").toUpperCase() === m);
-      return fallback ? fallback.file : null;
+      const fb = st.snaps.find(s => String(s.mode || "").toUpperCase() === u);
+      return fb ? fb.file : null;
     }
 
-    function syncModeButtons() {
-      const activeMode = String((state.payload && state.payload.mode) || "").toUpperCase();
-      const morningFile = findModeFile(state.selectedDate, "MORNING");
-      const btstFile = findModeFile(state.selectedDate, "BTST");
-
-      const btnLatest = document.getElementById("btnLatest");
-      const btnMorning = document.getElementById("btnMorning");
-      const btnBtst = document.getElementById("btnBtst");
-
-      if (btnLatest) btnLatest.classList.toggle("active", state.selectedFile === "data/latest.json");
-      if (btnMorning) {
-        btnMorning.disabled = !morningFile;
-        const morningSelected = state.selectedFile === morningFile || (state.selectedFile === "data/latest.json" && activeMode === "MORNING");
-        btnMorning.classList.toggle("active", Boolean(morningSelected && morningFile));
-      }
-      if (btnBtst) {
-        btnBtst.disabled = !btstFile;
-        const btstSelected = state.selectedFile === btstFile || (state.selectedFile === "data/latest.json" && activeMode === "BTST");
-        btnBtst.classList.toggle("active", Boolean(btstSelected && btstFile));
-      }
+    function syncModes() {
+      const mFile = modeFile(st.date, "MORNING");
+      const bFile = modeFile(st.date, "BTST");
+      const bL = document.getElementById("btnLatest");
+      const bM = document.getElementById("btnMorning");
+      const bB = document.getElementById("btnBtst");
+      if (bL) bL.classList.toggle("active", st.file === "data/latest.json");
+      if (bM) { bM.disabled = !mFile; bM.classList.toggle("active", Boolean(mFile && st.file === mFile)); }
+      if (bB) { bB.disabled = !bFile; bB.classList.toggle("active", Boolean(bFile && st.file === bFile)); }
     }
 
-    async function loadManifest() {
+    async function loadMan() {
       try {
-        const manifest = await fetchJson("data/manifest.json");
-        state.snapshots = Array.isArray(manifest.snapshots) ? manifest.snapshots : [];
-        const sel = document.getElementById("historySelect");
-        const pills = document.getElementById("historyPills");
+        const m = await getJson("data/manifest.json");
+        st.snaps = Array.isArray(m.snapshots) ? m.snapshots : [];
+        const sel = document.getElementById("histSel");
+        const pills = document.getElementById("histPills");
         if (!sel || !pills) return;
-
-        const currentVal = state.selectedFile;
-        sel.innerHTML = `<option value="data/latest.json">Latest Snapshot (data/latest.json)</option>`;
-        pills.innerHTML = `<button type="button" class="pill ${currentVal === "data/latest.json" ? "active" : ""}" data-file="data/latest.json">Latest</button>`;
-
-        const seenDates = new Set();
-        for (const snap of state.snapshots) {
-          const opt = document.createElement("option");
-          opt.value = snap.file;
-          opt.textContent = `${snap.date} [${snap.mode || "RUN"}] — ${snap.ideas_count ?? 0} Setups (${snap.breadth_tone || "MIXED"})`;
-          sel.appendChild(opt);
-
-          if (snap.date && !seenDates.has(snap.date) && seenDates.size < 14) {
-            seenDates.add(snap.date);
-            const btn = document.createElement("button");
-            btn.type = "button";
-            btn.className = `pill ${state.selectedDate === snap.date && currentVal !== "data/latest.json" ? "active" : ""}`;
-            btn.dataset.file = snap.file;
-            btn.dataset.date = snap.date;
-            btn.textContent = `${snap.date} (${snap.ideas_count ?? 0})`;
-            btn.addEventListener("click", () => selectSnapshot(snap.file, snap.date));
-            pills.appendChild(btn);
+        const cur = st.file;
+        sel.innerHTML = `<option value="data/latest.json">Latest Snapshot</option>`;
+        pills.innerHTML = `<button type="button" class="chip ${cur === "data/latest.json" ? "b-bu" : ""}" data-f="data/latest.json" style="cursor:pointer;">Latest</button>`;
+        const seen = new Set();
+        for (const s of st.snaps) {
+          const o = document.createElement("option");
+          o.value = s.file;
+          o.textContent = `${s.date} [${s.mode || "RUN"}] (${s.ideas_count ?? 0})`;
+          sel.appendChild(o);
+          if (s.date && !seen.has(s.date) && seen.size < 12) {
+            seen.add(s.date);
+            const b = document.createElement("button");
+            b.type = "button";
+            b.className = `chip ${st.date === s.date && cur !== "data/latest.json" ? "b-bu" : ""}`;
+            b.style.cursor = "pointer";
+            b.textContent = `${s.date} (${s.ideas_count ?? 0})`;
+            b.onclick = () => pickSnap(s.file, s.date);
+            pills.appendChild(b);
           }
         }
-
-        const latestPill = pills.querySelector('[data-file="data/latest.json"]');
-        if (latestPill) {
-          latestPill.addEventListener("click", () => selectSnapshot("data/latest.json", null));
-        }
-        sel.value = Array.from(sel.options).some((o) => o.value === currentVal) ? currentVal : "data/latest.json";
-      } catch (err) {
-        console.warn("Manifest load issue:", err.message);
-      }
-    }
-
-    async function selectSnapshot(filePath, dateOverride = null, isPoll = false) {
-      state.selectedFile = filePath;
-      if (dateOverride !== null) {
-        state.selectedDate = dateOverride;
-      } else if (filePath === "data/latest.json") {
-        state.selectedDate = null;
-      } else {
-        const found = state.snapshots.find((s) => s.file === filePath);
-        if (found) state.selectedDate = found.date;
-      }
-
-      const histSel = document.getElementById("historySelect");
-      if (histSel) histSel.value = filePath;
-      document.querySelectorAll("#historyPills .pill").forEach((el) => {
-        const match =
-          (filePath === "data/latest.json" && el.dataset.file === "data/latest.json") ||
-          (state.selectedDate && el.dataset.date === state.selectedDate && filePath !== "data/latest.json");
-        el.classList.toggle("active", Boolean(match));
-      });
-
-      await loadSnapshot(filePath, isPoll);
-    }
-
-    async function loadSnapshot(filePath, isPoll = false) {
-      const syncBtn = document.getElementById("syncBtn");
-      if (!isPoll && syncBtn) syncBtn.textContent = "Syncing...";
-
-      try {
-        const data = await fetchJson(filePath);
-        state.payload = data;
-        state.loadError = null;
-        if (!state.selectedDate && data.session_date) {
-          state.selectedDate = data.session_date;
-        }
-        state.lastKnownGeneratedAt = data.generated_at_ist || null;
-        renderAll();
-        syncModeButtons();
-      } catch (err) {
-        state.loadError = err.message || String(err);
-        if (!isPoll) {
-          renderAll();
-        }
-        syncModeButtons();
-      } finally {
-        if (!isPoll && syncBtn) syncBtn.textContent = "Refresh Snapshot";
-      }
-    }
-
-    function populateFilters() {
-      const items = getAllInstruments(state.payload);
-      const sectors = Array.from(new Set(items.map((x) => x.sector).filter(Boolean))).sort();
-      const sel = document.getElementById("sectorFilter");
-      if (sel) {
-        const prev = sel.value;
-        sel.innerHTML = `<option value="ALL">All Sectors (${sectors.length})</option>` +
-          sectors.map((s) => `<option value="${escapeHtml(s)}">${escapeHtml(s)}</option>`).join("");
-        if (sectors.includes(prev)) sel.value = prev;
-      }
-
-      if (!state.selectedChainSymbol || !items.some((x) => x.symbol === state.selectedChainSymbol)) {
-        const hasNifty = items.some((x) => String(x.symbol).toUpperCase() === "NIFTY");
-        state.selectedChainSymbol = hasNifty ? "NIFTY" : (items[0] ? items[0].symbol : null);
-      }
-    }
-
-    function filterSetups(arr) {
-      const searchEl = document.getElementById("searchInput");
-      const secEl = document.getElementById("sectorFilter");
-      const q = searchEl ? searchEl.value.trim().toUpperCase() : "";
-      const sec = secEl ? secEl.value : "ALL";
-      return (Array.isArray(arr) ? arr : []).filter((item) => {
-        if (!item) return false;
-        const symMatch = !q || String(item.symbol || "").toUpperCase().includes(q);
-        const secMatch = sec === "ALL" || String(item.sector || "") === sec;
-        return symMatch && secMatch;
-      });
-    }
-
-    function buildRrBar(item) {
-      const entry = Number(item.entry);
-      const sl = Number(item.stop_loss);
-      const t1 = Number(item.target_1);
-      const t2 = Number(item.target_2);
-      if (![entry, sl, t1, t2].every(Number.isFinite)) return "";
-
-      const risk = Math.max(Math.abs(entry - sl), 0.01);
-      const leg1 = Math.max(Math.abs(t1 - entry), 0.01);
-      const leg2 = Math.max(Math.abs(t2 - t1), 0.01);
-      const total = risk + leg1 + leg2;
-      const slPct = Math.max(5, Math.round((risk / total) * 100));
-      const t1Pct = Math.max(5, Math.round((leg1 / total) * 100));
-      const t2Pct = Math.max(5, 100 - slPct - t1Pct);
-      const rrRatio = ((leg1 + leg2) / risk).toFixed(1);
-
-      return `
-        <div class="rr-box mono">
-          <div class="rr-head">
-            <span class="neg">Risk: ${risk.toFixed(1)}</span>
-            <span>R:R 1:${rrRatio}</span>
-            <span class="pos">Reward: +${(leg1 + leg2).toFixed(1)}</span>
-          </div>
-          <div class="rr-track">
-            <div class="rr-sl" style="width:${slPct}%"></div>
-            <div class="rr-t1" style="width:${t1Pct}%"></div>
-            <div class="rr-t2" style="width:${t2Pct}%"></div>
-          </div>
-        </div>`;
-    }
-
-    function renderSetupCard(item, bucketLabel) {
-      const sideUpper = String(item.side || item.action || "").toUpperCase();
-      const isBull = sideUpper.includes("BULL") || sideUpper.includes("BUY");
-      const badgeCls = isBull ? "badge-bull" : "badge-bear";
-      const plan = item.option_plan || {};
-      const planDesc = plan.strategy_name || plan.summary || item.equity_bucket || "Cash / Intraday Execution";
-      const rangeVal = item.avg_range_rs !== undefined && item.avg_range_rs !== null && Number(item.avg_range_rs) > 0
-        ? `₹${Number(item.avg_range_rs).toFixed(1)}`
-        : "—";
-
-      return `
-        <article class="card">
-          <div class="card-top">
-            <div>
-              <div class="sym mono">
-                ${escapeHtml(item.symbol)}
-                <span class="${chgClass(item.change_pct)}" style="font-size:0.82rem; margin-left:4px;">${formatChangeStr(item.change_pct)}</span>
-              </div>
-              <div class="meta-line">
-                <span class="chip">${escapeHtml(item.sector || "EQUITY")}</span>
-                <span class="chip">${escapeHtml(bucketLabel)}</span>
-                ${item.score !== undefined ? `<span>Score: <strong class="mono">${fmtNum(item.score)}</strong></span>` : ""}
-                <span>Avg Range: <strong class="mono">${escapeHtml(rangeVal)}</strong></span>
-              </div>
-            </div>
-            <span class="badge ${badgeCls}">${escapeHtml(item.side || "SETUP")}</span>
-          </div>
-
-          <div class="levels mono">
-            <div class="lvl"><span>Entry</span><strong>${fmtNum(item.entry)}</strong></div>
-            <div class="lvl"><span>Stop Loss</span><strong class="neg">${fmtNum(item.stop_loss)}</strong></div>
-            <div class="lvl"><span>Target 1</span><strong class="pos">${fmtNum(item.target_1)}</strong></div>
-            <div class="lvl"><span>Target 2</span><strong class="pos">${fmtNum(item.target_2)}</strong></div>
-          </div>
-
-          ${buildRrBar(item)}
-
-          <div class="kv-grid">
-            <div>Best Zone: <strong class="mono">${fmtNum(item.best_entry_low)}–${fmtNum(item.best_entry_high)}</strong></div>
-            <div>VWAP / OI Tgt: <strong class="mono">${fmtNum(item.vwap)} / ${fmtNum(item.oi_target)}</strong></div>
-            <div>Qty: <strong class="mono">${fmtNum(item.qty)}</strong></div>
-            <div>Sizing: <strong class="mono">${escapeHtml(item.sizing_status || "Standard")}</strong></div>
-            <div style="grid-column: 1 / -1;">Execution: <strong>${escapeHtml(planDesc)}</strong></div>
-          </div>
-
-          <div class="rationale">${escapeHtml(item.why_trade || item.entry_action || "Technical and relative strength alignment.")}</div>
-
-          <button type="button" class="btn btn-ghost" style="width:100%;" onclick="inspectSymbolChain('${escapeHtml(String(item.symbol || "").toUpperCase())}')">
-            Inspect Option Chain / OI (${escapeHtml(item.symbol)})
-          </button>
-        </article>`;
-    }
-
-    function renderSetupTable(items, bucketLabel) {
-      const rows = items.map((item) => {
-        const sideUpper = String(item.side || item.action || "").toUpperCase();
-        const isBull = sideUpper.includes("BULL") || sideUpper.includes("BUY");
-        const rangeVal = item.avg_range_rs !== undefined && item.avg_range_rs !== null && Number(item.avg_range_rs) > 0
-          ? `₹${Number(item.avg_range_rs).toFixed(1)}`
-          : "—";
-        return `
-          <tr class="mono">
-            <td><strong>${escapeHtml(item.symbol)}</strong> <span class="muted" style="font-size:0.69rem;">(${escapeHtml(item.sector || "EQ")})</span></td>
-            <td><span class="badge ${isBull ? "badge-bull" : "badge-bear"}">${escapeHtml(item.side || bucketLabel)}</span></td>
-            <td class="num ${chgClass(item.change_pct)}">${formatChangeStr(item.change_pct)}</td>
-            <td class="num">${fmtNum(item.entry)}</td>
-            <td class="num neg">${fmtNum(item.stop_loss)}</td>
-            <td class="num pos">${fmtNum(item.target_1)}</td>
-            <td class="num pos">${fmtNum(item.target_2)}</td>
-            <td class="num">${fmtNum(item.oi_target)}</td>
-            <td class="num">${escapeHtml(rangeVal)}</td>
-            <td class="num">${fmtNum(item.qty)}</td>
-            <td><button type="button" class="btn btn-ghost" style="padding:3px 8px; min-height:26px; font-size:0.7rem;" onclick="inspectSymbolChain('${escapeHtml(String(item.symbol || "").toUpperCase())}')">OI Chain</button></td>
-          </tr>`;
-      }).join("");
-
-      return `
-        <div class="table-wrap">
-          <table class="data-table">
-            <thead>
-              <tr>
-                <th>Symbol</th>
-                <th>Side</th>
-                <th class="num">Chg%</th>
-                <th class="num">Entry</th>
-                <th class="num">Stop Loss</th>
-                <th class="num">Target 1</th>
-                <th class="num">Target 2</th>
-                <th class="num">OI Target</th>
-                <th class="num">Avg Range</th>
-                <th class="num">Qty</th>
-                <th>Chain</th>
-              </tr>
-            </thead>
-            <tbody>${rows}</tbody>
-          </table>
-        </div>`;
-    }
-
-    function renderOiOverview(payload) {
-      const all = getAllInstruments(payload);
-      if (!all.length) {
-        return `<div class="empty-state">No instruments present in this snapshot for Option Chain / OI inspection.</div>`;
-      }
-
-      const selected = all.find((x) => String(x.symbol).toUpperCase() === String(state.selectedChainSymbol).toUpperCase()) || all[0];
-      const cs = selected.chain_summary || {};
-      const ca = selected.chain_analytics || {};
-      const chainRows = Array.isArray(selected.option_chain) ? selected.option_chain : [];
-
-      const optionsHtml = all
-        .map((x) => {
-          const sym = String(x.symbol).toUpperCase();
-          const selAttr = sym === String(selected.symbol).toUpperCase() ? "selected" : "";
-          return `<option value="${escapeHtml(sym)}" ${selAttr}>${escapeHtml(sym)} (${escapeHtml(x.sector || "EQ")})</option>`;
-        })
-        .join("");
-
-      const statsHtml = `
-        <div class="oi-summary-grid">
-          <div class="oi-stat"><span>Spot / Entry</span><strong class="mono">${fmtNum(selected.spot ?? selected.entry)}</strong></div>
-          <div class="oi-stat"><span>Expiry / PCR</span><strong class="mono">${fmtNum(selected.option_expiry || cs.expiry)} • ${fmtNum(cs.pcr)}</strong></div>
-          <div class="oi-stat"><span>OI Build-up / Max Pain</span><strong class="mono">${fmtNum(cs.oi_build_up)} • ${fmtNum(cs.max_pain)}</strong></div>
-          <div class="oi-stat"><span>Regime / Shift</span><strong class="mono">${fmtNum(ca.sentiment_state)} (${fmtNum(ca.support_shift)}/${fmtNum(ca.resistance_shift)})</strong></div>
-          <div class="oi-stat"><span>EOS / EOR</span><strong class="mono"><span class="pos">${fmtNum(ca.eos)}</span> / <span class="neg">${fmtNum(ca.eor)}</span></strong></div>
-        </div>`;
-
-      let chainTableHtml = "";
-      if (chainRows.length) {
-        const bodyRows = chainRows.map((r) => {
-          const role = String(r.zone_role || "");
-          const isSup = role === "STRONG_SUPPORT";
-          const isRes = role === "STRONG_RESISTANCE";
-          const isWeak = role === "WEAK_SUPPORT" || role === "WEAK_RESISTANCE";
-          const peCls = isSup ? "cell-sup" : (role === "WEAK_SUPPORT" ? "cell-weak" : "");
-          const ceCls = isRes ? "cell-res" : (role === "WEAK_RESISTANCE" ? "cell-weak" : "");
-          const stCls = isSup ? "cell-sup" : (isRes ? "cell-res" : (isWeak ? "cell-weak" : ""));
-          const roleBadge = isSup
-            ? `<span class="badge badge-bull">STRONG SUPPORT</span>`
-            : isRes
-            ? `<span class="badge badge-bear">STRONG RESISTANCE</span>`
-            : isWeak
-            ? `<span class="badge badge-warn">${escapeHtml(role)}</span>`
-            : `<span class="muted">—</span>`;
-
-          return `
-            <tr class="mono ${r.is_atm ? "atm-row" : ""}">
-              <td class="num ${ceCls}">${fmtInt(r.ce_oi)}</td>
-              <td class="num ${ceCls} ${chgClass(r.ce_chg_oi)}">${fmtInt(r.ce_chg_oi)} (${formatChangeStr(r.ce_chg_pct)})</td>
-              <td class="num">${fmtNum(r.ce_ltp)}</td>
-              <td class="center ${stCls}">${fmtNum(r.strike)}${r.is_atm ? " ATM" : ""}</td>
-              <td class="num">${fmtNum(r.pe_ltp)}</td>
-              <td class="num ${peCls} ${chgClass(r.pe_chg_oi)}">${fmtInt(r.pe_chg_oi)} (${formatChangeStr(r.pe_chg_pct)})</td>
-              <td class="num ${peCls}">${fmtInt(r.pe_oi)}</td>
-              <td class="center">${roleBadge}</td>
-              <td>${escapeHtml(r.impact_note || "")}</td>
-            </tr>`;
-        }).join("");
-
-        chainTableHtml = `
-          <div class="table-wrap">
-            <table class="data-table">
-              <thead>
-                <tr>
-                  <th class="num">Call OI</th>
-                  <th class="num">Call OI Chg</th>
-                  <th class="num">CE LTP</th>
-                  <th class="center">Strike</th>
-                  <th class="num">PE LTP</th>
-                  <th class="num">Put OI Chg</th>
-                  <th class="num">Put OI</th>
-                  <th class="center">Zone</th>
-                  <th>OI Structure Note</th>
-                </tr>
-              </thead>
-              <tbody>${bodyRows}</tbody>
-            </table>
-          </div>`;
-      } else {
-        chainTableHtml = `<div class="empty-state">Strike-level option chain rows were not included for <strong>${escapeHtml(selected.symbol)}</strong> in this snapshot. Summary metrics above reflect available chain fields.</div>`;
-      }
-
-      return `
-        <div class="panel">
-          <div class="panel-head">
-            <div>
-              <div class="panel-title">Option Chain &amp; Open Interest Overview</div>
-              <div class="muted" style="font-size:0.73rem;">Snapshot OI structure for selected instrument (not tick-by-tick streaming)</div>
-            </div>
-            <select id="oiSymbolPicker" aria-label="Choose symbol for Option Chain">${optionsHtml}</select>
-          </div>
-          ${statsHtml}
-          ${chainTableHtml}
-        </div>`;
-    }
-
-    function inspectSymbolChain(sym) {
-      state.selectedChainSymbol = sym;
-      state.activeTab = "OI_OVERVIEW";
-      document.querySelectorAll("#navTabs .tab").forEach((t) => {
-        t.classList.toggle("active", t.dataset.tab === "OI_OVERVIEW");
-      });
-      renderAll();
-      document.getElementById("filterBar")?.scrollIntoView({ behavior: "smooth" });
-    }
-
-    function renderStatusBanner(payload) {
-      try {
-        const banner = document.getElementById("statusBanner");
-        const badge = document.getElementById("freshnessBadge");
-        const dot = document.getElementById("headerStatusDot");
-        const nowInfo = getNowIstParts();
-
-        if (state.loadError && !payload) {
-          if (banner) banner.className = "status-banner stale-banner";
-          if (badge) {
-            badge.className = "chip chip-stale mono";
-            badge.textContent = "SNAPSHOT UNAVAILABLE";
-          }
-          if (dot) dot.style.background = "var(--bear)";
-          setHtml("statusBanner", `
-            <div><strong>Data Load Error:</strong> ${escapeHtml(state.loadError)} — Ensure <code>docs/data/latest.json</code> has been published by <code>screener.py</code>.</div>
-            <div class="mono muted">Clock: ${escapeHtml(nowInfo.istLabel)}</div>
-          `);
-          return;
-        }
-
-        const genStr = payload && payload.generated_at_ist ? payload.generated_at_ist : null;
-        const ageMin = parseSnapshotAgeMinutes(genStr);
-        const isStale = ageMin !== null && ageMin > 180;
-        const marketLabel = nowInfo.isMarketHours
-          ? "NSE/BSE Market Hours (Snapshot Batch Sync)"
-          : "Market Closed / Outside Regular Session (Snapshot Data)";
-
-        if (isStale) {
-          if (banner) banner.className = "status-banner stale-banner";
-          if (badge) {
-            badge.className = "chip chip-stale mono";
-            badge.textContent = `STALE (${ageMin}m old)`;
-          }
-          if (dot) dot.style.background = "var(--bear)";
-        } else if (ageMin !== null && ageMin <= 30) {
-          if (banner) banner.className = "status-banner";
-          if (badge) {
-            badge.className = "chip chip-fresh mono";
-            badge.textContent = `RECENT (${ageMin}m ago)`;
-          }
-          if (dot) dot.style.background = "var(--bull)";
-        } else {
-          if (banner) banner.className = "status-banner warn-banner";
-          if (badge) {
-            badge.className = "chip chip-mode mono";
-            badge.textContent = ageMin !== null ? `SNAPSHOT (${ageMin}m ago)` : "SNAPSHOT DATA";
-          }
-          if (dot) dot.style.background = "var(--warn)";
-        }
-
-        const guardNote = (payload && payload.session_guardrails && payload.session_guardrails.window_note)
-          ? payload.session_guardrails.window_note
-          : "Batch screener snapshot; verify live quotes and risk limits prior to execution.";
-
-        setHtml("statusBanner", `
-          <div>
-            <strong>${escapeHtml(marketLabel)}:</strong> ${escapeHtml(guardNote)}
-            <span class="muted"> • Note: Auto-sync re-reads batch JSON files; it is not a tick-by-tick live feed.</span>
-          </div>
-          <div class="mono muted">Generated: ${escapeHtml(genStr || "—")} • Now: ${escapeHtml(nowInfo.istLabel)}</div>
-        `);
-      } catch (err) {
-        console.warn("Status banner render warning:", err);
-      }
-    }
-
-    function renderAll() {
-      const payload = state.payload;
-      renderStatusBanner(payload);
-
-      if (!payload) {
-        setHtml("tickerStrip", "");
-        setHtml("kpiGrid", "");
-        setHtml("contextGrid", "");
-        setHtml("mainWorkspace", `<div class="empty-state">Waiting for valid snapshot data.</div>`);
-        setHtml("ledgerPanel", "");
-        return;
-      }
-
-      const summary = payload.summary || {};
-      const modeStr = String(payload.mode || "RUN").toUpperCase();
-
-      try {
-        const modeBadge = document.getElementById("modeBadge");
-        if (modeBadge) {
-          modeBadge.textContent = modeStr;
-          modeBadge.className = `chip mono ${modeStr === "BTST" ? "chip-btst" : "chip-mode"}`;
-        }
-        const titleEl = document.getElementById("brandTitle");
-        if (titleEl) titleEl.textContent = payload.title || "My-Stock-Screener — Quant & Hedging Desk";
-        const subEl = document.getElementById("metaSubtitle");
-        if (subEl) {
-          subEl.textContent = `Session: ${payload.session_date || "—"} • Source: ${summary.data_source || "—"} • Capital Configured: ${summary.capital_configured ? "Yes" : "No"}`;
-        }
-        populateFilters();
-      } catch (err) {
-        console.warn("Header/filter sync warning:", err);
-      }
-
-      const optBull = Array.isArray(payload.options_bullish)
-        ? payload.options_bullish
-        : ((payload.setups && Array.isArray(payload.setups.bullish)) ? payload.setups.bullish : []);
-      const optBear = Array.isArray(payload.options_bearish)
-        ? payload.options_bearish
-        : ((payload.setups && Array.isArray(payload.setups.bearish)) ? payload.setups.bearish : []);
-      const eqIntra = Array.isArray(payload.equity_intraday) ? payload.equity_intraday : [];
-      const idxTrades = Array.isArray(payload.index_trades) ? payload.index_trades : [];
-
-      try {
-        const tickers = [
-          { sym: "NIFTY 50", val: summary.nifty_spot, chg: summary.nifty_chg, sub: "Index Spot" },
-          { sym: "BANK NIFTY", val: summary.bnf_spot, chg: summary.bnf_chg, sub: "Index Spot" },
-          { sym: "FIN NIFTY", val: summary.fin_spot, chg: summary.fin_chg, sub: "Index Spot" },
-          { sym: "BREADTH", val: summary.breadth_tone || "MIXED", chg: summary.breadth_ratio || "—", sub: `>EMA20: ${fmtNum(summary.above_ema20)}%` },
-        ];
-        for (const idx of idxTrades) {
-          if (idx && String(idx.symbol).toUpperCase() === "SENSEX") {
-            tickers.splice(3, 0, {
-              sym: "SENSEX",
-              val: idx.spot ?? idx.entry,
-              chg: idx.change_pct,
-              sub: "BSE Index",
-            });
-          }
-        }
-        setHtml("tickerStrip", tickers
-          .map((t) => `
-            <div class="ticker-tile">
-              <div class="ticker-top mono"><span>${escapeHtml(t.sym)}</span><span class="${chgClass(t.chg)}">${escapeHtml(formatChangeStr(t.chg))}</span></div>
-              <div class="ticker-val mono">${fmtNum(t.val)}</div>
-              <div class="ticker-sub mono">${escapeHtml(t.sub)}</div>
-            </div>`)
-          .join(""));
-      } catch (err) {
-        setHtml("tickerStrip", `<div class="empty-state">Ticker strip unavailable: ${escapeHtml(err.message)}</div>`);
-      }
-
-      try {
-        const advDecMatch = String(summary.breadth_ratio || "").match(/(\d+)\s*Adv\s*\/\s*(\d+)\s*Dec/i);
-        let advPct = 50;
-        if (advDecMatch) {
-          const a = Number(advDecMatch[1]);
-          const d = Number(advDecMatch[2]);
-          if (a + d > 0) advPct = Math.round((a / (a + d)) * 100);
-        }
-
-        setHtml("kpiGrid", `
-          <div class="kpi">
-            <div class="kpi-label">Total Ideas (${escapeHtml(modeStr)})</div>
-            <div class="kpi-val mono">${fmtNum(summary.ideas_count)}</div>
-            <div class="kpi-sub mono">${idxTrades.length} Idx • ${optBull.length + optBear.length} Opt • ${eqIntra.length} Eq</div>
-          </div>
-          <div class="kpi">
-            <div class="kpi-label">Options Basket</div>
-            <div class="kpi-val mono">${optBull.length + optBear.length}</div>
-            <div class="kpi-sub mono">${optBull.length} Bullish / ${optBear.length} Bearish</div>
-          </div>
-          <div class="kpi">
-            <div class="kpi-label">Equity Intraday</div>
-            <div class="kpi-val mono">${eqIntra.length}</div>
-            <div class="kpi-sub">Separate from stock options</div>
-          </div>
-          <div class="kpi">
-            <div class="kpi-label">Market Breadth</div>
-            <div class="kpi-val ${chgClass(summary.breadth_tone === "BULLISH" ? 1 : (summary.breadth_tone === "BEARISH" ? -1 : 0))}">${escapeHtml(summary.breadth_tone || "MIXED")}</div>
-            <div class="kpi-sub mono">${escapeHtml(summary.breadth_ratio || "—")}</div>
-            <div class="meter"><div class="meter-fill" style="width:${advPct}%"></div></div>
-          </div>
-        `);
-      } catch (err) {
-        setHtml("kpiGrid", `<div class="empty-state">KPI metrics unavailable: ${escapeHtml(err.message)}</div>`);
-      }
-
-      try {
-        const cues = Array.isArray(payload.global_cues) ? payload.global_cues : [];
-        const cuesHtml = cues.length
-          ? cues.slice(0, 8).map((c) => {
-              if (!c) return "";
-              const label = c.name || c.symbol || "Cue";
-              const val = c.price ?? c.last ?? c.value ?? "";
-              const chg = c.change_pct !== undefined && c.change_pct !== null ? formatChangeStr(c.change_pct) : (c.change || "");
-              return `<span class="data-chip mono"><span>${escapeHtml(label)}</span>${val !== "" ? `<strong>${fmtNum(val)}</strong>` : ""}${chg ? `<span class="${chgClass(chg)}">${escapeHtml(chg)}</span>` : ""}</span>`;
-            }).join("")
-          : `<span class="muted" style="font-size:0.74rem;">No global cue entries in this snapshot.</span>`;
-
-        const rawSec = payload.sectors;
-        const secList = Array.isArray(rawSec)
-          ? rawSec
-          : Object.entries(rawSec || {}).map(([k, v]) => (typeof v === "object" && v !== null ? { sector: k, ...v } : { sector: k, score: v }));
-
-        const secHtml = secList.length
-          ? secList.slice(0, 12).map((sc) => {
-              if (!sc) return "";
-              const name = sc.sector || sc.name || "SECTOR";
-              const metric = sc.avg_change_pct !== undefined && sc.avg_change_pct !== null
-                ? formatChangeStr(sc.avg_change_pct)
-                : (sc.score !== undefined && sc.score !== null ? fmtNum(sc.score) : "—");
-              return `<span class="data-chip mono"><span>${escapeHtml(name)}</span><strong class="${chgClass(metric)}">${escapeHtml(metric)}</strong></span>`;
-            }).join("")
-          : `<span class="muted" style="font-size:0.74rem;">No sector metrics in this snapshot.</span>`;
-
-        setHtml("contextGrid", `
-          <div class="panel">
-            <div class="panel-head"><span class="panel-title">Global Cues</span><span class="mono muted" style="font-size:0.68rem;">Snapshot Feed</span></div>
-            <div class="chips">${cuesHtml}</div>
-          </div>
-          <div class="panel">
-            <div class="panel-head"><span class="panel-title">Sector Strength</span><span class="mono muted" style="font-size:0.68rem;">NSE/BSE Basket</span></div>
-            <div class="chips">${secHtml}</div>
-          </div>
-        `);
-      } catch (err) {
-        setHtml("contextGrid", `<div class="empty-state">Global cues / sector context unavailable: ${escapeHtml(err.message)}</div>`);
-      }
-
-      try {
-        if (state.activeTab === "OI_OVERVIEW") {
-          setHtml("mainWorkspace", renderOiOverview(payload));
-          const picker = document.getElementById("oiSymbolPicker");
-          if (picker) {
-            picker.addEventListener("change", (e) => {
-              state.selectedChainSymbol = e.target.value;
-              renderAll();
-            });
-          }
-        } else {
-          const blocks = [
-            { key: "INDEX", title: "Index Trades & Option Plans", sub: "Index setups from latest run", bucket: "INDEX", items: filterSetups(idxTrades) },
-            { key: "OPT_BULL", title: "Stock Options — Bullish", sub: "Bullish option plans / spreads", bucket: "OPT BULL", items: filterSetups(optBull) },
-            { key: "OPT_BEAR", title: "Stock Options — Bearish", sub: "Bearish option plans / spreads", bucket: "OPT BEAR", items: filterSetups(optBear) },
-            { key: "EQ_INTRA", title: "Equity Intraday Setups", sub: "Intraday equity candidates (separate from stock options)", bucket: "EQ INTRA", items: filterSetups(eqIntra) },
-          ].filter((b) => state.activeTab === "ALL" || state.activeTab === b.key);
-
-          let html = "";
-          for (const b of blocks) {
-            if (!b.items.length) continue;
-            const body = state.viewMode === "TABLE"
-              ? renderSetupTable(b.items, b.bucket)
-              : `<div class="cards-grid">${b.items.map((it) => renderSetupCard(it, b.bucket)).join("")}</div>`;
-            html += `
-              <div class="sec-head">
-                <div>
-                  <div class="sec-title">${escapeHtml(b.title)}</div>
-                  <div class="sec-sub">${escapeHtml(b.sub)}</div>
-                </div>
-                <span class="mono muted" style="font-size:0.76rem;">${b.items.length} items</span>
-              </div>
-              ${body}`;
-          }
-
-          setHtml("mainWorkspace", html || `
-            <div class="empty-state">
-              <div>No setups match the current tab, sector, or symbol filter.</div>
-              <button type="button" class="btn btn-ghost" style="margin-top:10px;" onclick="resetAllFilters()">Reset Filters</button>
-            </div>`);
-        }
-      } catch (err) {
-        setHtml("mainWorkspace", `<div class="empty-state">Setups workspace error: ${escapeHtml(err.message)}</div>`);
-      }
-
-      try {
-        const wf = payload.walk_forward || {};
-        const closedCount = Number(wf.closed_trades ?? 0);
-        const costsVal = wf.total_costs !== undefined ? wf.total_costs : (wf.total_est_charges ?? 0);
-        const winRateStr = wf.net_win_rate_pct !== null && wf.net_win_rate_pct !== undefined
-          ? `${fmtNum(wf.net_win_rate_pct)}% (Post-Cost)`
-          : "N/A";
-        const smallSample = !Number.isFinite(closedCount) || closedCount < 30;
-        const sampleWarningText = smallSample
-          ? `Small sample warning (n = ${escapeHtml(wf.closed_trades ?? 0)} closed trades; n < 30). Do not extrapolate early walk-forward metrics as guaranteed performance.`
-          : (wf.sample_warning || "Post-cost walk-forward ledger reflects historical logged signals and estimated transaction costs.");
-
-        const capDisplay = summary.capital_configured
-          ? `₹${fmtInt(summary.capital)}`
-          : "Not Configured";
-
-        setHtml("ledgerPanel", `
-          <div class="panel-head">
-            <div>
-              <div class="panel-title">Risk &amp; Post-Cost Walk-Forward Ledger</div>
-              <div class="muted" style="font-size:0.72rem;">Capital: <span class="mono">${escapeHtml(capDisplay)}</span> • Risk/Trade: <span class="mono">${fmtNum(summary.risk_pct)}%</span> • Max Alloc: <span class="mono">${fmtNum(summary.max_allocation_pct)}%</span></div>
-            </div>
-            <span class="badge ${smallSample ? "badge-warn" : "badge-bull"} mono">n = ${escapeHtml(wf.closed_trades ?? 0)}</span>
-          </div>
-          <div class="ledger-grid mono">
-            <div class="ledger-cell"><span>Closed Trades (n)</span><strong>${fmtNum(wf.closed_trades ?? 0)}</strong></div>
-            <div class="ledger-cell"><span>Net Win Rate</span><strong>${escapeHtml(winRateStr)}</strong></div>
-            <div class="ledger-cell"><span>Est. Costs / Charges</span><strong>₹${fmtNum(costsVal)}</strong></div>
-            <div class="ledger-cell"><span>Total Net P&amp;L</span><strong>₹${fmtNum(wf.total_net_pnl ?? 0)}</strong></div>
-            <div class="ledger-cell"><span>Max Net Drawdown</span><strong>₹${fmtNum(wf.max_drawdown_net_pnl ?? 0)}</strong></div>
-          </div>
-          <div class="disclaimer">
-            <strong>Risk &amp; Sample Notice:</strong> ${escapeHtml(sampleWarningText)} Research and risk-management tool only; no investment advice or guaranteed returns.
-          </div>
-        `);
-      } catch (err) {
-        setHtml("ledgerPanel", `<div class="empty-state">Walk-forward ledger unavailable: ${escapeHtml(err.message)}</div>`);
-      }
-    }
-
-    function resetAllFilters() {
-      state.activeTab = "ALL";
-      const sEl = document.getElementById("searchInput");
-      const secEl = document.getElementById("sectorFilter");
-      if (sEl) sEl.value = "";
-      if (secEl) secEl.value = "ALL";
-      document.querySelectorAll("#navTabs .tab").forEach((t) => {
-        t.classList.toggle("active", t.dataset.tab === "ALL");
-      });
-      renderAll();
-    }
-
-    function loadSavedDispatchConfig() {
-      try {
-        const raw = localStorage.getItem(STORAGE_KEY);
-        if (!raw) return;
-        const cfg = JSON.parse(raw);
-        if (cfg.owner) document.getElementById("ghOwner").value = cfg.owner;
-        if (cfg.repo) document.getElementById("ghRepo").value = cfg.repo;
-        if (cfg.workflow) document.getElementById("ghWorkflow").value = cfg.workflow;
-        if (cfg.ref) document.getElementById("ghRef").value = cfg.ref;
-        if (cfg.mode) document.getElementById("ghMode").value = cfg.mode;
-        if (cfg.pat) document.getElementById("ghPat").value = cfg.pat;
+        const lp = pills.querySelector('[data-f="data/latest.json"]');
+        if (lp) lp.onclick = () => pickSnap("data/latest.json", null);
+        sel.value = Array.from(sel.options).some(x => x.value === cur) ? cur : "data/latest.json";
       } catch (_) {}
     }
 
-    function saveDispatchConfig(includePat = true) {
-      const existing = (() => {
-        try { return JSON.parse(localStorage.getItem(STORAGE_KEY) || "{}"); } catch (_) { return {}; }
-      })();
-      const patInput = document.getElementById("ghPat").value.trim();
-      const payload = {
-        owner: document.getElementById("ghOwner").value.trim(),
-        repo: document.getElementById("ghRepo").value.trim(),
-        workflow: document.getElementById("ghWorkflow").value.trim() || "screener.yml",
-        ref: document.getElementById("ghRef").value.trim() || "main",
-        mode: document.getElementById("ghMode").value,
-        pat: includePat ? patInput : (existing.pat || ""),
-      };
-      localStorage.setItem(STORAGE_KEY, JSON.stringify(payload));
-      return payload;
+    async function pickSnap(f, dt = null, quiet = false) {
+      st.file = f;
+      if (dt !== null) st.date = dt;
+      else if (f === "data/latest.json") st.date = null;
+      else { const hit = st.snaps.find(s => s.file === f); if (hit) st.date = hit.date; }
+      const sel = document.getElementById("histSel");
+      if (sel) sel.value = f;
+      await loadSnap(f, quiet);
     }
 
-    function clearDispatchConfig() {
-      localStorage.removeItem(STORAGE_KEY);
-      document.getElementById("ghPat").value = "";
-      setHtml("dispatchStatusText", "Cleared local browser configuration.");
+    async function loadSnap(f, quiet = false) {
+      const b = document.getElementById("btnSync");
+      if (!quiet && b) b.textContent = "Syncing...";
+      try {
+        const d = await getJson(f);
+        st.data = d; st.err = null;
+        if (!st.date && d.session_date) st.date = d.session_date;
+        st.lastGen = d.generated_at_ist || null;
+      } catch (e) {
+        st.err = e.message || String(e);
+      } finally {
+        if (!quiet && b) b.textContent = "Refresh";
+        render(); syncModes();
+      }
     }
 
-    async function triggerWorkflowAndPoll() {
-      const cfg = saveDispatchConfig(true);
-      if (!cfg.owner || !cfg.repo || !cfg.workflow || !cfg.pat) {
-        setHtml("dispatchStatusText", "Missing Owner, Repo, Workflow file, or local PAT. Enter them above to dispatch.");
+    function filt(arr) {
+      const q = (document.getElementById("symSearch")?.value || "").trim().toUpperCase();
+      const sec = document.getElementById("secSel")?.value || "ALL";
+      return (Array.isArray(arr) ? arr : []).filter(x => x &&
+        (!q || String(x.symbol || "").toUpperCase().includes(q)) &&
+        (sec === "ALL" || String(x.sector || "") === sec));
+    }
+
+    function cardHtml(it, bkt) {
+      const bull = /BULL|BUY/i.test(String(it.side || it.action || ""));
+      const plan = (it.option_plan && (it.option_plan.strategy_name || it.option_plan.summary)) || it.equity_bucket || "Execution Plan";
+      const rng = Number(it.avg_range_rs) > 0 ? `₹${Number(it.avg_range_rs).toFixed(1)}` : "—";
+      return `
+        <article class="card">
+          <div class="row" style="justify-content:space-between; align-items:flex-start;">
+            <div>
+              <div class="mono" style="font-size:1rem; font-weight:800;">${esc(it.symbol)} <span class="${clsF(it.change_pct)}" style="font-size:.8rem;">${chgF(it.change_pct)}</span></div>
+              <div class="row mu" style="font-size:.69rem; margin-top:2px;">
+                <span class="chip">${esc(it.sector || "EQ")}</span>
+                <span class="chip">${esc(bkt)}</span>
+                <span>AvgRng: <strong class="mono">${esc(rng)}</strong></span>
+              </div>
+            </div>
+            <span class="chip mono ${bull ? "b-bu" : "b-be"}">${esc(it.side || "SETUP")}</span>
+          </div>
+          <div class="lvls mono">
+            <div><span>Entry</span><strong>${num(it.entry)}</strong></div>
+            <div><span>SL</span><strong class="neg">${num(it.stop_loss)}</strong></div>
+            <div><span>Tgt 1</span><strong class="pos">${num(it.target_1)}</strong></div>
+            <div><span>Tgt 2</span><strong class="pos">${num(it.target_2)}</strong></div>
+          </div>
+          <div class="kv">
+            <div>Zone: <strong class="mono">${num(it.best_entry_low)}–${num(it.best_entry_high)}</strong></div>
+            <div>VWAP/OI: <strong class="mono">${num(it.vwap)}/${num(it.oi_target)}</strong></div>
+            <div>Qty: <strong class="mono">${num(it.qty)}</strong></div>
+            <div>Sizing: <strong class="mono">${esc(it.sizing_status || "Std")}</strong></div>
+            <div style="grid-column:1/-1;">Plan: <strong>${esc(plan)}</strong></div>
+          </div>
+          <div class="rat">${esc(it.why_trade || it.entry_action || "Technical & OI setup.")}</div>
+          <button type="button" class="btn" onclick="openChain('${esc(String(it.symbol || "").toUpperCase())}')">Inspect Option Chain (${esc(it.symbol)})</button>
+        </article>`;
+    }
+
+    function tblHtml(items, bkt) {
+      const trs = items.map(it => {
+        const bull = /BULL|BUY/i.test(String(it.side || it.action || ""));
+        const rng = Number(it.avg_range_rs) > 0 ? `₹${Number(it.avg_range_rs).toFixed(1)}` : "—";
+        return `<tr class="mono">
+          <td><strong>${esc(it.symbol)}</strong> <span class="mu">(${esc(it.sector || "EQ")})</span></td>
+          <td><span class="chip ${bull ? "b-bu" : "b-be"}">${esc(it.side || bkt)}</span></td>
+          <td class="r ${clsF(it.change_pct)}">${chgF(it.change_pct)}</td>
+          <td class="r">${num(it.entry)}</td>
+          <td class="r neg">${num(it.stop_loss)}</td>
+          <td class="r pos">${num(it.target_1)}</td>
+          <td class="r pos">${num(it.target_2)}</td>
+          <td class="r">${num(it.oi_target)}</td>
+          <td class="r">${esc(rng)}</td>
+          <td class="r">${num(it.qty)}</td>
+          <td><button type="button" class="btn" style="padding:2px 7px; min-height:24px;" onclick="openChain('${esc(String(it.symbol || "").toUpperCase())}')">OI</button></td>
+        </tr>`;
+      }).join("");
+      return `<div class="t-wrap"><table><thead><tr>
+        <th>Symbol</th><th>Side</th><th class="r">Chg%</th><th class="r">Entry</th><th class="r">SL</th>
+        <th class="r">Tgt 1</th><th class="r">Tgt 2</th><th class="r">OI Tgt</th><th class="r">AvgRng</th><th class="r">Qty</th><th>Chain</th>
+      </tr></thead><tbody>${trs}</tbody></table></div>`;
+    }
+
+    function oiHtml(p) {
+      const all = allInst(p);
+      if (!all.length) return `<div class="empty">No instruments available for Option Chain view.</div>`;
+      const sel = all.find(x => String(x.symbol).toUpperCase() === String(st.chainSym).toUpperCase()) || all[0];
+      const cs = sel.chain_summary || {}, ca = sel.chain_analytics || {};
+      const rows = Array.isArray(sel.option_chain) ? sel.option_chain : [];
+      const opts = all.map(x => {
+        const k = String(x.symbol).toUpperCase();
+        return `<option value="${esc(k)}" ${k === String(sel.symbol).toUpperCase() ? "selected" : ""}>${esc(k)} (${esc(x.sector || "EQ")})</option>`;
+      }).join("");
+
+      const body = rows.length ? `<div class="t-wrap"><table><thead><tr>
+        <th class="r">CE OI</th><th class="r">CE Chg</th><th class="r">CE LTP</th><th class="c">Strike</th>
+        <th class="r">PE LTP</th><th class="r">PE Chg</th><th class="r">PE OI</th><th class="c">Zone</th><th>Note</th>
+      </tr></thead><tbody>${rows.map(r => {
+        const z = String(r.zone_role || "");
+        const zc = z === "STRONG_SUPPORT" ? "b-bu" : (z === "STRONG_RESISTANCE" ? "b-be" : (z ? "b-wa" : ""));
+        return `<tr class="mono">
+          <td class="r">${intF(r.ce_oi)}</td>
+          <td class="r ${clsF(r.ce_chg_oi)}">${intF(r.ce_chg_oi)} (${chgF(r.ce_chg_pct)})</td>
+          <td class="r">${num(r.ce_ltp)}</td>
+          <td class="c"><strong>${num(r.strike)}</strong>${r.is_atm ? " ATM" : ""}</td>
+          <td class="r">${num(r.pe_ltp)}</td>
+          <td class="r ${clsF(r.pe_chg_oi)}">${intF(r.pe_chg_oi)} (${chgF(r.pe_chg_pct)})</td>
+          <td class="r">${intF(r.pe_oi)}</td>
+          <td class="c">${z ? `<span class="chip ${zc}">${esc(z)}</span>` : "—"}</td>
+          <td>${esc(r.impact_note || "")}</td>
+        </tr>`;
+      }).join("")}</tbody></table></div>`
+      : `<div class="empty">Strike rows not present for <strong>${esc(sel.symbol)}</strong> in this snapshot.</div>`;
+
+      return `<div class="panel">
+        <div class="row" style="justify-content:space-between; margin-bottom:10px;">
+          <div><strong>Option Chain &amp; OI Structure</strong> <span class="mu" style="font-size:.72rem;">(Snapshot data, not tick streaming)</span></div>
+          <select id="oiPick">${opts}</select>
+        </div>
+        <div class="kv" style="grid-template-columns:repeat(auto-fit,minmax(160px,1fr)); margin-bottom:10px;">
+          <div>Spot: <strong class="mono">${num(sel.spot ?? sel.entry)}</strong></div>
+          <div>Expiry / PCR: <strong class="mono">${num(sel.option_expiry || cs.expiry)} / ${num(cs.pcr)}</strong></div>
+          <div>OI / Pain: <strong class="mono">${num(cs.oi_build_up)} / ${num(cs.max_pain)}</strong></div>
+          <div>EOS / EOR: <strong class="mono">${num(ca.eos)} / ${num(ca.eor)}</strong></div>
+        </div>
+        ${body}
+      </div>`;
+    }
+
+    function openChain(sym) {
+      st.chainSym = sym; st.tab = "OI";
+      document.querySelectorAll("#tabBar .tab").forEach(b => b.classList.toggle("active", b.dataset.t === "OI"));
+      render();
+      document.getElementById("filterBox")?.scrollIntoView({ behavior: "smooth" });
+    }
+
+    function render() {
+      const inf = istInfo(), p = st.data;
+      if (st.err && !p) {
+        setH("bannerBox", `<div><strong class="neg">Load Error:</strong> ${esc(st.err)}</div><div class="mono mu">${esc(inf.nowStr)}</div>`);
         return;
       }
+      const age = ageMins(p && p.generated_at_ist);
+      const stale = age != null && age > 180;
+      const fBadge = stale ? `<span class="chip mono b-be">STALE (${age}m)</span>`
+        : (age != null ? `<span class="chip mono b-bu">${age <= 30 ? "RECENT" : "SNAP"} (${age}m)</span>` : `<span class="chip mono">SNAP</span>`);
+      setH("bFresh", fBadge);
+      setH("bannerBox", `
+        <div><strong>${inf.open ? "Market Hours (Batch Sync)" : "Market Closed / Snapshot Data"}:</strong> Batch JSON snapshot (not tick-by-tick live feed).</div>
+        <div class="mono mu">Gen: ${esc(p?.generated_at_ist || "—")} • Now: ${esc(inf.nowStr)}</div>
+      `);
+      if (!p) return;
 
-      const url = `https://api.github.com/repos/${encodeURIComponent(cfg.owner)}/${encodeURIComponent(cfg.repo)}/actions/workflows/${encodeURIComponent(cfg.workflow)}/dispatches`;
-      setHtml("dispatchStatusText", "Dispatching workflow...");
+      const s = p.summary || {}, mStr = String(p.mode || "RUN").toUpperCase();
+      const mb = document.getElementById("bMode");
+      if (mb) { mb.textContent = mStr; mb.className = `chip mono ${mStr === "BTST" ? "b-wa" : "b-bu"}`; }
+      const bt = document.getElementById("bTitle"); if (bt) bt.textContent = p.title || "My-Stock-Screener";
+      const bs = document.getElementById("bSub"); if (bs) bs.textContent = `Date: ${p.session_date || "—"} • Source: ${s.data_source || "—"}`;
 
-      try {
-        const resp = await fetch(url, {
-          method: "POST",
-          headers: {
-            "Authorization": `Bearer ${cfg.pat}`,
-            "Accept": "application/vnd.github+json",
-            "Content-Type": "application/json",
-          },
-          body: JSON.stringify({
-            ref: cfg.ref || "main",
-            inputs: { mode: cfg.mode },
-          }),
-        });
+      const items = allInst(p);
+      const secs = Array.from(new Set(items.map(x => x.sector).filter(Boolean))).sort();
+      const secSel = document.getElementById("secSel");
+      if (secSel) {
+        const prev = secSel.value;
+        secSel.innerHTML = `<option value="ALL">All Sectors (${secs.length})</option>` + secs.map(x => `<option value="${esc(x)}">${esc(x)}</option>`).join("");
+        if (secs.includes(prev)) secSel.value = prev;
+      }
+      if (!st.chainSym || !items.some(x => x.symbol === st.chainSym)) {
+        st.chainSym = items.some(x => String(x.symbol).toUpperCase() === "NIFTY") ? "NIFTY" : (items[0]?.symbol || null);
+      }
 
-        if (resp.status !== 204 && !resp.ok) {
-          const errBody = await resp.text().catch(() => "");
-          throw new Error(`Dispatch failed (HTTP ${resp.status}) ${errBody.slice(0, 120)}`);
+      const idxT = Array.isArray(p.index_trades) ? p.index_trades : [];
+      const oBu = Array.isArray(p.options_bullish) ? p.options_bullish : (p.setups?.bullish || []);
+      const oBe = Array.isArray(p.options_bearish) ? p.options_bearish : (p.setups?.bearish || []);
+      const eqI = Array.isArray(p.equity_intraday) ? p.equity_intraday : [];
+
+      const tList = [
+        { k: "NIFTY 50", v: s.nifty_spot, c: s.nifty_chg },
+        { k: "BANK NIFTY", v: s.bnf_spot, c: s.bnf_chg },
+        { k: "FIN NIFTY", v: s.fin_spot, c: s.fin_chg },
+        { k: "BREADTH", v: s.breadth_tone || "MIXED", c: s.breadth_ratio || "—" },
+      ];
+      const sx = idxT.find(x => String(x.symbol).toUpperCase() === "SENSEX");
+      if (sx) tList.splice(3, 0, { k: "SENSEX", v: sx.spot ?? sx.entry, c: sx.change_pct });
+      setH("tickerBox", tList.map(t => `<div class="tile"><div class="row mono" style="justify-content:space-between; font-size:.7rem;"><span>${esc(t.k)}</span><span class="${clsF(t.c)}">${esc(chgF(t.c))}</span></div><div class="mono" style="font-size:.95rem; font-weight:800; margin-top:3px;">${num(t.v)}</div></div>`).join(""));
+
+      setH("kpiBox", `
+        <div class="kpi"><div class="mu" style="font-size:.66rem; font-weight:700;">TOTAL IDEAS</div><div class="mono" style="font-size:1.25rem; font-weight:800;">${num(s.ideas_count)}</div><div class="mono mu" style="font-size:.7rem;">${idxT.length} Idx • ${oBu.length + oBe.length} Opt • ${eqI.length} Eq</div></div>
+        <div class="kpi"><div class="mu" style="font-size:.66rem; font-weight:700;">OPTIONS</div><div class="mono" style="font-size:1.25rem; font-weight:800;">${oBu.length + oBe.length}</div><div class="mono mu" style="font-size:.7rem;">${oBu.length} Bull / ${oBe.length} Bear</div></div>
+        <div class="kpi"><div class="mu" style="font-size:.66rem; font-weight:700;">EQUITY INTRADAY</div><div class="mono" style="font-size:1.25rem; font-weight:800;">${eqI.length}</div><div class="mu" style="font-size:.7rem;">Zero overlap w/ stock options</div></div>
+        <div class="kpi"><div class="mu" style="font-size:.66rem; font-weight:700;">BREADTH</div><div class="mono ${clsF(s.breadth_tone === "BULLISH" ? 1 : (s.breadth_tone === "BEARISH" ? -1 : 0))}" style="font-size:1.25rem; font-weight:800;">${esc(s.breadth_tone || "MIXED")}</div><div class="mono mu" style="font-size:.7rem;">${esc(s.breadth_ratio || "—")}</div></div>
+      `);
+
+      const cues = Array.isArray(p.global_cues) ? p.global_cues : [];
+      const secArr = Array.isArray(p.sectors) ? p.sectors : Object.entries(p.sectors || {}).map(([k, v]) => (typeof v === "object" && v ? { sector: k, ...v } : { sector: k, score: v }));
+      setH("ctxBox", `
+        <div class="panel"><strong style="font-size:.72rem;">GLOBAL CUES</strong><div class="chips">${cues.length ? cues.slice(0, 8).map(c => `<span class="dchip mono">${esc(c.name || c.symbol || "Cue")} <strong>${num(c.price ?? c.value)}</strong> <span class="${clsF(c.change_pct ?? c.change)}">${chgF(c.change_pct ?? c.change)}</span></span>`).join("") : `<span class="mu" style="font-size:.72rem;">None</span>`}</div></div>
+        <div class="panel"><strong style="font-size:.72rem;">SECTOR STRENGTH</strong><div class="chips">${secArr.length ? secArr.slice(0, 12).map(sc => { const m = sc.avg_change_pct ?? sc.score; return `<span class="dchip mono">${esc(sc.sector || sc.name || "SEC")} <strong class="${clsF(m)}">${m != null ? (sc.avg_change_pct != null ? chgF(m) : num(m)) : "—"}</strong></span>`; }).join("") : `<span class="mu" style="font-size:.72rem;">None</span>`}</div></div>
+      `);
+
+      if (st.tab === "OI") {
+        setH("workBox", oiHtml(p));
+        const pk = document.getElementById("oiPick");
+        if (pk) pk.onchange = (e) => { st.chainSym = e.target.value; render(); };
+      } else {
+        const secsCfg = [
+          { t: "IDX", title: "Index Trades", b: "INDEX", list: filt(idxT) },
+          { t: "OBULL", title: "Options — Bullish", b: "OPT BULL", list: filt(oBu) },
+          { t: "OBEAR", title: "Options — Bearish", b: "OPT BEAR", list: filt(oBe) },
+          { t: "EQ", title: "Equity Intraday", b: "EQ INTRA", list: filt(eqI) },
+        ].filter(x => st.tab === "ALL" || st.tab === x.t);
+
+        let out = "";
+        for (const sc of secsCfg) {
+          if (!sc.list.length) continue;
+          const body = st.view === "TABLE" ? tblHtml(sc.list, sc.b) : `<div class="cards">${sc.list.map(it => cardHtml(it, sc.b)).join("")}</div>`;
+          out += `<div class="sec-h"><strong>${esc(sc.title)}</strong><span class="mono mu" style="font-size:.73rem;">${sc.list.length}</span></div>${body}`;
         }
+        setH("workBox", out || `<div class="empty">No matching setups. <button type="button" class="btn" onclick="resetF()">Reset</button></div>`);
+      }
 
-        setHtml("dispatchStatusText", `Dispatched (${escapeHtml(cfg.mode)}). Polling snapshot every 10s for updated timestamp...`);
-        const prevGen = state.lastKnownGeneratedAt;
-        let attempts = 0;
+      const wf = p.walk_forward || {};
+      const nClosed = Number(wf.closed_trades ?? 0);
+      const small = !Number.isFinite(nClosed) || nClosed < 30;
+      const wr = wf.net_win_rate_pct != null ? `${num(wf.net_win_rate_pct)}% (Post-Cost)` : "N/A";
+      setH("ledgerBox", `
+        <div class="row" style="justify-content:space-between;">
+          <strong>Risk &amp; Post-Cost Walk-Forward Ledger</strong>
+          <span class="chip mono ${small ? "b-wa" : "b-bu"}">n = ${esc(wf.closed_trades ?? 0)}</span>
+        </div>
+        <div class="kv mono" style="grid-template-columns:repeat(auto-fit,minmax(140px,1fr)); margin-top:8px;">
+          <div>Closed Trades: <strong>${num(wf.closed_trades ?? 0)}</strong></div>
+          <div>Net Win Rate: <strong>${esc(wr)}</strong></div>
+          <div>Est. Costs: <strong>₹${num(wf.total_costs ?? wf.total_est_charges ?? 0)}</strong></div>
+          <div>Total Net P&amp;L: <strong>₹${num(wf.total_net_pnl ?? 0)}</strong></div>
+          <div>Max Net DD: <strong>₹${num(wf.max_drawdown_net_pnl ?? 0)}</strong></div>
+        </div>
+        <div class="warn-box"><strong>Notice:</strong> ${small ? `Small sample (n = ${esc(wf.closed_trades ?? 0)} &lt; 30); early metrics are not guaranteed performance.` : esc(wf.sample_warning || "Post-cost historical log.")} Research &amp; risk tool only.</div>
+      `);
+    }
 
-        if (state.dispatchPollTimer) clearInterval(state.dispatchPollTimer);
-        state.dispatchPollTimer = setInterval(async () => {
-          attempts += 1;
-          await loadManifest();
-          await loadSnapshot("data/latest.json", true);
-          const nowGen = state.payload && state.payload.generated_at_ist;
-          if (nowGen && nowGen !== prevGen) {
-            clearInterval(state.dispatchPollTimer);
-            setHtml("dispatchStatusText", `New snapshot published at ${escapeHtml(nowGen)}.`);
-          } else if (attempts >= 24) {
-            clearInterval(state.dispatchPollTimer);
-            setHtml("dispatchStatusText", "Polling window ended (4m). Click 'Refresh Snapshot' once GitHub Actions finishes.");
+    function resetF() {
+      st.tab = "ALL";
+      const ss = document.getElementById("symSearch"); if (ss) ss.value = "";
+      const sc = document.getElementById("secSel"); if (sc) sc.value = "ALL";
+      document.querySelectorAll("#tabBar .tab").forEach(b => b.classList.toggle("active", b.dataset.t === "ALL"));
+      render();
+    }
+
+    function loadCfg() {
+      try {
+        const c = JSON.parse(localStorage.getItem(KEY) || "{}");
+        if (c.owner) document.getElementById("ghOwner").value = c.owner;
+        if (c.repo) document.getElementById("ghRepo").value = c.repo;
+        if (c.wf) document.getElementById("ghWf").value = c.wf;
+        if (c.ref) document.getElementById("ghRef").value = c.ref;
+        if (c.mode) document.getElementById("ghMode").value = c.mode;
+        if (c.pat) document.getElementById("ghPat").value = c.pat;
+      } catch (_) {}
+    }
+
+    function saveCfg() {
+      const c = {
+        owner: document.getElementById("ghOwner").value.trim(),
+        repo: document.getElementById("ghRepo").value.trim(),
+        wf: document.getElementById("ghWf").value.trim() || "screener.yml",
+        ref: document.getElementById("ghRef").value.trim() || "main",
+        mode: document.getElementById("ghMode").value,
+        pat: document.getElementById("ghPat").value.trim(),
+      };
+      localStorage.setItem(KEY, JSON.stringify(c));
+      return c;
+    }
+
+    async function runDispatch() {
+      const c = saveCfg();
+      if (!c.owner || !c.repo || !c.wf || !c.pat) {
+        setH("dStatus", "Enter Owner, Repo, Workflow, and local PAT.");
+        return;
+      }
+      setH("dStatus", "Dispatching...");
+      try {
+        const u = `https://api.github.com/repos/${encodeURIComponent(c.owner)}/${encodeURIComponent(c.repo)}/actions/workflows/${encodeURIComponent(c.wf)}/dispatches`;
+        const r = await fetch(u, {
+          method: "POST",
+          headers: { "Authorization": `Bearer ${c.pat}`, "Accept": "application/vnd.github+json", "Content-Type": "application/json" },
+          body: JSON.stringify({ ref: c.ref || "main", inputs: { mode: c.mode } })
+        });
+        if (r.status !== 204 && !r.ok) throw new Error(`HTTP ${r.status}`);
+        setH("dStatus", `Dispatched (${esc(c.mode)}). Polling every 10s...`);
+        const prev = st.lastGen; let n = 0;
+        if (st.dTimer) clearInterval(st.dTimer);
+        st.dTimer = setInterval(async () => {
+          n += 1; await loadMan(); await loadSnap("data/latest.json", true);
+          if (st.data?.generated_at_ist && st.data.generated_at_ist !== prev) {
+            clearInterval(st.dTimer); setH("dStatus", `Updated: ${esc(st.data.generated_at_ist)}`);
+          } else if (n >= 24) {
+            clearInterval(st.dTimer); setH("dStatus", "Polling stopped (4m). Click Refresh.");
           } else {
-            setHtml("dispatchStatusText", `Waiting for new snapshot... (${attempts * 10}s elapsed)`);
+            setH("dStatus", `Polling... (${n * 10}s)`);
           }
         }, 10000);
-      } catch (err) {
-        setHtml("dispatchStatusText", `Error: ${escapeHtml(err.message)}`);
-      }
+      } catch (e) { setH("dStatus", `Err: ${esc(e.message)}`); }
     }
 
-    function startAutoPoll() {
-      if (state.pollTimer) clearInterval(state.pollTimer);
-      state.pollTimer = setInterval(async () => {
-        if (!state.autoPoll) return;
-        await loadSnapshot(state.selectedFile, true);
-      }, 15000);
-    }
-
-    document.getElementById("btnLatest")?.addEventListener("click", () => selectSnapshot("data/latest.json", null));
-    document.getElementById("btnMorning")?.addEventListener("click", () => {
-      const f = findModeFile(state.selectedDate, "MORNING");
-      if (f) selectSnapshot(f);
-    });
-    document.getElementById("btnBtst")?.addEventListener("click", () => {
-      const f = findModeFile(state.selectedDate, "BTST");
-      if (f) selectSnapshot(f);
-    });
-
-    document.getElementById("viewCardsBtn")?.addEventListener("click", () => {
-      state.viewMode = "CARDS";
-      document.getElementById("viewCardsBtn")?.classList.add("active");
-      document.getElementById("viewTableBtn")?.classList.remove("active");
-      renderAll();
-    });
-    document.getElementById("viewTableBtn")?.addEventListener("click", () => {
-      state.viewMode = "TABLE";
-      document.getElementById("viewTableBtn")?.classList.add("active");
-      document.getElementById("viewCardsBtn")?.classList.remove("active");
-      renderAll();
-    });
-
-    document.getElementById("historySelect")?.addEventListener("change", (e) => {
-      selectSnapshot(e.target.value);
-    });
-
-    document.getElementById("syncBtn")?.addEventListener("click", async () => {
-      await loadManifest();
-      await loadSnapshot(state.selectedFile, false);
-    });
-
-    document.getElementById("autoPollBtn")?.addEventListener("click", (e) => {
-      state.autoPoll = !state.autoPoll;
-      e.target.classList.toggle("active", state.autoPoll);
-      e.target.textContent = state.autoPoll ? "Auto-Sync: 15s" : "Auto-Sync: Off";
-    });
-
-    document.getElementById("toggleDispatchBtn")?.addEventListener("click", () => {
-      document.getElementById("dispatchPanel")?.classList.toggle("open");
-    });
-    document.getElementById("saveDispatchBtn")?.addEventListener("click", () => {
-      saveDispatchConfig(true);
-      setHtml("dispatchStatusText", "Saved configuration locally in browser storage.");
-    });
-    document.getElementById("clearDispatchBtn")?.addEventListener("click", clearDispatchConfig);
-    document.getElementById("triggerDispatchBtn")?.addEventListener("click", triggerWorkflowAndPoll);
-
-    document.querySelectorAll("#navTabs .tab").forEach((btn) => {
-      btn.addEventListener("click", () => {
-        document.querySelectorAll("#navTabs .tab").forEach((b) => b.classList.remove("active"));
-        btn.classList.add("active");
-        state.activeTab = btn.dataset.tab;
-        renderAll();
-      });
-    });
-
-    document.getElementById("searchInput")?.addEventListener("input", () => renderAll());
-    document.getElementById("sectorFilter")?.addEventListener("change", () => renderAll());
-    document.getElementById("resetFiltersBtn")?.addEventListener("click", resetAllFilters);
+    document.getElementById("btnLatest")?.addEventListener("click", () => pickSnap("data/latest.json", null));
+    document.getElementById("btnMorning")?.addEventListener("click", () => { const f = modeFile(st.date, "MORNING"); if (f) pickSnap(f); });
+    document.getElementById("btnBtst")?.addEventListener("click", () => { const f = modeFile(st.date, "BTST"); if (f) pickSnap(f); });
+    document.getElementById("vCards")?.addEventListener("click", () => { st.view = "CARDS"; document.getElementById("vCards")?.classList.add("active"); document.getElementById("vTable")?.classList.remove("active"); render(); });
+    document.getElementById("vTable")?.addEventListener("click", () => { st.view = "TABLE"; document.getElementById("vTable")?.classList.add("active"); document.getElementById("vCards")?.classList.remove("active"); render(); });
+    document.getElementById("histSel")?.addEventListener("change", (e) => pickSnap(e.target.value));
+    document.getElementById("btnSync")?.addEventListener("click", async () => { await loadMan(); await loadSnap(st.file, false); });
+    document.getElementById("btnAuto")?.addEventListener("click", (e) => { st.auto = !st.auto; e.target.textContent = st.auto ? "Auto: 15s" : "Auto: Off"; });
+    document.getElementById("btnRunToggle")?.addEventListener("click", () => document.getElementById("dispatchBox")?.classList.toggle("open"));
+    document.getElementById("btnSaveCfg")?.addEventListener("click", () => { saveCfg(); setH("dStatus", "Saved locally."); });
+    document.getElementById("btnClearCfg")?.addEventListener("click", () => { localStorage.removeItem(KEY); document.getElementById("ghPat").value = ""; setH("dStatus", "Cleared."); });
+    document.getElementById("btnTrigger")?.addEventListener("click", runDispatch);
+    document.querySelectorAll("#tabBar .tab").forEach(b => b.addEventListener("click", () => {
+      document.querySelectorAll("#tabBar .tab").forEach(x => x.classList.remove("active"));
+      b.classList.add("active"); st.tab = b.dataset.t; render();
+    }));
+    document.getElementById("symSearch")?.addEventListener("input", render);
+    document.getElementById("secSel")?.addEventListener("change", render);
+    document.getElementById("btnReset")?.addEventListener("click", resetF);
 
     (async () => {
-      loadSavedDispatchConfig();
-      await loadManifest();
-      await loadSnapshot(state.selectedFile, false);
-      startAutoPoll();
+      loadCfg(); await loadMan(); await loadSnap(st.file, false);
+      st.pTimer = setInterval(() => { if (st.auto) loadSnap(st.file, true); }, 15000);
     })();
   </script>
 </body>
