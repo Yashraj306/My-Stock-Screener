@@ -760,6 +760,7 @@
         payload.equity_intraday || [],
       ];
       for (const arr of lists) {
+        if (!Array.isArray(arr)) continue;
         for (const item of arr) {
           if (!item || !item.symbol) continue;
           const sym = String(item.symbol).toUpperCase();
@@ -918,7 +919,7 @@
       const secEl = document.getElementById("sectorFilter");
       const q = searchEl ? searchEl.value.trim().toUpperCase() : "";
       const sec = secEl ? secEl.value : "ALL";
-      return (arr || []).filter((item) => {
+      return (Array.isArray(arr) ? arr : []).filter((item) => {
         if (!item) return false;
         const symMatch = !q || String(item.symbol || "").toUpperCase().includes(q);
         const secMatch = sec === "ALL" || String(item.sector || "") === sec;
@@ -1164,66 +1165,70 @@
     }
 
     function renderStatusBanner(payload) {
-      const banner = document.getElementById("statusBanner");
-      const badge = document.getElementById("freshnessBadge");
-      const dot = document.getElementById("headerStatusDot");
-      const nowInfo = getNowIstParts();
+      try {
+        const banner = document.getElementById("statusBanner");
+        const badge = document.getElementById("freshnessBadge");
+        const dot = document.getElementById("headerStatusDot");
+        const nowInfo = getNowIstParts();
 
-      if (state.loadError && !payload) {
-        if (banner) banner.className = "status-banner stale-banner";
-        if (badge) {
-          badge.className = "chip chip-stale mono";
-          badge.textContent = "SNAPSHOT UNAVAILABLE";
+        if (state.loadError && !payload) {
+          if (banner) banner.className = "status-banner stale-banner";
+          if (badge) {
+            badge.className = "chip chip-stale mono";
+            badge.textContent = "SNAPSHOT UNAVAILABLE";
+          }
+          if (dot) dot.style.background = "var(--bear)";
+          setHtml("statusBanner", `
+            <div><strong>Data Load Error:</strong> ${escapeHtml(state.loadError)} — Ensure <code>docs/data/latest.json</code> has been published by <code>screener.py</code>.</div>
+            <div class="mono muted">Clock: ${escapeHtml(nowInfo.istLabel)}</div>
+          `);
+          return;
         }
-        if (dot) dot.style.background = "var(--bear)";
+
+        const genStr = payload && payload.generated_at_ist ? payload.generated_at_ist : null;
+        const ageMin = parseSnapshotAgeMinutes(genStr);
+        const isStale = ageMin !== null && ageMin > 180;
+        const marketLabel = nowInfo.isMarketHours
+          ? "NSE/BSE Market Hours (Snapshot Batch Sync)"
+          : "Market Closed / Outside Regular Session (Snapshot Data)";
+
+        if (isStale) {
+          if (banner) banner.className = "status-banner stale-banner";
+          if (badge) {
+            badge.className = "chip chip-stale mono";
+            badge.textContent = `STALE (${ageMin}m old)`;
+          }
+          if (dot) dot.style.background = "var(--bear)";
+        } else if (ageMin !== null && ageMin <= 30) {
+          if (banner) banner.className = "status-banner";
+          if (badge) {
+            badge.className = "chip chip-fresh mono";
+            badge.textContent = `RECENT (${ageMin}m ago)`;
+          }
+          if (dot) dot.style.background = "var(--bull)";
+        } else {
+          if (banner) banner.className = "status-banner warn-banner";
+          if (badge) {
+            badge.className = "chip chip-mode mono";
+            badge.textContent = ageMin !== null ? `SNAPSHOT (${ageMin}m ago)` : "SNAPSHOT DATA";
+          }
+          if (dot) dot.style.background = "var(--warn)";
+        }
+
+        const guardNote = (payload && payload.session_guardrails && payload.session_guardrails.window_note)
+          ? payload.session_guardrails.window_note
+          : "Batch screener snapshot; verify live quotes and risk limits prior to execution.";
+
         setHtml("statusBanner", `
-          <div><strong>Data Load Error:</strong> ${escapeHtml(state.loadError)} — Ensure <code>docs/data/latest.json</code> has been published by <code>screener.py</code>.</div>
-          <div class="mono muted">Clock: ${escapeHtml(nowInfo.istLabel)}</div>
+          <div>
+            <strong>${escapeHtml(marketLabel)}:</strong> ${escapeHtml(guardNote)}
+            <span class="muted"> • Note: Auto-sync re-reads batch JSON files; it is not a tick-by-tick live feed.</span>
+          </div>
+          <div class="mono muted">Generated: ${escapeHtml(genStr || "—")} • Now: ${escapeHtml(nowInfo.istLabel)}</div>
         `);
-        return;
+      } catch (err) {
+        console.warn("Status banner render warning:", err);
       }
-
-      const genStr = payload && payload.generated_at_ist ? payload.generated_at_ist : null;
-      const ageMin = parseSnapshotAgeMinutes(genStr);
-      const isStale = ageMin !== null && ageMin > 180;
-      const marketLabel = nowInfo.isMarketHours
-        ? "NSE/BSE Market Hours (Snapshot Batch Sync)"
-        : "Market Closed / Outside Regular Session (Snapshot Data)";
-
-      if (isStale) {
-        if (banner) banner.className = "status-banner stale-banner";
-        if (badge) {
-          badge.className = "chip chip-stale mono";
-          badge.textContent = `STALE (${ageMin}m old)`;
-        }
-        if (dot) dot.style.background = "var(--bear)";
-      } else if (ageMin !== null && ageMin <= 30) {
-        if (banner) banner.className = "status-banner";
-        if (badge) {
-          badge.className = "chip chip-fresh mono";
-          badge.textContent = `RECENT (${ageMin}m ago)`;
-        }
-        if (dot) dot.style.background = "var(--bull)";
-      } else {
-        if (banner) banner.className = "status-banner warn-banner";
-        if (badge) {
-          badge.className = "chip chip-mode mono";
-          badge.textContent = ageMin !== null ? `SNAPSHOT (${ageMin}m ago)` : "SNAPSHOT DATA";
-        }
-        if (dot) dot.style.background = "var(--warn)";
-      }
-
-      const guardNote = (payload && payload.session_guardrails && payload.session_guardrails.window_note)
-        ? payload.session_guardrails.window_note
-        : "Batch screener snapshot; verify live quotes and risk limits prior to execution.";
-
-      setHtml("statusBanner", `
-        <div>
-          <strong>${escapeHtml(marketLabel)}:</strong> ${escapeHtml(guardNote)}
-          <span class="muted"> • Note: Auto-sync re-reads batch JSON files; it is not a tick-by-tick live feed.</span>
-        </div>
-        <div class="mono muted">Generated: ${escapeHtml(genStr || "—")} • Now: ${escapeHtml(nowInfo.istLabel)}</div>
-      `);
     }
 
     function renderAll() {
@@ -1241,195 +1246,223 @@
 
       const summary = payload.summary || {};
       const modeStr = String(payload.mode || "RUN").toUpperCase();
-      const modeBadge = document.getElementById("modeBadge");
-      if (modeBadge) {
-        modeBadge.textContent = modeStr;
-        modeBadge.className = `chip mono ${modeStr === "BTST" ? "chip-btst" : "chip-mode"}`;
-      }
 
-      const titleEl = document.getElementById("brandTitle");
-      if (titleEl) titleEl.textContent = payload.title || "My-Stock-Screener — Quant & Hedging Desk";
-
-      const subEl = document.getElementById("metaSubtitle");
-      if (subEl) {
-        subEl.textContent = `Session: ${payload.session_date || "—"} • Source: ${summary.data_source || "—"} • Capital Configured: ${summary.capital_configured ? "Yes" : "No"}`;
-      }
-
-      populateFilters();
-
-      const tickers = [
-        { sym: "NIFTY 50", val: summary.nifty_spot, chg: summary.nifty_chg, sub: "Index Spot" },
-        { sym: "BANK NIFTY", val: summary.bnf_spot, chg: summary.bnf_chg, sub: "Index Spot" },
-        { sym: "FIN NIFTY", val: summary.fin_spot, chg: summary.fin_chg, sub: "Index Spot" },
-        { sym: "BREADTH", val: summary.breadth_tone || "MIXED", chg: summary.breadth_ratio || "—", sub: `>EMA20: ${fmtNum(summary.above_ema20)}%` },
-      ];
-      for (const idx of (payload.index_trades || [])) {
-        if (String(idx.symbol).toUpperCase() === "SENSEX") {
-          tickers.splice(3, 0, {
-            sym: "SENSEX",
-            val: idx.spot ?? idx.entry,
-            chg: idx.change_pct,
-            sub: "BSE Index",
-          });
+      try {
+        const modeBadge = document.getElementById("modeBadge");
+        if (modeBadge) {
+          modeBadge.textContent = modeStr;
+          modeBadge.className = `chip mono ${modeStr === "BTST" ? "chip-btst" : "chip-mode"}`;
         }
-      }
-      setHtml("tickerStrip", tickers
-        .map((t) => `
-          <div class="ticker-tile">
-            <div class="ticker-top mono"><span>${escapeHtml(t.sym)}</span><span class="${chgClass(t.chg)}">${escapeHtml(formatChangeStr(t.chg))}</span></div>
-            <div class="ticker-val mono">${fmtNum(t.val)}</div>
-            <div class="ticker-sub mono">${escapeHtml(t.sub)}</div>
-          </div>`)
-        .join(""));
-
-      const optBull = payload.options_bullish || (payload.setups && payload.setups.bullish) || [];
-      const optBear = payload.options_bearish || (payload.setups && payload.setups.bearish) || [];
-      const eqIntra = payload.equity_intraday || [];
-      const idxTrades = payload.index_trades || [];
-
-      const advDecMatch = String(summary.breadth_ratio || "").match(/(\d+)\s*Adv\s*\/\s*(\d+)\s*Dec/i);
-      let advPct = 50;
-      if (advDecMatch) {
-        const a = Number(advDecMatch[1]);
-        const d = Number(advDecMatch[2]);
-        if (a + d > 0) advPct = Math.round((a / (a + d)) * 100);
-      }
-
-      setHtml("kpiGrid", `
-        <div class="kpi">
-          <div class="kpi-label">Total Ideas (${escapeHtml(modeStr)})</div>
-          <div class="kpi-val mono">${fmtNum(summary.ideas_count)}</div>
-          <div class="kpi-sub mono">${idxTrades.length} Idx • ${optBull.length + optBear.length} Opt • ${eqIntra.length} Eq</div>
-        </div>
-        <div class="kpi">
-          <div class="kpi-label">Options Basket</div>
-          <div class="kpi-val mono">${optBull.length + optBear.length}</div>
-          <div class="kpi-sub mono">${optBull.length} Bullish / ${optBear.length} Bearish</div>
-        </div>
-        <div class="kpi">
-          <div class="kpi-label">Equity Intraday</div>
-          <div class="kpi-val mono">${eqIntra.length}</div>
-          <div class="kpi-sub">Separate from stock options</div>
-        </div>
-        <div class="kpi">
-          <div class="kpi-label">Market Breadth</div>
-          <div class="kpi-val ${chgClass(summary.breadth_tone === "BULLISH" ? 1 : (summary.breadth_tone === "BEARISH" ? -1 : 0))}">${escapeHtml(summary.breadth_tone || "MIXED")}</div>
-          <div class="kpi-sub mono">${escapeHtml(summary.breadth_ratio || "—")}</div>
-          <div class="meter"><div class="meter-fill" style="width:${advPct}%"></div></div>
-        </div>
-      `);
-
-      const cues = Array.isArray(payload.global_cues) ? payload.global_cues : [];
-      const cuesHtml = cues.length
-        ? cues.slice(0, 8).map((c) => {
-            const label = c.name || c.symbol || "Cue";
-            const val = c.price ?? c.last ?? c.value ?? "";
-            const chg = c.change_pct !== undefined && c.change_pct !== null ? formatChangeStr(c.change_pct) : (c.change || "");
-            return `<span class="data-chip mono"><span>${escapeHtml(label)}</span>${val !== "" ? `<strong>${fmtNum(val)}</strong>` : ""}${chg ? `<span class="${chgClass(chg)}">${escapeHtml(chg)}</span>` : ""}</span>`;
-          }).join("")
-        : `<span class="muted" style="font-size:0.74rem;">No global cue entries in this snapshot.</span>`;
-
-      const rawSec = payload.sectors;
-      const secList = Array.isArray(rawSec)
-        ? rawSec
-        : Object.entries(rawSec || {}).map(([k, v]) => (typeof v === "object" && v !== null ? { sector: k, ...v } : { sector: k, score: v }));
-
-      const secHtml = secList.length
-        ? secList.slice(0, 12).map((sc) => {
-            const name = sc.sector || sc.name || "SECTOR";
-            const metric = sc.avg_change_pct !== undefined && sc.avg_change_pct !== null
-              ? formatChangeStr(sc.avg_change_pct)
-              : (sc.score !== undefined && sc.score !== null ? fmtNum(sc.score) : "—");
-            return `<span class="data-chip mono"><span>${escapeHtml(name)}</span><strong class="${chgClass(metric)}">${escapeHtml(metric)}</strong></span>`;
-          }).join("")
-        : `<span class="muted" style="font-size:0.74rem;">No sector metrics in this snapshot.</span>`;
-
-      setHtml("contextGrid", `
-        <div class="panel">
-          <div class="panel-head"><span class="panel-title">Global Cues</span><span class="mono muted" style="font-size:0.68rem;">Snapshot Feed</span></div>
-          <div class="chips">${cuesHtml}</div>
-        </div>
-        <div class="panel">
-          <div class="panel-head"><span class="panel-title">Sector Strength</span><span class="mono muted" style="font-size:0.68rem;">NSE/BSE Basket</span></div>
-          <div class="chips">${secHtml}</div>
-        </div>
-      `);
-
-      if (state.activeTab === "OI_OVERVIEW") {
-        setHtml("mainWorkspace", renderOiOverview(payload));
-        const picker = document.getElementById("oiSymbolPicker");
-        if (picker) {
-          picker.addEventListener("change", (e) => {
-            state.selectedChainSymbol = e.target.value;
-            renderAll();
-          });
+        const titleEl = document.getElementById("brandTitle");
+        if (titleEl) titleEl.textContent = payload.title || "My-Stock-Screener — Quant & Hedging Desk";
+        const subEl = document.getElementById("metaSubtitle");
+        if (subEl) {
+          subEl.textContent = `Session: ${payload.session_date || "—"} • Source: ${summary.data_source || "—"} • Capital Configured: ${summary.capital_configured ? "Yes" : "No"}`;
         }
-      } else {
-        const blocks = [
-          { key: "INDEX", title: "Index Trades & Option Plans", sub: "Index setups from latest run", bucket: "INDEX", items: filterSetups(idxTrades) },
-          { key: "OPT_BULL", title: "Stock Options — Bullish", sub: "Bullish option plans / spreads", bucket: "OPT BULL", items: filterSetups(optBull) },
-          { key: "OPT_BEAR", title: "Stock Options — Bearish", sub: "Bearish option plans / spreads", bucket: "OPT BEAR", items: filterSetups(optBear) },
-          { key: "EQ_INTRA", title: "Equity Intraday Setups", sub: "Intraday equity candidates (separate from stock options)", bucket: "EQ INTRA", items: filterSetups(eqIntra) },
-        ].filter((b) => state.activeTab === "ALL" || state.activeTab === b.key);
+        populateFilters();
+      } catch (err) {
+        console.warn("Header/filter sync warning:", err);
+      }
 
-        let html = "";
-        for (const b of blocks) {
-          if (!b.items.length) continue;
-          const body = state.viewMode === "TABLE"
-            ? renderSetupTable(b.items, b.bucket)
-            : `<div class="cards-grid">${b.items.map((it) => renderSetupCard(it, b.bucket)).join("")}</div>`;
-          html += `
-            <div class="sec-head">
-              <div>
-                <div class="sec-title">${escapeHtml(b.title)}</div>
-                <div class="sec-sub">${escapeHtml(b.sub)}</div>
-              </div>
-              <span class="mono muted" style="font-size:0.76rem;">${b.items.length} items</span>
-            </div>
-            ${body}`;
+      const optBull = Array.isArray(payload.options_bullish)
+        ? payload.options_bullish
+        : ((payload.setups && Array.isArray(payload.setups.bullish)) ? payload.setups.bullish : []);
+      const optBear = Array.isArray(payload.options_bearish)
+        ? payload.options_bearish
+        : ((payload.setups && Array.isArray(payload.setups.bearish)) ? payload.setups.bearish : []);
+      const eqIntra = Array.isArray(payload.equity_intraday) ? payload.equity_intraday : [];
+      const idxTrades = Array.isArray(payload.index_trades) ? payload.index_trades : [];
+
+      try {
+        const tickers = [
+          { sym: "NIFTY 50", val: summary.nifty_spot, chg: summary.nifty_chg, sub: "Index Spot" },
+          { sym: "BANK NIFTY", val: summary.bnf_spot, chg: summary.bnf_chg, sub: "Index Spot" },
+          { sym: "FIN NIFTY", val: summary.fin_spot, chg: summary.fin_chg, sub: "Index Spot" },
+          { sym: "BREADTH", val: summary.breadth_tone || "MIXED", chg: summary.breadth_ratio || "—", sub: `>EMA20: ${fmtNum(summary.above_ema20)}%` },
+        ];
+        for (const idx of idxTrades) {
+          if (idx && String(idx.symbol).toUpperCase() === "SENSEX") {
+            tickers.splice(3, 0, {
+              sym: "SENSEX",
+              val: idx.spot ?? idx.entry,
+              chg: idx.change_pct,
+              sub: "BSE Index",
+            });
+          }
+        }
+        setHtml("tickerStrip", tickers
+          .map((t) => `
+            <div class="ticker-tile">
+              <div class="ticker-top mono"><span>${escapeHtml(t.sym)}</span><span class="${chgClass(t.chg)}">${escapeHtml(formatChangeStr(t.chg))}</span></div>
+              <div class="ticker-val mono">${fmtNum(t.val)}</div>
+              <div class="ticker-sub mono">${escapeHtml(t.sub)}</div>
+            </div>`)
+          .join(""));
+      } catch (err) {
+        setHtml("tickerStrip", `<div class="empty-state">Ticker strip unavailable: ${escapeHtml(err.message)}</div>`);
+      }
+
+      try {
+        const advDecMatch = String(summary.breadth_ratio || "").match(/(\d+)\s*Adv\s*\/\s*(\d+)\s*Dec/i);
+        let advPct = 50;
+        if (advDecMatch) {
+          const a = Number(advDecMatch[1]);
+          const d = Number(advDecMatch[2]);
+          if (a + d > 0) advPct = Math.round((a / (a + d)) * 100);
         }
 
-        setHtml("mainWorkspace", html || `
-          <div class="empty-state">
-            <div>No setups match the current tab, sector, or symbol filter.</div>
-            <button type="button" class="btn btn-ghost" style="margin-top:10px;" onclick="resetAllFilters()">Reset Filters</button>
-          </div>`);
-      }
-
-      const wf = payload.walk_forward || {};
-      const closedCount = Number(wf.closed_trades ?? 0);
-      const costsVal = wf.total_costs !== undefined ? wf.total_costs : (wf.total_est_charges ?? 0);
-      const winRateStr = wf.net_win_rate_pct !== null && wf.net_win_rate_pct !== undefined
-        ? `${fmtNum(wf.net_win_rate_pct)}% (Post-Cost)`
-        : "N/A";
-      const smallSample = !Number.isFinite(closedCount) || closedCount < 30;
-      const sampleWarningText = smallSample
-        ? `Small sample warning (n = ${escapeHtml(wf.closed_trades ?? 0)} closed trades; n < 30). Do not extrapolate early walk-forward metrics as guaranteed performance.`
-        : (wf.sample_warning || "Post-cost walk-forward ledger reflects historical logged signals and estimated transaction costs.");
-
-      const capDisplay = summary.capital_configured
-        ? `₹${fmtInt(summary.capital)}`
-        : "Not Configured";
-
-      setHtml("ledgerPanel", `
-        <div class="panel-head">
-          <div>
-            <div class="panel-title">Risk &amp; Post-Cost Walk-Forward Ledger</div>
-            <div class="muted" style="font-size:0.72rem;">Capital: <span class="mono">${escapeHtml(capDisplay)}</span> • Risk/Trade: <span class="mono">${fmtNum(summary.risk_pct)}%</span> • Max Alloc: <span class="mono">${fmtNum(summary.max_allocation_pct)}%</span></div>
+        setHtml("kpiGrid", `
+          <div class="kpi">
+            <div class="kpi-label">Total Ideas (${escapeHtml(modeStr)})</div>
+            <div class="kpi-val mono">${fmtNum(summary.ideas_count)}</div>
+            <div class="kpi-sub mono">${idxTrades.length} Idx • ${optBull.length + optBear.length} Opt • ${eqIntra.length} Eq</div>
           </div>
-          <span class="badge ${smallSample ? "badge-warn" : "badge-bull"} mono">n = ${escapeHtml(wf.closed_trades ?? 0)}</span>
-        </div>
-        <div class="ledger-grid mono">
-          <div class="ledger-cell"><span>Closed Trades (n)</span><strong>${fmtNum(wf.closed_trades ?? 0)}</strong></div>
-          <div class="ledger-cell"><span>Net Win Rate</span><strong>${escapeHtml(winRateStr)}</strong></div>
-          <div class="ledger-cell"><span>Est. Costs / Charges</span><strong>₹${fmtNum(costsVal)}</strong></div>
-          <div class="ledger-cell"><span>Total Net P&amp;L</span><strong>₹${fmtNum(wf.total_net_pnl ?? 0)}</strong></div>
-          <div class="ledger-cell"><span>Max Net Drawdown</span><strong>₹${fmtNum(wf.max_drawdown_net_pnl ?? 0)}</strong></div>
-        </div>
-        <div class="disclaimer">
-          <strong>Risk &amp; Sample Notice:</strong> ${escapeHtml(sampleWarningText)} Research and risk-management tool only; no investment advice or guaranteed returns.
-        </div>
-      `);
+          <div class="kpi">
+            <div class="kpi-label">Options Basket</div>
+            <div class="kpi-val mono">${optBull.length + optBear.length}</div>
+            <div class="kpi-sub mono">${optBull.length} Bullish / ${optBear.length} Bearish</div>
+          </div>
+          <div class="kpi">
+            <div class="kpi-label">Equity Intraday</div>
+            <div class="kpi-val mono">${eqIntra.length}</div>
+            <div class="kpi-sub">Separate from stock options</div>
+          </div>
+          <div class="kpi">
+            <div class="kpi-label">Market Breadth</div>
+            <div class="kpi-val ${chgClass(summary.breadth_tone === "BULLISH" ? 1 : (summary.breadth_tone === "BEARISH" ? -1 : 0))}">${escapeHtml(summary.breadth_tone || "MIXED")}</div>
+            <div class="kpi-sub mono">${escapeHtml(summary.breadth_ratio || "—")}</div>
+            <div class="meter"><div class="meter-fill" style="width:${advPct}%"></div></div>
+          </div>
+        `);
+      } catch (err) {
+        setHtml("kpiGrid", `<div class="empty-state">KPI metrics unavailable: ${escapeHtml(err.message)}</div>`);
+      }
+
+      try {
+        const cues = Array.isArray(payload.global_cues) ? payload.global_cues : [];
+        const cuesHtml = cues.length
+          ? cues.slice(0, 8).map((c) => {
+              if (!c) return "";
+              const label = c.name || c.symbol || "Cue";
+              const val = c.price ?? c.last ?? c.value ?? "";
+              const chg = c.change_pct !== undefined && c.change_pct !== null ? formatChangeStr(c.change_pct) : (c.change || "");
+              return `<span class="data-chip mono"><span>${escapeHtml(label)}</span>${val !== "" ? `<strong>${fmtNum(val)}</strong>` : ""}${chg ? `<span class="${chgClass(chg)}">${escapeHtml(chg)}</span>` : ""}</span>`;
+            }).join("")
+          : `<span class="muted" style="font-size:0.74rem;">No global cue entries in this snapshot.</span>`;
+
+        const rawSec = payload.sectors;
+        const secList = Array.isArray(rawSec)
+          ? rawSec
+          : Object.entries(rawSec || {}).map(([k, v]) => (typeof v === "object" && v !== null ? { sector: k, ...v } : { sector: k, score: v }));
+
+        const secHtml = secList.length
+          ? secList.slice(0, 12).map((sc) => {
+              if (!sc) return "";
+              const name = sc.sector || sc.name || "SECTOR";
+              const metric = sc.avg_change_pct !== undefined && sc.avg_change_pct !== null
+                ? formatChangeStr(sc.avg_change_pct)
+                : (sc.score !== undefined && sc.score !== null ? fmtNum(sc.score) : "—");
+              return `<span class="data-chip mono"><span>${escapeHtml(name)}</span><strong class="${chgClass(metric)}">${escapeHtml(metric)}</strong></span>`;
+            }).join("")
+          : `<span class="muted" style="font-size:0.74rem;">No sector metrics in this snapshot.</span>`;
+
+        setHtml("contextGrid", `
+          <div class="panel">
+            <div class="panel-head"><span class="panel-title">Global Cues</span><span class="mono muted" style="font-size:0.68rem;">Snapshot Feed</span></div>
+            <div class="chips">${cuesHtml}</div>
+          </div>
+          <div class="panel">
+            <div class="panel-head"><span class="panel-title">Sector Strength</span><span class="mono muted" style="font-size:0.68rem;">NSE/BSE Basket</span></div>
+            <div class="chips">${secHtml}</div>
+          </div>
+        `);
+      } catch (err) {
+        setHtml("contextGrid", `<div class="empty-state">Global cues / sector context unavailable: ${escapeHtml(err.message)}</div>`);
+      }
+
+      try {
+        if (state.activeTab === "OI_OVERVIEW") {
+          setHtml("mainWorkspace", renderOiOverview(payload));
+          const picker = document.getElementById("oiSymbolPicker");
+          if (picker) {
+            picker.addEventListener("change", (e) => {
+              state.selectedChainSymbol = e.target.value;
+              renderAll();
+            });
+          }
+        } else {
+          const blocks = [
+            { key: "INDEX", title: "Index Trades & Option Plans", sub: "Index setups from latest run", bucket: "INDEX", items: filterSetups(idxTrades) },
+            { key: "OPT_BULL", title: "Stock Options — Bullish", sub: "Bullish option plans / spreads", bucket: "OPT BULL", items: filterSetups(optBull) },
+            { key: "OPT_BEAR", title: "Stock Options — Bearish", sub: "Bearish option plans / spreads", bucket: "OPT BEAR", items: filterSetups(optBear) },
+            { key: "EQ_INTRA", title: "Equity Intraday Setups", sub: "Intraday equity candidates (separate from stock options)", bucket: "EQ INTRA", items: filterSetups(eqIntra) },
+          ].filter((b) => state.activeTab === "ALL" || state.activeTab === b.key);
+
+          let html = "";
+          for (const b of blocks) {
+            if (!b.items.length) continue;
+            const body = state.viewMode === "TABLE"
+              ? renderSetupTable(b.items, b.bucket)
+              : `<div class="cards-grid">${b.items.map((it) => renderSetupCard(it, b.bucket)).join("")}</div>`;
+            html += `
+              <div class="sec-head">
+                <div>
+                  <div class="sec-title">${escapeHtml(b.title)}</div>
+                  <div class="sec-sub">${escapeHtml(b.sub)}</div>
+                </div>
+                <span class="mono muted" style="font-size:0.76rem;">${b.items.length} items</span>
+              </div>
+              ${body}`;
+          }
+
+          setHtml("mainWorkspace", html || `
+            <div class="empty-state">
+              <div>No setups match the current tab, sector, or symbol filter.</div>
+              <button type="button" class="btn btn-ghost" style="margin-top:10px;" onclick="resetAllFilters()">Reset Filters</button>
+            </div>`);
+        }
+      } catch (err) {
+        setHtml("mainWorkspace", `<div class="empty-state">Setups workspace error: ${escapeHtml(err.message)}</div>`);
+      }
+
+      try {
+        const wf = payload.walk_forward || {};
+        const closedCount = Number(wf.closed_trades ?? 0);
+        const costsVal = wf.total_costs !== undefined ? wf.total_costs : (wf.total_est_charges ?? 0);
+        const winRateStr = wf.net_win_rate_pct !== null && wf.net_win_rate_pct !== undefined
+          ? `${fmtNum(wf.net_win_rate_pct)}% (Post-Cost)`
+          : "N/A";
+        const smallSample = !Number.isFinite(closedCount) || closedCount < 30;
+        const sampleWarningText = smallSample
+          ? `Small sample warning (n = ${escapeHtml(wf.closed_trades ?? 0)} closed trades; n < 30). Do not extrapolate early walk-forward metrics as guaranteed performance.`
+          : (wf.sample_warning || "Post-cost walk-forward ledger reflects historical logged signals and estimated transaction costs.");
+
+        const capDisplay = summary.capital_configured
+          ? `₹${fmtInt(summary.capital)}`
+          : "Not Configured";
+
+        setHtml("ledgerPanel", `
+          <div class="panel-head">
+            <div>
+              <div class="panel-title">Risk &amp; Post-Cost Walk-Forward Ledger</div>
+              <div class="muted" style="font-size:0.72rem;">Capital: <span class="mono">${escapeHtml(capDisplay)}</span> • Risk/Trade: <span class="mono">${fmtNum(summary.risk_pct)}%</span> • Max Alloc: <span class="mono">${fmtNum(summary.max_allocation_pct)}%</span></div>
+            </div>
+            <span class="badge ${smallSample ? "badge-warn" : "badge-bull"} mono">n = ${escapeHtml(wf.closed_trades ?? 0)}</span>
+          </div>
+          <div class="ledger-grid mono">
+            <div class="ledger-cell"><span>Closed Trades (n)</span><strong>${fmtNum(wf.closed_trades ?? 0)}</strong></div>
+            <div class="ledger-cell"><span>Net Win Rate</span><strong>${escapeHtml(winRateStr)}</strong></div>
+            <div class="ledger-cell"><span>Est. Costs / Charges</span><strong>₹${fmtNum(costsVal)}</strong></div>
+            <div class="ledger-cell"><span>Total Net P&amp;L</span><strong>₹${fmtNum(wf.total_net_pnl ?? 0)}</strong></div>
+            <div class="ledger-cell"><span>Max Net Drawdown</span><strong>₹${fmtNum(wf.max_drawdown_net_pnl ?? 0)}</strong></div>
+          </div>
+          <div class="disclaimer">
+            <strong>Risk &amp; Sample Notice:</strong> ${escapeHtml(sampleWarningText)} Research and risk-management tool only; no investment advice or guaranteed returns.
+          </div>
+        `);
+      } catch (err) {
+        setHtml("ledgerPanel", `<div class="empty-state">Walk-forward ledger unavailable: ${escapeHtml(err.message)}</div>`);
+      }
     }
 
     function resetAllFilters() {
