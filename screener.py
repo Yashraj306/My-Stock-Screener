@@ -94,6 +94,24 @@ _WARNED_YF_COUNT = 0
 _WARNED_MCP_COUNT = 0
 
 
+def _resolve_lot_size(symbol: str, opt_plan: dict | None = None) -> int:
+    sym_u = str(symbol or "").strip().upper()
+    plan_lot = (opt_plan or {}).get("lot_size")
+    try:
+        val = int(plan_lot)
+        if val > 0:
+            return val
+    except (TypeError, ValueError):
+        pass
+    try:
+        uni_lot = int(LOT_SIZES.get(sym_u, 1) or 1)
+        if uni_lot > 0:
+            return uni_lot
+    except (TypeError, ValueError):
+        pass
+    return 1
+
+
 def _yf_ticker(sym: str) -> str:
     if sym in YF_SYMBOL_MAP:
         return YF_SYMBOL_MAP[sym]
@@ -121,20 +139,32 @@ def _clean_yf_duplicates(df: pd.DataFrame | None) -> pd.DataFrame | None:
     return out
 
 
-def _compute_cumulative_vwap(df: pd.DataFrame) -> float | None:
-    high = pd.to_numeric(df["High"], errors="coerce")
-    low = pd.to_numeric(df["Low"], errors="coerce")
-    close = pd.to_numeric(df["Close"], errors="coerce")
-    vol = pd.to_numeric(df["Volume"], errors="coerce").fillna(0.0)
+def _compute_session_vwap(df: pd.DataFrame, live_vwap: float | None = None, lookback_days: int = 1) -> float | None:
+    if live_vwap is not None:
+        try:
+            lv = float(live_vwap)
+            if lv > 0 and pd.notna(lv):
+                return round(lv, 2)
+        except (TypeError, ValueError):
+            pass
+
+    if df is None or getattr(df, "empty", True):
+        return None
+
+    sub = df.tail(max(int(lookback_days), 1))
+    high = pd.to_numeric(sub["High"], errors="coerce")
+    low = pd.to_numeric(sub["Low"], errors="coerce")
+    close = pd.to_numeric(sub["Close"], errors="coerce")
+    vol = pd.to_numeric(sub["Volume"], errors="coerce").fillna(0.0)
 
     typical = (high + low + close) / 3.0
-    cum_vol = vol.cumsum()
-    cum_pv = (typical * vol).cumsum()
+    cum_vol = float(vol.sum()) if len(vol) else 0.0
+    cum_pv = float((typical * vol).sum()) if len(typical) else 0.0
+    if cum_vol > 0.0 and pd.notna(cum_pv):
+        return round(cum_pv / cum_vol, 2)
 
-    last_cum_vol = float(cum_vol.iloc[-1]) if len(cum_vol) else 0.0
-    if last_cum_vol > 0.0 and pd.notna(cum_pv.iloc[-1]):
-        return round(float(cum_pv.iloc[-1]) / last_cum_vol, 2)
-    return None
+    last_typ = float(typical.iloc[-1]) if len(typical) and pd.notna(typical.iloc[-1]) else None
+    return round(last_typ, 2) if last_typ is not None else None
 
 
 def _compute_avg_daily_range_rs(df: pd.DataFrame, lookback: int = 14) -> float:
@@ -291,10 +321,7 @@ def _fetch_nse_mcp_live_snapshot() -> dict[str, Any]:
 
 
 def _fetch_upstox_1y(instrument_key: str, symbol: str = "") -> pd.DataFrame | None:
-    if not UPSTOX_ACCESS_TOKEN:
-        logging.warning("Upstox token is empty for %s (%s)", symbol, instrument_key)
-        return None
-    if not instrument_key:
+    if not UPSTOX_ACCESS_TOKEN or not instrument_key:
         return None
 
     end_date = dt.datetime.now(IST).date()
@@ -318,7 +345,6 @@ def _fetch_upstox_1y(instrument_key: str, symbol: str = "") -> pd.DataFrame | No
             return None
         candles = ((resp.json() or {}).get("data") or {}).get("candles") or []
         if not candles:
-            logging.warning("Upstox %s [%s] returned empty candles", symbol or "SYM", instrument_key)
             return None
         rows = [
             {
@@ -333,15 +359,173 @@ def _fetch_upstox_1y(instrument_key: str, symbol: str = "") -> pd.DataFrame | No
             if len(c) >= 6
         ]
         cleaned = clean_ohlcv(pd.DataFrame(rows))
-        if cleaned is None:
-            logging.warning("Upstox %s [%s] failed OHLCV normalization", symbol or "SYM", instrument_key)
-            return None
-        if len(cleaned) < 20:
-            return None
-        return cleaned
+        if cleaned is not None and len(cleaned) >= 20:
+            return cleaned
+        return None
     except Exception as exc:
         logging.warning("Upstox %s [%s] exception: %s", symbol or "SYM", instrument_key, exc)
         return None
+
+
+def _fetch_upstox_live_quotes(keys_by_sym: dict[str, str]) -> dict[str, dict[str, float]]:
+    """Fetch live/latest market quotes from Upstox v2 for all symbols."""
+    live_map: dict[str, dict[str, float]] = {}
+    if not UPSTOX_ACCESS_TOKEN or not keys_by_sym:
+        return live_map
+
+    valid_pairs = [(sym, ikey) for sym, ikey in keys_by_sym.items() if ikey]
+    if not valid_pairs:
+        return live_map
+
+    headers = {"Authorization": f"Bearer {UPSTOX_ACCESS_TOKEN}", "Accept": "application/json"}
+    chunk_size = 50
+
+    for i in range(0, len(valid_pairs), chunk_size):
+        chunk = valid_pairs[i : i + chunk_size]
+        ikey_to_sym: dict[str, str] = {}
+        norm_ikey_to_sym: dict[str, str] = {}
+        for sym, ikey in chunk:
+            ikey_to_sym[ikey] = sym
+            norm_ikey_to_sym[ikey.replace(":", "|").upper()] = sym
+
+        query_keys = quote(",".join(ikey for _, ikey in chunk), safe=",:|")
+        url = f"{UPSTOX_BASE_V2}/market-quote/quotes?instrument_key={query_keys}"
+        try:
+            resp = requests.get(url, headers=headers, timeout=12)
+            if resp.status_code != 200:
+                logging.warning("Upstox live quote HTTP %s: %s", resp.status_code, (resp.text or "")[:140])
+                continue
+            data_obj = (resp.json() or {}).get("data") or {}
+            if not isinstance(data_obj, dict):
+                continue
+
+            for resp_key, qobj in data_obj.items():
+                if not isinstance(qobj, dict):
+                    continue
+                sym = (
+                    ikey_to_sym.get(resp_key)
+                    or norm_ikey_to_sym.get(str(resp_key).replace(":", "|").upper())
+                    or str(qobj.get("symbol") or "").strip().upper()
+                )
+                if not sym or sym not in keys_by_sym:
+                    continue
+
+                def _num(val: Any) -> float | None:
+                    if val is None or val == "":
+                        return None
+                    try:
+                        fv = float(val)
+                        return fv if pd.notna(fv) and fv > 0 else None
+                    except (TypeError, ValueError):
+                        return None
+
+                ltp = _num(qobj.get("last_price"))
+                ohlc = qobj.get("ohlc") if isinstance(qobj.get("ohlc"), dict) else {}
+                o_px = _num(ohlc.get("open"))
+                h_px = _num(ohlc.get("high"))
+                l_px = _num(ohlc.get("low"))
+                c_px = _num(ohlc.get("close"))
+                prev_close = _num(qobj.get("prev_close") or qobj.get("previous_close") or c_px)
+
+                eff_last = ltp if ltp is not None else c_px
+                if eff_last is None:
+                    continue
+
+                chg_pct = None
+                net_chg = qobj.get("net_change")
+                if net_chg is not None and prev_close and prev_close > 0:
+                    try:
+                        chg_pct = (float(net_chg) / prev_close) * 100.0
+                    except (TypeError, ValueError):
+                        chg_pct = None
+                if chg_pct is None and prev_close and prev_close > 0:
+                    chg_pct = ((eff_last - prev_close) / prev_close) * 100.0
+
+                vol = _num(qobj.get("volume")) or 0.0
+                atp = _num(qobj.get("average_price") or qobj.get("atp") or qobj.get("vwap"))
+
+                live_map[sym] = {
+                    "ltp": round(eff_last, 2),
+                    "open": round(o_px if o_px is not None else eff_last, 2),
+                    "high": round(h_px if h_px is not None else eff_last, 2),
+                    "low": round(l_px if l_px is not None else eff_last, 2),
+                    "prev_close": round(prev_close, 2) if prev_close is not None else 0.0,
+                    "change_pct": round(chg_pct, 2) if chg_pct is not None else 0.0,
+                    "volume": vol,
+                    "vwap": round(atp, 2) if atp is not None else 0.0,
+                }
+        except Exception as exc:
+            logging.warning("Upstox live quote batch error: %s", exc)
+
+    return live_map
+
+
+def _apply_live_quotes_to_candles(
+    candles: dict[str, pd.DataFrame],
+    live_quotes: dict[str, dict[str, float]],
+) -> dict[str, dict[str, float]]:
+    """Update latest candle row with live Upstox LTP/OHLC and return per-symbol live overrides."""
+    applied: dict[str, dict[str, float]] = {}
+    if not live_quotes:
+        return applied
+
+    now_ist_date = dt.datetime.now(IST).date().isoformat()
+
+    for sym, q in live_quotes.items():
+        df = candles.get(sym)
+        if df is None or df.empty:
+            continue
+        out = df.copy()
+        ltp = float(q["ltp"])
+        h_px = max(float(q["high"]), ltp)
+        l_px = min(float(q["low"]), ltp) if float(q["low"]) > 0 else ltp
+        o_px = float(q["open"]) if float(q["open"]) > 0 else ltp
+        vol = float(q.get("volume") or 0.0)
+
+        last_idx = out.index[-1]
+        last_dt_str = str(last_idx)[:10]
+
+        if last_dt_str == now_ist_date:
+            out.loc[last_idx, "Open"] = o_px
+            out.loc[last_idx, "High"] = max(float(out.loc[last_idx, "High"]), h_px)
+            cur_low = float(out.loc[last_idx, "Low"])
+            out.loc[last_idx, "Low"] = min(cur_low, l_px) if cur_low > 0 else l_px
+            out.loc[last_idx, "Close"] = ltp
+            if vol > 0:
+                out.loc[last_idx, "Volume"] = max(float(out.loc[last_idx, "Volume"] or 0.0), vol)
+        else:
+            new_row = out.iloc[-1].copy()
+            new_row["Open"] = o_px
+            new_row["High"] = h_px
+            new_row["Low"] = l_px
+            new_row["Close"] = ltp
+            if vol > 0:
+                new_row["Volume"] = vol
+            try:
+                new_idx = pd.to_datetime(now_ist_date)
+                out.loc[new_idx] = new_row
+            except Exception:
+                out.iloc[-1] = new_row
+
+        cleaned = clean_ohlcv(out)
+        if cleaned is not None and not cleaned.empty:
+            candles[sym] = cleaned
+
+        prev_c = float(q.get("prev_close") or 0.0)
+        if prev_c <= 0 and len(out) >= 2:
+            prev_c = float(out["Close"].iloc[-2])
+
+        chg_pct = float(q.get("change_pct") or 0.0)
+        if prev_c > 0:
+            chg_pct = ((ltp - prev_c) / prev_c) * 100.0
+
+        applied[sym] = {
+            "close": round(ltp, 2),
+            "change_pct": round(chg_pct, 2),
+            "vwap": float(q.get("vwap") or 0.0),
+        }
+
+    return applied
 
 
 def _fetch_yf_1y(symbol: str) -> pd.DataFrame | None:
@@ -382,7 +566,7 @@ def _fetch_yf_1y(symbol: str) -> pd.DataFrame | None:
     return None
 
 
-def load_candles_1y() -> tuple[dict[str, pd.DataFrame], str]:
+def load_candles_1y() -> tuple[dict[str, pd.DataFrame], str, dict[str, dict[str, float]]]:
     keys = eq_keys()
     candles: dict[str, pd.DataFrame] = {}
     upstox_hits = 0
@@ -407,7 +591,12 @@ def load_candles_1y() -> tuple[dict[str, pd.DataFrame], str]:
                 elif src == "NSE_MCP":
                     mcp_hits += 1
 
+    live_quotes = _fetch_upstox_live_quotes(keys)
+    live_overrides = _apply_live_quotes_to_candles(candles, live_quotes)
+
     parts = []
+    if live_overrides:
+        parts.append(f"UPSTOX_LIVE({len(live_overrides)})")
     if upstox_hits > 0:
         parts.append("UPSTOX_V2")
     if mcp_hits > 0:
@@ -415,7 +604,7 @@ def load_candles_1y() -> tuple[dict[str, pd.DataFrame], str]:
     if not parts or (upstox_hits + mcp_hits) < len(candles):
         parts.append("YFINANCE_1Y")
     source_label = " + ".join(parts) + " (NSE+BSE)"
-    return candles, source_label
+    return candles, source_label, live_overrides
 
 
 def _pick_col(df: pd.DataFrame, candidates: list[str]) -> str | None:
@@ -567,7 +756,11 @@ def _build_option_chain_analytics(chain_df: Any, spot: float, lot_size: int = 1)
 
     strike_step = 50.0
     if len(rows) >= 2:
-        diffs = [round(rows[i + 1]["strike"] - rows[i]["strike"], 2) for i in range(len(rows) - 1) if rows[i + 1]["strike"] > rows[i]["strike"]]
+        diffs = [
+            round(rows[i + 1]["strike"] - rows[i]["strike"], 2)
+            for i in range(len(rows) - 1)
+            if rows[i + 1]["strike"] > rows[i]["strike"]
+        ]
         if diffs:
             strike_step = float(pd.Series(diffs).median())
 
@@ -676,6 +869,8 @@ def _build_option_chain_analytics(chain_df: Any, spot: float, lot_size: int = 1)
         "eor_minus_1": eor_minus_1,
         "eor_plus_1": eor_plus_1,
     }
+
+
 def _compute_oi_target(chain_summary: dict | None, entry: float, is_bull: bool) -> float | None:
     if not chain_summary or not chain_summary.get("chain_available") or entry <= 0:
         return None
@@ -803,7 +998,7 @@ def _select_intraday_equity_10(
     chosen_syms: set[str] = set()
 
     for tier in (0, 1, 2):
-        for side_key, pool, target_list in (
+        for _, pool, target_list in (
             ("BULL", _rank_pool(bull_candidates, tier), bull_picked),
             ("BEAR", _rank_pool(bear_candidates, tier), bear_picked),
         ):
@@ -849,6 +1044,7 @@ def _select_intraday_equity_10(
 
 
 def _safe_position_size(entry: float, stop_loss: float, lot_size: int = 1) -> dict:
+    eff_lot = max(int(lot_size or 1), 1)
     try:
         sig = inspect.signature(position_size)
         params = sig.parameters
@@ -860,16 +1056,20 @@ def _safe_position_size(entry: float, stop_loss: float, lot_size: int = 1) -> di
         elif "sl" in params:
             kwargs["sl"] = stop_loss
         if "lot_size" in params:
-            kwargs["lot_size"] = lot_size
+            kwargs["lot_size"] = eff_lot
 
         if kwargs and all(k in params for k in kwargs):
             res = position_size(**kwargs)
         else:
             res = position_size(entry, stop_loss)
-        return dict(res) if isinstance(res, dict) else {"qty": int(res or 0)}
+        out = dict(res) if isinstance(res, dict) else {"qty": int(res or 0)}
     except Exception:
         res = position_size(entry, stop_loss)
-        return dict(res) if isinstance(res, dict) else {"qty": int(res or 0)}
+        out = dict(res) if isinstance(res, dict) else {"qty": int(res or 0)}
+
+    if int(out.get("qty") or 0) <= 0:
+        out["qty"] = eff_lot
+    return out
 
 
 def _build_entry_and_rationale(
@@ -951,6 +1151,8 @@ def _build_entry_and_rationale(
 
 def _build_stock_setup(sym: str, ind: dict, rs_info: dict, is_bull: bool, chain_bundle: dict | None) -> dict | None:
     close = float(ind["close"])
+    if close <= 0:
+        return None
     atr_val = float(ind.get("atr") or max(close * 0.015, 1.0))
     vwap = ind.get("vwap")
     ema20 = float(ind.get("ema20") or close)
@@ -987,10 +1189,6 @@ def _build_stock_setup(sym: str, ind: dict, rs_info: dict, is_bull: bool, chain_
     expiry = (chain_bundle or {}).get("expiry")
     oi_target = _compute_oi_target(chain_summary, close, is_bull=is_bull)
 
-    sizing = _safe_position_size(entry=close, stop_loss=sl, lot_size=1)
-    if sizing.get("qty", 0) <= 0:
-        return None
-
     opt_plan = select_option_strategy(
         symbol=sym,
         side="CE" if is_bull else "PE",
@@ -999,7 +1197,15 @@ def _build_stock_setup(sym: str, ind: dict, rs_info: dict, is_bull: bool, chain_
         expiry=expiry,
         prefer_spread=True,
     )
-    lot_sz = int(opt_plan.get("lot_size") or LOT_SIZES.get(sym, 1) or 1)
+    if not isinstance(opt_plan, dict):
+        opt_plan = {}
+    lot_sz = _resolve_lot_size(sym, opt_plan)
+    opt_plan["lot_size"] = lot_sz
+
+    sizing = _safe_position_size(entry=close, stop_loss=sl, lot_size=lot_sz)
+    if int(sizing.get("qty") or 0) <= 0:
+        return None
+
     chain_analytics = _build_option_chain_analytics(chain_df, spot=close, lot_size=lot_sz)
 
     rs_score = float((rs_info or {}).get("rs_score") or 0.0)
@@ -1041,7 +1247,7 @@ def _build_stock_setup(sym: str, ind: dict, rs_info: dict, is_bull: bool, chain_
         "oi_target": oi_target,
         "rsi": round(rsi, 1),
         "vol_ratio": round(vol_ratio, 2),
-        "vwap": round(float(vwap), 2) if vwap is not None else None,
+        "vwap": round(float(vwap), 2) if (vwap is not None and float(vwap) > 0) else None,
         "ema20": round(ema20, 2),
         "ema50": round(ema50, 2),
         "rs_score": rs_score,
@@ -1057,8 +1263,12 @@ def _build_stock_setup(sym: str, ind: dict, rs_info: dict, is_bull: bool, chain_
     }
 
 
-def _build_index_trades(candles: dict[str, pd.DataFrame]) -> list[dict]:
+def _build_index_trades(
+    candles: dict[str, pd.DataFrame],
+    live_overrides: dict[str, dict[str, float]] | None = None,
+) -> list[dict]:
     trades = []
+    overrides = live_overrides or {}
     for idx_sym in ["NIFTY", "BANKNIFTY", "FINNIFTY", "SENSEX"]:
         df = candles.get(idx_sym)
         if df is None or df.empty:
@@ -1066,11 +1276,13 @@ def _build_index_trades(candles: dict[str, pd.DataFrame]) -> list[dict]:
         ind = compute_indicators(df)
         if not ind:
             continue
-        spot = float(ind["close"])
+
+        ov = overrides.get(idx_sym) or {}
+        spot = float(ov.get("close") or ind["close"])
+        chg_pct = float(ov.get("change_pct") if "change_pct" in ov else (ind.get("change_pct") or 0.0))
         atr_val = float(ind.get("atr") or max(spot * 0.01, 1.0))
         ema20 = float(ind.get("ema20") or spot)
-        chg_pct = float(ind.get("change_pct") or 0.0)
-        cum_vwap = _compute_cumulative_vwap(df)
+        session_vwap = _compute_session_vwap(df, live_vwap=ov.get("vwap"), lookback_days=1)
 
         is_bull = spot >= ema20 and chg_pct >= -0.35
         chain_df, expiry = None, None
@@ -1095,13 +1307,16 @@ def _build_index_trades(candles: dict[str, pd.DataFrame]) -> list[dict]:
             expiry=expiry,
             prefer_spread=True,
         )
+        if not isinstance(plan, dict):
+            plan = {}
 
         sl = round(spot - 1.5 * atr_val, 2) if is_bull else round(spot + 1.5 * atr_val, 2)
         pa_t1 = round(spot + 1.5 * atr_val, 2) if is_bull else round(max(spot - 1.5 * atr_val, 0.0), 2)
         pa_t2 = round(spot + 2.5 * atr_val, 2) if is_bull else round(max(spot - 2.5 * atr_val, 0.0), 2)
         oi_target = _compute_oi_target(chain_summary, spot, is_bull=is_bull)
 
-        lot_size = int(plan.get("lot_size") or LOT_SIZES.get(idx_sym, 1) or 1)
+        lot_size = _resolve_lot_size(idx_sym, plan)
+        plan["lot_size"] = lot_size
         chain_analytics = _build_option_chain_analytics(chain_df, spot=spot, lot_size=lot_size)
         max_loss_lot = plan.get("max_loss_lot")
         sizing_status = "CAPITAL NOT CONFIGURED" if not CAPITAL_CONFIGURED else "1 Lot Risk Cap"
@@ -1111,7 +1326,7 @@ def _build_index_trades(candles: dict[str, pd.DataFrame]) -> list[dict]:
             is_bull=is_bull,
             close=spot,
             atr_val=atr_val,
-            vwap=cum_vwap,
+            vwap=session_vwap,
             ema20=ema20,
             rsi=float(ind.get("rsi") or 50.0),
             vol_ratio=float(ind.get("vol_ratio") or 0.0),
@@ -1160,6 +1375,7 @@ def export_web_dashboard_data(payload: dict, base_dir: str = "docs/data") -> Non
     mode_tag = str(payload.get("mode") or MODE or "RUN").upper()
 
     enriched = dict(payload)
+    enriched["mode"] = mode_tag
     enriched["generated_at_ist"] = now_ist.strftime("%Y-%m-%d %H:%M:%S IST")
     enriched["session_date"] = session_date
     enriched["session_guardrails"] = _build_session_guardrails(now_ist)
@@ -1213,7 +1429,7 @@ def export_web_dashboard_data(payload: dict, base_dir: str = "docs/data") -> Non
 
 
 def run_screener():
-    candles, data_source = load_candles_1y()
+    candles, data_source, live_overrides = load_candles_1y()
     logging.info("Loaded candles for %d symbols using %s", len(candles), data_source)
     global_cues = fetch_global_cues()
     nse_live_snap = _fetch_nse_mcp_live_snapshot()
@@ -1231,19 +1447,24 @@ def run_screener():
         ind = compute_indicators(df)
         if not ind:
             continue
-        close = float(ind["close"])
-        cum_vwap = _compute_cumulative_vwap(df)
+
+        ov = live_overrides.get(sym) or {}
+        close = float(ov.get("close") or ind["close"])
+        chg = float(ov.get("change_pct") if "change_pct" in ov else (ind.get("change_pct") or 0.0))
+        ind["close"] = close
+        ind["change_pct"] = chg
+
+        session_vwap = _compute_session_vwap(df, live_vwap=ov.get("vwap"), lookback_days=1)
         avg_range_rs = _compute_avg_daily_range_rs(df, lookback=14)
         vol_20 = pd.to_numeric(df["Volume"], errors="coerce").tail(20).mean()
         close_20 = pd.to_numeric(df["Close"], errors="coerce").tail(20).mean()
 
-        ind["vwap"] = cum_vwap
+        ind["vwap"] = session_vwap
         ind["avg_range_rs"] = avg_range_rs
         ind["avg_turnover"] = float((vol_20 or 0.0) * (close_20 or close))
         indicators_by_sym[sym] = ind
 
         total_stocks += 1
-        chg = float(ind.get("change_pct") or 0.0)
         if chg > 0:
             adv += 1
         elif chg < 0:
@@ -1317,9 +1538,14 @@ def run_screener():
     )
     equity_intraday = intraday_bullish + intraday_bearish
 
-    index_trades = _build_index_trades(candles)
+    index_trades = _build_index_trades(candles, live_overrides=live_overrides)
 
     def _idx_fmt(sym: str):
+        ov = live_overrides.get(sym)
+        if ov and ov.get("close"):
+            c_last = float(ov["close"])
+            chg = float(ov.get("change_pct") or 0.0)
+            return f"{c_last:,.2f}", f"{chg:+.2f}%"
         df = candles.get(sym)
         if df is None or len(df) < 2:
             return "—", "—"
