@@ -1,5 +1,5 @@
 {
-  "updated_at_ist": "2026-11-26 18:43:55 IST",
+  "updated_at_ist": "2026-11-26 19:07:56 IST",
   "latest_file": "data/latest.json",
   "snapshots": [
     {
@@ -7,11 +7,11 @@
       "file": "data/history/2026-11-26_MORNING.json",
       "date": "2026-11-26",
       "mode": "MORNING",
-      "generated_at_ist": "2026-11-26 18:31:24 IST",
+      "generated_at_ist": "2026-11-26 19:07:56 IST",
       "ideas_count": 24,
       "breadth_tone": "BULLISH",
-      "nifty_spot": "25,819.25",
-      "nifty_chg": "+1.85%"
+      "nifty_spot": "25,884.50",
+      "nifty_chg": "+0.00%"
     },
     {
       "id": "2026-11-26_BTST",
@@ -28,12 +28,12 @@
       "id": "2026-11-26",
       "file": "data/history/2026-11-26.json",
       "date": "2026-11-26",
-      "mode": "BTST",
-      "generated_at_ist": "2026-11-26 18:43:55 IST",
+      "mode": "MORNING",
+      "generated_at_ist": "2026-11-26 19:07:56 IST",
       "ideas_count": 24,
       "breadth_tone": "BULLISH",
-      "nifty_spot": "25,819.25",
-      "nifty_chg": "+1.85%"
+      "nifty_spot": "25,884.50",
+      "nifty_chg": "+0.00%"
     },
     {
       "id": "2026-11-25_MORNING",
