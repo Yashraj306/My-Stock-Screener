@@ -1,7 +1,70 @@
 import datetime as dt
 from typing import Any
-import numpy as np
 import pandas as pd
+
+from config import (
+    ALLOW_MIS_LEVERAGE,
+    CAPITAL,
+    CAPITAL_CONFIGURED,
+    MAX_ALLOCATION_PCT,
+    MIS_LEVERAGE,
+    RISK_PCT,
+)
+
+
+def position_size(entry: float, stop_loss: float, lot_size: int = 1) -> dict[str, Any]:
+    """Calculates position quantity and risk/allocation figures respecting configured risk cap."""
+    eff_lot = max(int(lot_size or 1), 1)
+    px = float(entry or 0.0)
+    sl = float(stop_loss or 0.0)
+    if px <= 0:
+        return {
+            "qty": eff_lot,
+            "est_margin": 0.0,
+            "exposure": 0.0,
+            "max_risk": 0.0,
+            "sizing_status": "INVALID_ENTRY",
+        }
+
+    risk_per_share = abs(px - sl) if sl > 0 else px
+    if risk_per_share <= 0:
+        risk_per_share = max(px * 0.01, 0.05)
+
+    if not CAPITAL_CONFIGURED or float(CAPITAL or 0.0) <= 0:
+        qty = eff_lot
+        exposure = round(qty * px, 2)
+        max_risk = round(qty * risk_per_share, 2)
+        return {
+            "qty": qty,
+            "est_margin": exposure,
+            "exposure": exposure,
+            "max_risk": max_risk,
+            "sizing_status": "CAPITAL_NOT_CONFIGURED",
+        }
+
+    cap = float(CAPITAL)
+    max_risk_amt = cap * float(RISK_PCT)
+    max_alloc_amt = cap * float(MAX_ALLOCATION_PCT)
+    lev = float(MIS_LEVERAGE) if ALLOW_MIS_LEVERAGE else 1.0
+    max_exposure_amt = max_alloc_amt * max(lev, 1.0)
+
+    raw_qty_by_risk = int(max_risk_amt // risk_per_share)
+    raw_qty_by_alloc = int(max_exposure_amt // px) if px > 0 else eff_lot
+    target_qty = min(raw_qty_by_risk, raw_qty_by_alloc)
+
+    lots = max(target_qty // eff_lot, 1)
+    qty = lots * eff_lot
+    exposure = round(qty * px, 2)
+    margin_needed = round(exposure / max(lev, 1.0), 2)
+    max_risk = round(qty * risk_per_share, 2)
+
+    return {
+        "qty": qty,
+        "est_margin": margin_needed,
+        "exposure": exposure,
+        "max_risk": max_risk,
+        "sizing_status": "RISK_CAPPED",
+    }
 
 
 def btst_rally_score(
