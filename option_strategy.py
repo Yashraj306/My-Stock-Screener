@@ -9,6 +9,8 @@ def _strike_step(symbol: str, spot: float) -> float:
         return 100.0
     if symbol in {"NIFTY", "FINNIFTY"}:
         return 50.0
+    if spot >= 10000:
+        return 100.0
     if spot >= 3000:
         return 50.0
     if spot >= 1000:
@@ -22,17 +24,17 @@ def _is_expired_or_stale(expiry: str | None) -> bool:
     if not expiry:
         return False
     today_str = dt.datetime.now(IST).date().isoformat()
-    return str(expiry).strip() < today_str
+    return str(expiry).strip()[:10] < today_str
 
 
 def _leg_filter(
     row: dict,
     side: str,
-    min_ltp: float = 0.25,
-    max_spread_pct: float = 8.0,
-    min_oi: int = 10000,
-    min_vol: int = 10000,
-    max_iv: float = 85.0,
+    min_ltp: float = 0.05,
+    max_spread_pct: float = 15.0,
+    min_oi: int = 1,
+    min_vol: int = 1,
+    max_iv: float = 120.0,
 ) -> bool:
     p = "ce" if side == "CE" else "pe"
     ltp = float(row.get(f"{p}_ltp") or 0.0)
@@ -44,7 +46,8 @@ def _leg_filter(
 
     if ltp < min_ltp:
         return False
-    if oi < min_oi and vol < min_vol:
+    # Allow active contracts with non-zero OI or volume or LTP
+    if oi < min_oi and vol < min_vol and ltp <= 0:
         return False
     if bid > 0 and ask > 0 and ask >= bid:
         mid = (bid + ask) / 2.0
@@ -64,8 +67,11 @@ def select_option_strategy(
     prefer_spread: bool = True,
 ) -> dict:
     side_norm = "CE" if str(side).upper() in {"CE", "CALL", "BUY CALL (CE)"} else "PE"
-    lot_size = int(LOT_SIZES.get(symbol, 0))
-    step = _strike_step(symbol, spot)
+    sym_u = str(symbol or "").strip().upper()
+    lot_size = int(LOT_SIZES.get(sym_u, 1) or 1)
+    if lot_size <= 0:
+        lot_size = 1
+    step = _strike_step(sym_u, spot)
 
     if _is_expired_or_stale(expiry):
         return {
@@ -86,7 +92,10 @@ def select_option_strategy(
         }
 
     records = chain_df.to_dict("records")
-    near = [r for r in records if abs(float(r.get("strike", 0.0)) - spot) <= max(spot * 0.06, step * 4)] or records
+    near = [
+        r for r in records
+        if abs(float(r.get("strike", 0.0)) - spot) <= max(spot * 0.10, step * 6)
+    ] or records
     p = "ce" if side_norm == "CE" else "pe"
 
     valid = []
@@ -96,11 +105,14 @@ def select_option_strategy(
         delta_abs = abs(float(r.get(f"{p}_delta") or 0.0))
         theta_val = float(r.get(f"{p}_theta") or 0.0)
         ltp_val = float(r[f"{p}_ltp"])
-        if delta_abs > 0 and not (0.15 <= delta_abs <= 0.85):
+        if delta_abs > 0 and not (0.08 <= delta_abs <= 0.92):
             continue
-        if theta_val < 0 and ltp_val > 0 and (abs(theta_val) / ltp_val) > 0.35:
+        if theta_val < 0 and ltp_val > 0 and (abs(theta_val) / ltp_val) > 0.50:
             continue
         valid.append(r)
+
+    if not valid:
+        valid = [r for r in near if float(r.get(f"{p}_ltp") or 0.0) > 0]
 
     if not valid:
         return {
@@ -114,7 +126,7 @@ def select_option_strategy(
     buy_row = min(
         valid,
         key=lambda r: (
-            abs(abs(float(r.get(f"{p}_delta") or 0.52)) - 0.52),
+            abs(abs(float(r.get(f"{p}_delta") or 0.50)) - 0.50),
             abs(float(r.get("strike", 0.0)) - spot),
         ),
     )
@@ -151,8 +163,8 @@ def select_option_strategy(
                 "net_debit_per_unit": net_debit,
                 "maximum_loss_per_unit": net_debit,
                 "maximum_profit_per_unit": max_profit_unit,
-                "max_loss_lot": round(net_debit * lot_size, 2) if lot_size > 0 else None,
-                "max_profit_lot": round(max_profit_unit * lot_size, 2) if lot_size > 0 else None,
+                "max_loss_lot": round(net_debit * lot_size, 2),
+                "max_profit_lot": round(max_profit_unit * lot_size, 2),
                 "breakeven": breakeven,
             }
 
@@ -168,5 +180,5 @@ def select_option_strategy(
         "delta": buy_delta,
         "theta": buy_theta,
         "maximum_loss_per_unit": buy_ltp,
-        "max_loss_lot": round(buy_ltp * lot_size, 2) if lot_size > 0 else None,
+        "max_loss_lot": round(buy_ltp * lot_size, 2),
     }
