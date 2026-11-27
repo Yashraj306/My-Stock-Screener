@@ -26,21 +26,21 @@
   "global_cues": [
     {
       "name": "Nasdaq",
-      "val": "23,961.3",
-      "chg": "+1.59%",
-      "raw_val": 23961.26953125
+      "val": "24,129.5",
+      "chg": "+2.31%",
+      "raw_val": 24129.5
     },
     {
       "name": "Dow Jones",
-      "val": "50,667.9",
-      "chg": "+0.97%",
-      "raw_val": 50667.8984375
+      "val": "50,774.9",
+      "chg": "+1.18%",
+      "raw_val": 50774.94140625
     },
     {
       "name": "S&P 500",
-      "val": "7,265.9",
-      "chg": "+1.16%",
-      "raw_val": 7265.85009765625
+      "val": "7,297.5",
+      "chg": "+1.60%",
+      "raw_val": 7297.490234375
     },
     {
       "name": "Nikkei",
@@ -56,21 +56,21 @@
     },
     {
       "name": "Crude Oil",
-      "val": "83.25",
-      "chg": "-0.51%",
-      "raw_val": 83.25
+      "val": "83.03",
+      "chg": "-0.78%",
+      "raw_val": 83.02999877929688
     },
     {
       "name": "US Dollar Idx",
       "val": "104.0",
-      "chg": "+0.34%",
-      "raw_val": 104.01899719238281
+      "chg": "+0.33%",
+      "raw_val": 104.01699829101562
     },
     {
       "name": "US 10Y Yield",
-      "val": "4.91",
-      "chg": "+1.36%",
-      "raw_val": 4.914000034332275
+      "val": "4.93",
+      "chg": "+1.73%",
+      "raw_val": 4.932000160217285
     },
     {
       "name": "India VIX",
@@ -1842,10 +1842,10 @@
   "intraday_bearish": [],
   "walk_forward": {
     "available": true,
-    "closed_trades": 430,
-    "win_rate_pct": 42.09,
-    "net_pnl_rs": -211083.88
+    "closed_trades": 449,
+    "win_rate_pct": 42.32,
+    "net_pnl_rs": -316026.06
   },
-  "generated_at_ist": "2026-11-27 21:55:20 IST",
+  "generated_at_ist": "2026-11-27 23:49:30 IST",
   "session_date": "2026-11-27"
 }
