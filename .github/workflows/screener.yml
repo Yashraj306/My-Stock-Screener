@@ -1,45 +1,28 @@
 name: Market Screener Automation
 
+# Note: GitHub Actions cron schedules can be delayed by several minutes under heavy runner load.
 on:
   schedule:
-    # 9:00 AM IST = 03:30 UTC
-    - cron: "30 3 * * 1-5"
-
-    # 2:00 PM IST = 08:30 UTC
-    - cron: "30 8 * * 1-5"
-
+    - cron: "46 3 * * 1-5"   # 09:16 IST (MORNING gap WATCHLIST)
+    - cron: "0 4 * * 1-5"    # 09:30 IST (MORNING 15-min ORB CONFIRMED)
+    - cron: "30 8 * * 1-5"   # 14:00 IST (2 PM IST BTST)
   workflow_dispatch:
     inputs:
       mode:
-        description: "Select screener mode"
-        required: true
-        type: choice
-        options:
-          - MORNING
-          - BTST
-        default: MORNING
-
-permissions:
-  contents: write
+        description: "Screener mode (MORNING or BTST)"
+        required: false
+        default: "BTST"
 
 concurrency:
-  group: market-screener
+  group: market-screener-automation
   cancel-in-progress: false
 
 jobs:
   run-screener:
     runs-on: ubuntu-latest
-    timeout-minutes: 20
-
-    env:
-      EMAIL_USER: ${{ secrets.EMAIL_USER }}
-      EMAIL_PASS: ${{ secrets.EMAIL_PASS }}
-      EMAIL_TO: ${{ secrets.EMAIL_TO }}
-      UPSTOX_TOKEN: ${{ secrets.UPSTOX_TOKEN }}
-
-      MODE: ${{ github.event_name == 'schedule' && (github.event.schedule == '30 3 * * 1-5' && 'MORNING' || 'BTST') || inputs.mode || 'MORNING' }}
-
-      PYTHONUNBUFFERED: "1"
+    timeout-minutes: 5
+    permissions:
+      contents: write
 
     steps:
       - name: Checkout Repository
@@ -50,53 +33,48 @@ jobs:
         with:
           python-version: "3.11"
           cache: "pip"
-          cache-dependency-path: requirements.txt
 
       - name: Install Dependencies
         run: |
           python -m pip install --upgrade pip
-          pip install -r requirements.txt
+          if [ -f requirements.txt ]; then pip install -r requirements.txt; fi
 
       - name: Validate Required Secrets
+        env:
+          UPSTOX_TOKEN: ${{ secrets.UPSTOX_TOKEN }}
+          UPSTOX_ACCESS_TOKEN: ${{ secrets.UPSTOX_ACCESS_TOKEN }}
+          EMAIL_USER: ${{ secrets.EMAIL_USER }}
+          EMAIL_PASS: ${{ secrets.EMAIL_PASS }}
+          EMAIL_TO: ${{ secrets.EMAIL_TO }}
         run: |
-          python - <<'PY'
+          python -c '
           import os
-          required = [
-              "EMAIL_USER",
-              "EMAIL_PASS",
-              "EMAIL_TO",
-              "UPSTOX_TOKEN"
-          ]
-          missing = [
-              key for key in required
-              if not os.getenv(key, "").strip()
-          ]
-          if missing:
-              raise SystemExit(
-                  "Missing GitHub Secrets: " + ", ".join(missing)
-              )
-          print("Required secrets are configured.")
-          print("Screener mode:", os.getenv("MODE"))
-          PY
+          tok = (os.getenv("UPSTOX_ACCESS_TOKEN") or os.getenv("UPSTOX_TOKEN") or "").strip()
+          assert tok, "Missing UPSTOX_TOKEN / UPSTOX_ACCESS_TOKEN"
+          for k in ("EMAIL_USER", "EMAIL_PASS", "EMAIL_TO"):
+              assert (os.getenv(k) or "").strip(), f"Missing {k}"
+          print("Secrets validated.")
+          '
 
       - name: Run Screener Engine
-        run: |
-          python screener.py
+        env:
+          UPSTOX_TOKEN: ${{ secrets.UPSTOX_TOKEN }}
+          UPSTOX_ACCESS_TOKEN: ${{ secrets.UPSTOX_ACCESS_TOKEN }}
+          EMAIL_USER: ${{ secrets.EMAIL_USER }}
+          EMAIL_PASS: ${{ secrets.EMAIL_PASS }}
+          EMAIL_TO: ${{ secrets.EMAIL_TO }}
+          MODE: ${{ github.event.inputs.mode || 'BTST' }}
+          PYTHONUNBUFFERED: "1"
+        run: python screener.py
 
       - name: Commit Screener Snapshot and Logs
         run: |
           git config user.name "github-actions[bot]"
-          git config user.email "github-actions[bot]@users.noreply.github.com"
-          git add signals_log.csv docs/data
-          git diff --cached --quiet || git commit -m "chore: update screener snapshot and history"
-          git pull --rebase
-          git push
-
-      - name: Workflow Summary
-        if: always()
-        run: |
-          echo "## Market Screener Run" >> $GITHUB_STEP_SUMMARY
-          echo "- Mode: $MODE" >> $GITHUB_STEP_SUMMARY
-          echo "- Scheduled timezone: IST (UTC+5:30)" >> $GITHUB_STEP_SUMMARY
-          echo "- Execution: Signals only" >> $GITHUB_STEP_SUMMARY
-          echo "- Automatic orders: Disabled" >> $GITHUB_STEP_SUMMARY
+          git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
+          git add -A
+          if ! git diff --staged --quiet; then
+            git commit -m "chore: update screener snapshot & logs [skip ci]"
+            git push
+          else
+            echo "No changes to commit."
+          fi
