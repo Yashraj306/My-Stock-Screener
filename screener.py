@@ -676,6 +676,12 @@ def _fetch_yf_1y(symbol: str) -> pd.DataFrame | None:
 
 def load_candles_1y() -> tuple[dict[str, pd.DataFrame], str, dict[str, dict[str, float]]]:
     keys = dict(eq_keys())
+    if UPSTOX_ACCESS_TOKEN and keys:
+        master_keys = resolve_upstox_keys_from_master(list(keys.keys()))
+        for sym, mkey in master_keys.items():
+            if mkey:
+                keys[sym] = mkey
+
     candles: dict[str, pd.DataFrame] = {}
     upstox_hits = 0
     failed_upstox_syms: list[str] = []
@@ -694,26 +700,6 @@ def load_candles_1y() -> tuple[dict[str, pd.DataFrame], str, dict[str, dict[str,
             else:
                 failed_upstox_syms.append(sym)
 
-    if UPSTOX_ACCESS_TOKEN and failed_upstox_syms:
-        resolved_map = resolve_upstox_keys_from_master(failed_upstox_syms)
-        retry_syms: list[str] = []
-        for sym, new_key in resolved_map.items():
-            if new_key and new_key != keys.get(sym):
-                keys[sym] = new_key
-                retry_syms.append(sym)
-
-        if retry_syms:
-            with ThreadPoolExecutor(max_workers=8) as pool:
-                for sym, df, src in pool.map(
-                    lambda s: (s, _fetch_upstox_1y(keys.get(s, ""), symbol=s), "UPSTOX_RESOLVED"),
-                    retry_syms,
-                ):
-                    if df is not None and not df.empty:
-                        candles[sym] = df
-                        upstox_hits += 1
-                        if sym in failed_upstox_syms:
-                            failed_upstox_syms.remove(sym)
-
     if failed_upstox_syms:
         with ThreadPoolExecutor(max_workers=8) as pool:
             for sym, yf_df in pool.map(lambda s: (s, _fetch_yf_1y(s)), failed_upstox_syms):
@@ -722,6 +708,16 @@ def load_candles_1y() -> tuple[dict[str, pd.DataFrame], str, dict[str, dict[str,
 
     live_quotes = _fetch_upstox_live_quotes(keys)
     live_overrides = _apply_live_quotes_to_candles(candles, live_quotes)
+
+    parts = []
+    if live_overrides:
+        parts.append(f"UPSTOX_LIVE({len(live_overrides)})")
+    if upstox_hits > 0:
+        parts.append("UPSTOX_V2")
+    if upstox_hits < len(candles):
+        parts.append("YFINANCE_1Y")
+    source_label = " + ".join(parts) + " (NSE+BSE)"
+    return candles, source_label, live_overrides
 
     parts = []
     if live_overrides:
