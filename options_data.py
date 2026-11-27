@@ -1,7 +1,6 @@
 import datetime as dt
 import logging
 import os
-from urllib.parse import quote
 
 import pandas as pd
 import requests
@@ -30,39 +29,50 @@ def _instrument_key_for_symbol(symbol: str) -> str:
     return ""
 
 
-def _fetch_expiries(instrument_key: str, headers: dict) -> list[str]:
-    encoded = quote(instrument_key, safe="")
-    url = f"{UPSTOX_BASE_V2}/option/contract"
-    params = {"instrument_key": instrument_key}
+def _safe_float(val, default: float = 0.0) -> float:
+    if val is None or val == "":
+        return default
     try:
-        resp = requests.get(url, headers=headers, params=params, timeout=10)
-        if resp.status_code == 200:
-            data = (resp.json() or {}).get("data") or []
-            expiries = sorted({
-                str(item.get("expiry_date") or item.get("expiry") or "")[:10]
-                for item in data
-                if (item.get("expiry_date") or item.get("expiry"))
-            })
-            today_str = dt.datetime.now(IST).date().isoformat()
-            valid_exp = [e for e in expiries if e >= today_str]
-            return valid_exp or expiries
-    except Exception as exc:
-        logging.debug("Expiry fetch failed for %s: %s", instrument_key, exc)
+        fv = float(val)
+        return default if pd.isna(fv) else fv
+    except (TypeError, ValueError):
+        return default
 
-    # Fallback endpoint attempt
-    try:
-        url2 = f"{UPSTOX_BASE_V2}/expired-instruments/option/contract"
-        resp2 = requests.get(url2, headers=headers, params={"instrument_key": encoded}, timeout=10)
-        if resp2.status_code == 200:
-            data2 = (resp2.json() or {}).get("data") or []
-            expiries2 = sorted({
-                str(item.get("expiry_date") or item.get("expiry") or "")[:10]
-                for item in data2
-                if (item.get("expiry_date") or item.get("expiry"))
-            })
-            return expiries2
-    except Exception:
-        pass
+
+def _safe_int(val, default: int = 0) -> int:
+    fv = _safe_float(val, float(default))
+    return int(round(fv))
+
+
+def _fetch_expiries(instrument_key: str, headers: dict) -> list[str]:
+    today_str = dt.datetime.now(IST).date().isoformat()
+    for endpoint in (
+        f"{UPSTOX_BASE_V2}/option/contract",
+        f"{UPSTOX_BASE_V2}/expired-instruments/option/contract",
+    ):
+        try:
+            resp = requests.get(
+                endpoint,
+                headers=headers,
+                params={"instrument_key": instrument_key},
+                timeout=10,
+            )
+            if resp.status_code == 200:
+                data = (resp.json() or {}).get("data") or []
+                if isinstance(data, dict):
+                    data = data.get("contracts") or data.get("data") or []
+                expiries = sorted({
+                    str(item.get("expiry_date") or item.get("expiry") or "")[:10]
+                    for item in (data if isinstance(data, list) else [])
+                    if isinstance(item, dict) and (item.get("expiry_date") or item.get("expiry"))
+                })
+                valid_exp = [e for e in expiries if len(e) == 10 and e >= today_str]
+                if valid_exp:
+                    return valid_exp
+                if expiries:
+                    return expiries
+        except Exception as exc:
+            logging.debug("Expiry fetch failed on %s for %s: %s", endpoint, instrument_key, exc)
     return []
 
 
@@ -78,7 +88,7 @@ def chain_upstox(symbol: str, spot: float = 0.0, expiry: str | None = None):
         "Accept": "application/json",
     }
 
-    target_expiry = expiry
+    target_expiry = str(expiry).strip()[:10] if expiry else None
     if not target_expiry:
         expiries = _fetch_expiries(inst_key, headers)
         if expiries:
@@ -89,52 +99,71 @@ def chain_upstox(symbol: str, spot: float = 0.0, expiry: str | None = None):
         params["expiry_date"] = target_expiry
 
     try:
-        resp = requests.get(f"{UPSTOX_BASE_V2}/option/chain", headers=headers, params=params, timeout=12)
+        resp = requests.get(
+            f"{UPSTOX_BASE_V2}/option/chain",
+            headers=headers,
+            params=params,
+            timeout=12,
+        )
         if resp.status_code != 200:
-            logging.debug("Upstox option chain status %s for %s", resp.status_code, symbol)
+            logging.debug("Upstox option chain HTTP %s for %s: %s", resp.status_code, symbol, (resp.text or "")[:120])
             return pd.DataFrame(), target_expiry
 
-        payload_data = (resp.json() or {}).get("data") or []
-        if not payload_data:
+        raw_json = resp.json() or {}
+        payload_data = raw_json.get("data")
+        if isinstance(payload_data, dict):
+            payload_data = payload_data.get("chain") or payload_data.get("strikes") or payload_data.get("data") or []
+        if not isinstance(payload_data, list) or not payload_data:
             return pd.DataFrame(), target_expiry
 
         rows = []
         resolved_expiry = target_expiry
         for item in payload_data:
-            if not resolved_expiry and item.get("expiry"):
-                resolved_expiry = str(item.get("expiry"))[:10]
+            if not isinstance(item, dict):
+                continue
+            if not resolved_expiry:
+                exp_val = item.get("expiry") or item.get("expiry_date")
+                if exp_val:
+                    resolved_expiry = str(exp_val)[:10]
 
-            strike = item.get("strike_price")
-            if strike is None:
+            strike = _safe_float(item.get("strike_price") if item.get("strike_price") is not None else item.get("strike"), 0.0)
+            if strike <= 0:
                 continue
 
-            ce = item.get("call_options") or {}
-            pe = item.get("put_options") or {}
-            ce_md = ce.get("market_data") or {}
-            pe_md = pe.get("market_data") or {}
-            ce_gk = ce.get("option_greeks") or {}
-            pe_gk = pe.get("option_greeks") or {}
+            ce = item.get("call_options") if isinstance(item.get("call_options"), dict) else {}
+            pe = item.get("put_options") if isinstance(item.get("put_options"), dict) else {}
+            ce_md = ce.get("market_data") if isinstance(ce.get("market_data"), dict) else {}
+            pe_md = pe.get("market_data") if isinstance(pe.get("market_data"), dict) else {}
+            ce_gk = ce.get("option_greeks") if isinstance(ce.get("option_greeks"), dict) else {}
+            pe_gk = pe.get("option_greeks") if isinstance(pe.get("option_greeks"), dict) else {}
+
+            ce_oi = _safe_int(ce_md.get("oi"), 0)
+            pe_oi = _safe_int(pe_md.get("oi"), 0)
+            ce_prev_oi = _safe_int(ce_md.get("prev_oi"), 0)
+            pe_prev_oi = _safe_int(pe_md.get("prev_oi"), 0)
 
             rows.append({
-                "strike": float(strike),
-                "ce_ltp": float(ce_md.get("ltp") or 0.0),
-                "ce_bid": float(ce_md.get("bid_price") or 0.0),
-                "ce_ask": float(ce_md.get("ask_price") or 0.0),
-                "ce_oi": int(ce_md.get("oi") or 0),
-                "ce_prev_oi": int(ce_md.get("prev_oi") or 0),
-                "ce_vol": int(ce_md.get("volume") or 0),
-                "ce_iv": float(ce_gk.get("iv") or ce.get("iv") or 0.0),
-                "ce_delta": float(ce_gk.get("delta") or 0.0),
-                "ce_theta": float(ce_gk.get("theta") or 0.0),
-                "pe_ltp": float(pe_md.get("ltp") or 0.0),
-                "pe_bid": float(pe_md.get("bid_price") or 0.0),
-                "pe_ask": float(pe_md.get("ask_price") or 0.0),
-                "pe_oi": int(pe_md.get("oi") or 0),
-                "pe_prev_oi": int(pe_md.get("prev_oi") or 0),
-                "pe_vol": int(pe_md.get("volume") or 0),
-                "pe_iv": float(pe_gk.get("iv") or pe.get("iv") or 0.0),
-                "pe_delta": float(pe_gk.get("delta") or 0.0),
-                "pe_theta": float(pe_gk.get("theta") or 0.0),
+                "strike": strike,
+                "ce_ltp": _safe_float(ce_md.get("ltp"), 0.0),
+                "ce_bid": _safe_float(ce_md.get("bid_price"), 0.0),
+                "ce_ask": _safe_float(ce_md.get("ask_price"), 0.0),
+                "ce_oi": ce_oi,
+                "ce_prev_oi": ce_prev_oi,
+                "ce_chg_oi": ce_oi - ce_prev_oi if ce_prev_oi > 0 else 0,
+                "ce_vol": _safe_int(ce_md.get("volume"), 0),
+                "ce_iv": _safe_float(ce_gk.get("iv") if ce_gk.get("iv") is not None else ce.get("iv"), 0.0),
+                "ce_delta": _safe_float(ce_gk.get("delta"), 0.0),
+                "ce_theta": _safe_float(ce_gk.get("theta"), 0.0),
+                "pe_ltp": _safe_float(pe_md.get("ltp"), 0.0),
+                "pe_bid": _safe_float(pe_md.get("bid_price"), 0.0),
+                "pe_ask": _safe_float(pe_md.get("ask_price"), 0.0),
+                "pe_oi": pe_oi,
+                "pe_prev_oi": pe_prev_oi,
+                "pe_chg_oi": pe_oi - pe_prev_oi if pe_prev_oi > 0 else 0,
+                "pe_vol": _safe_int(pe_md.get("volume"), 0),
+                "pe_iv": _safe_float(pe_gk.get("iv") if pe_gk.get("iv") is not None else pe.get("iv"), 0.0),
+                "pe_delta": _safe_float(pe_gk.get("delta"), 0.0),
+                "pe_theta": _safe_float(pe_gk.get("theta"), 0.0),
             })
 
         if not rows:
