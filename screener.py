@@ -14,7 +14,6 @@ from urllib.parse import quote
 import pandas as pd
 import requests
 import yfinance as yf
-logging.getLogger("yfinance").setLevel(logging.CRITICAL)
 
 try:
     from mcp import ClientSession
@@ -31,8 +30,6 @@ from config import (
     CAPITAL,
     CAPITAL_CONFIGURED,
     MAX_ALLOCATION_PCT,
-    MAX_PORTFOLIO_RISK_PCT,
-    MAX_SECTOR_POSITIONS,
     MIN_DAILY_TURNOVER_RS,
     MIS_LEVERAGE,
     MODE,
@@ -66,6 +63,7 @@ from universe import (
 )
 
 warnings.filterwarnings("ignore")
+logging.getLogger("yfinance").setLevel(logging.CRITICAL)
 logging.basicConfig(level=logging.INFO, format="%(asctime)s - %(levelname)s - %(message)s")
 
 IST = dt.timezone(dt.timedelta(hours=5, minutes=30))
@@ -648,19 +646,13 @@ def _fetch_yf_1y(symbol: str) -> pd.DataFrame | None:
 
     for ticker in candidates:
         try:
-            hist = yf.Ticker(ticker).history(period="1y", interval="1d", auto_adjust=False)
-            cleaned_hist = _clean_yf_duplicates(hist)
-            norm_hist = clean_ohlcv(cleaned_hist) if cleaned_hist is not None else None
-            if norm_hist is not None and len(norm_hist) >= 20:
-                return norm_hist
-
             df = yf.download(
                 ticker,
                 period="1y",
                 interval="1d",
                 progress=False,
                 threads=False,
-                timeout=6,
+                timeout=5,
                 auto_adjust=False,
                 group_by="column",
             )
@@ -671,7 +663,7 @@ def _fetch_yf_1y(symbol: str) -> pd.DataFrame | None:
         except Exception as exc:
             if _WARNED_YF_COUNT < 6:
                 _WARNED_YF_COUNT += 1
-                logging.warning("YF %s err: %s", ticker, exc)
+                logging.debug("YF %s err: %s", ticker, exc)
     return None
 
 
@@ -709,16 +701,6 @@ def load_candles_1y() -> tuple[dict[str, pd.DataFrame], str, dict[str, dict[str,
 
     live_quotes = _fetch_upstox_live_quotes(keys)
     live_overrides = _apply_live_quotes_to_candles(candles, live_quotes)
-
-    parts = []
-    if live_overrides:
-        parts.append(f"UPSTOX_LIVE({len(live_overrides)})")
-    if upstox_hits > 0:
-        parts.append("UPSTOX_V2")
-    if upstox_hits < len(candles):
-        parts.append("YFINANCE_1Y")
-    source_label = " + ".join(parts) + " (NSE+BSE)"
-    return candles, source_label, live_overrides
 
     parts = []
     if live_overrides:
@@ -1414,17 +1396,102 @@ def run_screener():
                 if setup:
                     bear_candidates.append(setup)
 
-    bull_candidates.sort(key=lambda x: (float(x.get("move_probability_pct") or 0.0), float(x.get("score") or 0.0)), reverse=True)
-    bear_candidates.sort(key=lambda x: (float(x.get("move_probability_pct") or 0.0), float(x.get("score") or 0.0)), reverse=True)
+    bull_candidates.sort(
+        key=lambda x: (float(x.get("move_probability_pct") or 0.0), float(x.get("score") or 0.0)),
+        reverse=True,
+    )
+    bear_candidates.sort(
+        key=lambda x: (float(x.get("move_probability_pct") or 0.0), float(x.get("score") or 0.0)),
+        reverse=True,
+    )
 
-    options_bullish = bull_candidates
-    options_bearish = bear_candidates
+    def _select_sector_balanced(pool: list[dict], limit: int, max_per_sector: int = 2) -> list[dict]:
+        picked: list[dict] = []
+        sector_counts: dict[str, int] = {}
+        for item in pool:
+            if len(picked) >= limit:
+                break
+            sec = str(item.get("sector") or "OTHER").strip().upper()
+            if sector_counts.get(sec, 0) < max_per_sector:
+                picked.append(item)
+                sector_counts[sec] = sector_counts.get(sec, 0) + 1
+        if len(picked) < limit:
+            already = {id(x) for x in picked}
+            for item in pool:
+                if len(picked) >= limit:
+                    break
+                if id(item) not in already:
+                    picked.append(item)
+                    already.add(id(item))
+        return picked
 
-    chosen_syms = {str(x.get("symbol") or "").upper() for x in (options_bullish + options_bearish)}
-    eq_pool = [x for x in (bull_candidates + bear_candidates) if str(x.get("symbol") or "").upper() not in chosen_syms]
-    intraday_bullish = [x for x in eq_pool if x.get("side") == "BULLISH"]
-    intraday_bearish = [x for x in eq_pool if x.get("side") != "BULLISH"]
+    # Strictly 10 Bullish + 10 Bearish Option Setups (20 total)
+    options_bullish = _select_sector_balanced(bull_candidates, limit=10, max_per_sector=2)
+    options_bearish = _select_sector_balanced(bear_candidates, limit=10, max_per_sector=2)
+
+    used_syms = {str(x.get("symbol") or "").upper() for x in (options_bullish + options_bearish)}
+
+    eq_bull_pool = [
+        x for x in bull_candidates
+        if str(x.get("symbol") or "").upper() not in used_syms
+    ]
+    eq_bear_pool = [
+        x for x in bear_candidates
+        if str(x.get("symbol") or "").upper() not in used_syms
+    ]
+
+    # Strictly 20 Equity Setups: 10 Bullish + 10 Bearish (sector-wise balanced)
+    intraday_bullish = _select_sector_balanced(eq_bull_pool, limit=10, max_per_sector=2)
+    intraday_bearish = _select_sector_balanced(eq_bear_pool, limit=10, max_per_sector=2)
     equity_intraday = intraday_bullish + intraday_bearish
+
+    # Full rank-ordered and sector-grouped list for all analyzed stocks
+    all_evaluated_stocks: list[dict[str, Any]] = []
+    seen_eval_syms: set[str] = set()
+    for item in (bull_candidates + bear_candidates):
+        sym_key = str(item.get("symbol") or "").strip().upper()
+        if sym_key and sym_key not in seen_eval_syms:
+            seen_eval_syms.add(sym_key)
+            all_evaluated_stocks.append(dict(item))
+
+    all_evaluated_stocks.sort(
+        key=lambda x: (
+            float(x.get("move_probability_pct") or 0.0),
+            float(x.get("score") or 0.0),
+        ),
+        reverse=True,
+    )
+
+    top_40_syms = {
+        str(x.get("symbol") or "").strip().upper()
+        for x in (options_bullish + options_bearish + equity_intraday)
+    }
+
+    ranked_stocks: list[dict[str, Any]] = []
+    stocks_by_sector: dict[str, list[dict[str, Any]]] = {}
+
+    for idx_pos, st_item in enumerate(all_evaluated_stocks, start=1):
+        sym_u = str(st_item.get("symbol") or "").strip().upper()
+        sec_u = str(st_item.get("sector") or "OTHER").strip().upper()
+        entry_rec = {
+            "rank": idx_pos,
+            "is_top_40": sym_u in top_40_syms,
+            "symbol": sym_u,
+            "sector": sec_u,
+            "side": st_item.get("side"),
+            "score": st_item.get("score"),
+            "move_probability_pct": st_item.get("move_probability_pct"),
+            "entry": st_item.get("entry"),
+            "stop_loss": st_item.get("stop_loss"),
+            "pa_target_1": st_item.get("pa_target_1"),
+            "pa_target_2": st_item.get("pa_target_2"),
+            "oi_target": st_item.get("oi_target"),
+            "immediate_support": st_item.get("immediate_support"),
+            "immediate_resistance": st_item.get("immediate_resistance"),
+            "change_pct": st_item.get("change_pct"),
+        }
+        ranked_stocks.append(entry_rec)
+        stocks_by_sector.setdefault(sec_u, []).append(entry_rec)
 
     index_trades = _build_index_trades(candles, live_overrides=live_overrides)
     smartlists = build_upstox_smartlists_and_movers(candles, live_overrides=live_overrides)
@@ -1461,6 +1528,7 @@ def run_screener():
             "ideas_count": total_ideas,
             "stock_setups_count": stock_setups_count,
             "fo_stocks_analyzed": len(fo_stocks_syms),
+            "total_ranked_stocks": len(ranked_stocks),
             "breadth_tone": breadth_tone,
             "data_source": data_source,
             "nifty_spot": n_spot,
@@ -1493,6 +1561,8 @@ def run_screener():
         "equity_intraday": equity_intraday,
         "intraday_bullish": intraday_bullish,
         "intraday_bearish": intraday_bearish,
+        "ranked_stocks": ranked_stocks,
+        "stocks_by_sector": stocks_by_sector,
     }
 
     eval_summary = evaluate_signals_chronologically(candles_by_symbol=candles)
@@ -1504,12 +1574,10 @@ def run_screener():
 
     send_alert(payload)
     logging.info(
-        "Dispatched %d total ideas (%d stock setups: %dB/%dS opt + %d eq across %d F&O stocks) using %s",
+        "Dispatched %d total ideas (%d top setups + %d ranked stocks across %d F&O stocks) using %s",
         total_ideas,
         stock_setups_count,
-        len(options_bullish),
-        len(options_bearish),
-        len(equity_intraday),
+        len(ranked_stocks),
         len(fo_stocks_syms),
         data_source,
     )
