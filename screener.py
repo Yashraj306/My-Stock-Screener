@@ -14,6 +14,7 @@ from urllib.parse import quote
 import pandas as pd
 import requests
 import yfinance as yf
+logging.getLogger("yfinance").setLevel(logging.CRITICAL)
 
 try:
     from mcp import ClientSession
