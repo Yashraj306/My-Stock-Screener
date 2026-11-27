@@ -9,9 +9,13 @@ on:
   workflow_dispatch:
     inputs:
       mode:
-        description: "Screener mode (MORNING or BTST)"
-        required: false
+        description: "Screener mode"
+        type: choice
+        required: true
         default: "BTST"
+        options:
+          - BTST
+          - MORNING
 
 concurrency:
   group: market-screener-automation
