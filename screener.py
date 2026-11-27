@@ -47,7 +47,7 @@ from market import (
 from notify import send_alert
 from option_strategy import select_option_strategy
 from options_data import chain_upstox
-from setups import position_size
+from setups import btst_rally_score, position_size
 from tech import clean_ohlcv, compute_indicators
 from tracker import evaluate_signals_chronologically, log_signals, walk_forward_summary
 from universe import BSE_STOCKS_UNIVERSE, LOT_SIZES, STOCKS_UNIVERSE, eq_keys
@@ -62,6 +62,7 @@ UPSTOX_ACCESS_TOKEN = (
     or ""
 ).strip()
 UPSTOX_BASE_V2 = "https://api.upstox.com/v2"
+RUN_MODE = (os.getenv("MODE") or MODE or "BTST").strip().upper()
 
 NSE_BHAVCOPY_MCP_URL = os.getenv(
     "NSE_BHAVCOPY_MCP_URL",
@@ -92,6 +93,15 @@ _BSE_SET = set(BSE_STOCKS_UNIVERSE)
 _WARNED_UPSTOX_KEYS: set[str] = set()
 _WARNED_YF_COUNT = 0
 _WARNED_MCP_COUNT = 0
+
+
+def _passes_liquidity_and_movement_filter(close: float, atr: float, avg_turnover: float) -> bool:
+    if avg_turnover < MIN_DAILY_TURNOVER_RS:
+        return False
+    if close <= 0 or atr <= 0:
+        return False
+    atr_pct = (atr / close) * 100.0
+    return (atr >= 15.0) or (atr_pct >= 1.2)
 
 
 def _has_option_chain_support(symbol: str, chain_bundle: dict | None = None) -> bool:
@@ -195,7 +205,6 @@ def _compute_avg_daily_range_rs(df: pd.DataFrame, lookback: int = 14) -> float:
 
 
 def _compute_close_position_ratio(df: pd.DataFrame, close: float) -> float:
-    """How close the current/last price is to the day's high (0.0 = low, 1.0 = high)."""
     if df is None or getattr(df, "empty", True):
         return 0.5
     last_row = df.iloc[-1]
@@ -258,74 +267,6 @@ def call_nse_mcp_tool(url: str, tool_name: str, arguments: dict[str, Any] | None
             _WARNED_MCP_COUNT += 1
             logging.debug("NSE MCP call failed (%s): %s", tool_name, exc)
         return None
-
-
-def _extract_rows_from_mcp_payload(payload: Any) -> list[dict[str, Any]]:
-    if isinstance(payload, list):
-        return [r for r in payload if isinstance(r, dict)]
-    if isinstance(payload, dict):
-        for key in ("data", "records", "candles", "history", "rows", "items", "result"):
-            val = payload.get(key)
-            if isinstance(val, list):
-                return [r for r in val if isinstance(r, dict)]
-    return []
-
-
-def _fetch_nse_mcp_bhavcopy_1y(symbol: str) -> pd.DataFrame | None:
-    if not ENABLE_NSE_MCP or not _MCP_AVAILABLE or symbol in _BSE_SET:
-        return None
-    if symbol in {"NIFTY", "BANKNIFTY", "FINNIFTY", "SENSEX"}:
-        return None
-
-    end_dt = dt.datetime.now(IST).date()
-    start_dt = end_dt - dt.timedelta(days=370)
-    cur_end = end_dt
-    all_rows: list[dict[str, Any]] = []
-
-    for _ in range(3):
-        chunk_start = max(start_dt, cur_end - dt.timedelta(days=120))
-        data = call_nse_mcp_tool(
-            NSE_BHAVCOPY_MCP_URL,
-            "get_stock_history",
-            {
-                "symbol": symbol,
-                "startDate": chunk_start.isoformat(),
-                "endDate": cur_end.isoformat(),
-            },
-        )
-        rows = _extract_rows_from_mcp_payload(data)
-        if not rows:
-            break
-        all_rows.extend(rows)
-        cur_end = chunk_start - dt.timedelta(days=1)
-        if cur_end <= start_dt:
-            break
-
-    if not all_rows:
-        return None
-
-    norm_rows = []
-    for r in all_rows:
-        dt_val = r.get("Date") or r.get("date") or r.get("CH_TIMESTAMP") or r.get("timestamp")
-        o_val = r.get("Open") if r.get("Open") is not None else (r.get("open") if r.get("open") is not None else r.get("CH_OPENING_PRICE"))
-        h_val = r.get("High") if r.get("High") is not None else (r.get("high") if r.get("high") is not None else r.get("CH_TRADE_HIGH_PRICE"))
-        l_val = r.get("Low") if r.get("Low") is not None else (r.get("low") if r.get("low") is not None else r.get("CH_TRADE_LOW_PRICE"))
-        c_val = r.get("Close") if r.get("Close") is not None else (r.get("close") if r.get("close") is not None else r.get("CH_CLOSING_PRICE"))
-        v_val = r.get("Volume") if r.get("Volume") is not None else (r.get("volume") if r.get("volume") is not None else r.get("CH_TOT_TRADED_QTY"))
-        if dt_val and c_val is not None:
-            norm_rows.append({
-                "Date": str(dt_val)[:10],
-                "Open": o_val if o_val is not None else c_val,
-                "High": h_val if h_val is not None else c_val,
-                "Low": l_val if l_val is not None else c_val,
-                "Close": c_val,
-                "Volume": v_val if v_val is not None else 0,
-            })
-
-    cleaned = clean_ohlcv(pd.DataFrame(norm_rows))
-    if cleaned is not None and len(cleaned) >= 20:
-        return cleaned
-    return None
 
 
 def _fetch_nse_mcp_live_snapshot() -> dict[str, Any]:
@@ -542,6 +483,11 @@ def _apply_live_quotes_to_candles(
 
         applied[sym] = {
             "close": round(ltp, 2),
+            "open": round(o_px, 2),
+            "high": round(h_px, 2),
+            "low": round(l_px, 2),
+            "prev_close": round(prev_c, 2),
+            "volume": vol,
             "change_pct": round(chg_pct, 2),
             "vwap": float(q.get("vwap") or 0.0),
         }
@@ -553,19 +499,11 @@ def _fetch_yf_1y(symbol: str) -> pd.DataFrame | None:
     global _WARNED_YF_COUNT
     primary_ticker = _yf_ticker(symbol)
     try:
-        df = yf.download(
-            primary_ticker,
-            period="1y",
-            interval="1d",
-            progress=False,
-            threads=False,
-            timeout=6,
-            auto_adjust=False,
-        )
-        cleaned_raw = _clean_yf_duplicates(df)
-        norm_dl = clean_ohlcv(cleaned_raw) if cleaned_raw is not None else None
-        if norm_dl is not None and len(norm_dl) >= 20:
-            return norm_dl
+        hist = yf.Ticker(primary_ticker).history(period="1y", interval="1d", auto_adjust=False)
+        cleaned_hist = _clean_yf_duplicates(hist)
+        norm_hist = clean_ohlcv(cleaned_hist) if cleaned_hist is not None else None
+        if norm_hist is not None and len(norm_hist) >= 20:
+            return norm_hist
     except Exception as exc:
         if _WARNED_YF_COUNT < 6:
             _WARNED_YF_COUNT += 1
@@ -577,7 +515,6 @@ def load_candles_1y() -> tuple[dict[str, pd.DataFrame], str, dict[str, dict[str,
     keys = eq_keys()
     candles: dict[str, pd.DataFrame] = {}
     upstox_hits = 0
-    mcp_hits = 0
 
     def _worker(sym: str):
         df = _fetch_upstox_1y(keys.get(sym, ""), symbol=sym)
@@ -586,10 +523,6 @@ def load_candles_1y() -> tuple[dict[str, pd.DataFrame], str, dict[str, dict[str,
         yf_df = _fetch_yf_1y(sym)
         if yf_df is not None and not yf_df.empty:
             return sym, yf_df, "YF"
-        if ENABLE_NSE_MCP:
-            mcp_df = _fetch_nse_mcp_bhavcopy_1y(sym)
-            if mcp_df is not None and not mcp_df.empty:
-                return sym, mcp_df, "NSE_MCP"
         return sym, None, "NONE"
 
     with ThreadPoolExecutor(max_workers=12) as pool:
@@ -598,8 +531,6 @@ def load_candles_1y() -> tuple[dict[str, pd.DataFrame], str, dict[str, dict[str,
                 candles[sym] = df
                 if src == "UPSTOX":
                     upstox_hits += 1
-                elif src == "NSE_MCP":
-                    mcp_hits += 1
 
     live_quotes = _fetch_upstox_live_quotes(keys)
     live_overrides = _apply_live_quotes_to_candles(candles, live_quotes)
@@ -609,531 +540,159 @@ def load_candles_1y() -> tuple[dict[str, pd.DataFrame], str, dict[str, dict[str,
         parts.append(f"UPSTOX_LIVE({len(live_overrides)})")
     if upstox_hits > 0:
         parts.append("UPSTOX_V2")
-    if mcp_hits > 0:
-        parts.append(f"NSE_MCP({mcp_hits})")
-    if not parts or (upstox_hits + mcp_hits) < len(candles):
+    if upstox_hits < len(candles):
         parts.append("YFINANCE_1Y")
     source_label = " + ".join(parts) + " (NSE+BSE)"
     return candles, source_label, live_overrides
 
 
-def _pick_col(df: pd.DataFrame, candidates: list[str]) -> str | None:
-    lower_map = {str(c).strip().lower(): c for c in df.columns}
-    for cand in candidates:
-        key = cand.strip().lower()
-        if key in lower_map:
-            return lower_map[key]
-    for c in df.columns:
-        cl = str(c).strip().lower()
-        for cand in candidates:
-            if cand.strip().lower() in cl:
-                return c
-    return None
+def _compute_intraday_gap_and_orb(
+    sym: str,
+    q: dict[str, Any],
+    df: pd.DataFrame | None,
+    nifty_gap_pct: float = 0.0,
+    confirm_orb_15m: bool = False,
+) -> dict[str, Any]:
+    prev_close = float(q.get("prev_close") or 0.0)
+    open_px = float(q.get("open") or 0.0)
+    high_px = float(q.get("high") or 0.0)
+    low_px = float(q.get("low") or 0.0)
+    ltp = float(q.get("ltp") or open_px or 0.0)
+    vol = float(q.get("volume") or 0.0)
 
+    if prev_close <= 0 and df is not None and len(df) >= 2:
+        prev_close = float(pd.to_numeric(df["Close"], errors="coerce").iloc[-2])
 
-def _build_session_guardrails(now_ist: dt.datetime) -> dict:
-    hm = now_ist.hour * 60 + now_ist.minute
-    in_calibration = (9 * 60 + 15) <= hm <= (9 * 60 + 25)
-    after_cutoff = hm >= (14 * 60 + 30)
-    in_optimal_window = (10 * 60) <= hm <= (11 * 60)
+    prev_high = 0.0
+    prev_low = 0.0
+    avg_vol = 0.0
+    if df is not None and not df.empty:
+        hist_slice = df.iloc[:-1] if len(df) > 1 else df
+        if not hist_slice.empty:
+            prev_high = float(pd.to_numeric(hist_slice["High"], errors="coerce").iloc[-1])
+            prev_low = float(pd.to_numeric(hist_slice["Low"], errors="coerce").iloc[-1])
+            avg_vol = float(pd.to_numeric(hist_slice["Volume"], errors="coerce").tail(20).mean() or 0.0)
 
-    if in_calibration:
-        window_status = "CALIBRATION (9:15–9:25 AM)"
-        window_note = "9:15–9:25 AM calibration phase: observe opening stabilization before placing orders."
-    elif after_cutoff:
-        window_status = "POST-2:30 PM CUTOFF"
-        window_note = "After 2:30 PM cutoff: avoid fresh intraday option buying due to late-session theta decay."
-    elif in_optimal_window:
-        window_status = "OPTIMAL WINDOW (10:00–11:00 AM)"
-        window_note = "10:00–11:00 AM window: Greeks and liquidity typically stabilize after opening range."
-    else:
-        window_status = "STANDARD SESSION"
-        window_note = "Check WTT/WTB shift %, EOS/EOR levels, and implied volatility before entry."
+    gap_pct = round(((open_px - prev_close) / prev_close) * 100.0, 2) if (prev_close > 0 and open_px > 0) else 0.0
+    open_eq_high = bool(open_px > 0 and high_px > 0 and abs(open_px - high_px) <= max(open_px * 0.0005, 0.05))
+    open_eq_low = bool(open_px > 0 and low_px > 0 and abs(open_px - low_px) <= max(open_px * 0.0005, 0.05))
+    broke_prev_high = bool(prev_high > 0 and max(high_px, ltp) > prev_high)
+    broke_prev_low = bool(prev_low > 0 and min(low_px if low_px > 0 else ltp, ltp) < prev_low)
 
-    return {
-        "window_status": window_status,
-        "window_note": window_note,
-        "in_calibration": in_calibration,
-        "after_cutoff": after_cutoff,
-        "in_optimal_window": in_optimal_window,
-        "rules": [
-            "9:15–9:25 AM: Initial calibration window; verify strike & OI stabilization.",
-            "2:30 PM onwards: Cutoff rule for fresh intraday option buying & late-session risk.",
-            "WTT / WTB: Secondary strike ratio approaching 100% signals structural shift; reversal if ratio decays.",
-            "Dynamic SL: Anchor stop-loss to option structure/invalidations rather than fixed arbitrary points.",
-        ],
-    }
+    expected_1m_vol = (avg_vol / 375.0) if avg_vol > 0 else 0.0
+    first_min_vol_ratio = round(vol / expected_1m_vol, 2) if expected_1m_vol > 0 else 0.0
 
+    side = None
+    if (0.3 <= gap_pct <= 2.0) and open_eq_low and (nifty_gap_pct >= 0.0):
+        side = "BULLISH"
+    elif (-2.0 <= gap_pct <= -0.3) and open_eq_high and (nifty_gap_pct <= 0.0):
+        side = "BEARISH"
 
-def _build_option_chain_analytics(chain_df: Any, spot: float, lot_size: int = 1) -> dict:
-    empty_res = {
-        "rows": [],
-        "strong_support": None,
-        "weak_support": None,
-        "strong_resistance": None,
-        "weak_resistance": None,
-        "support_shift": "STRONG",
-        "resistance_shift": "STRONG",
-        "support_shift_pct": 0.0,
-        "resistance_shift_pct": 0.0,
-        "sentiment_state": "NEUTRAL / NO CHAIN",
-        "eos": None,
-        "eor": None,
-        "eos_minus_1": None,
-        "eos_plus_1": None,
-        "eor_minus_1": None,
-        "eor_plus_1": None,
-    }
-    if chain_df is None or getattr(chain_df, "empty", True):
-        return empty_res
+    orb_confirmed = False
+    if side == "BULLISH":
+        orb_confirmed = bool(ltp > high_px or broke_prev_high) and (ltp >= open_px)
+    elif side == "BEARISH":
+        orb_confirmed = bool(ltp < low_px or broke_prev_low) and (ltp <= open_px)
 
-    df = chain_df.copy()
-    strike_col = _pick_col(df, ["strike", "strike_price", "strikePrice"])
-    ce_oi_col = _pick_col(df, ["ce_oi", "call_oi", "ceOi", "oi_ce"])
-    pe_oi_col = _pick_col(df, ["pe_oi", "put_oi", "peOi", "oi_pe"])
-    ce_chg_col = _pick_col(df, ["ce_chg_oi", "ce_oi_chg", "call_oi_change", "ceChgOi", "chg_oi_ce"])
-    pe_chg_col = _pick_col(df, ["pe_chg_oi", "pe_oi_chg", "put_oi_change", "peChgOi", "chg_oi_pe"])
-    ce_ltp_col = _pick_col(df, ["ce_ltp", "call_ltp", "ceLtp", "ltp_ce"])
-    pe_ltp_col = _pick_col(df, ["pe_ltp", "put_ltp", "peLtp", "ltp_pe"])
-    ce_vol_col = _pick_col(df, ["ce_vol", "ce_volume", "call_volume", "ceVol"])
-    pe_vol_col = _pick_col(df, ["pe_vol", "pe_volume", "put_volume", "peVol"])
-
-    if not strike_col:
-        return empty_res
-
-    eff_lot = max(int(lot_size or 1), 1)
-    rows: list[dict] = []
-
-    for _, r in df.iterrows():
-        try:
-            strike = float(r[strike_col])
-        except (TypeError, ValueError):
-            continue
-        if strike <= 0:
-            continue
-
-        def _f(col):
-            if not col:
-                return 0.0
-            try:
-                v = float(r[col])
-                return 0.0 if pd.isna(v) else v
-            except (TypeError, ValueError):
-                return 0.0
-
-        ce_oi = _f(ce_oi_col)
-        pe_oi = _f(pe_oi_col)
-        ce_chg = _f(ce_chg_col)
-        pe_chg = _f(pe_chg_col)
-        ce_ltp = _f(ce_ltp_col)
-        pe_ltp = _f(pe_ltp_col)
-        ce_vol = _f(ce_vol_col)
-        pe_vol = _f(pe_vol_col)
-
-        prev_ce_oi = max(ce_oi - ce_chg, 1.0)
-        prev_pe_oi = max(pe_oi - pe_chg, 1.0)
-        ce_chg_pct = round((ce_chg / prev_ce_oi) * 100.0, 1) if ce_oi > 0 else 0.0
-        pe_chg_pct = round((pe_chg / prev_pe_oi) * 100.0, 1) if pe_oi > 0 else 0.0
-
-        ce_contracts = int(round(ce_chg / eff_lot)) if eff_lot > 1 else int(round(ce_chg))
-        pe_contracts = int(round(pe_chg / eff_lot)) if eff_lot > 1 else int(round(pe_chg))
-
-        rows.append({
-            "strike": round(strike, 2),
-            "is_atm": False,
-            "ce_oi": int(round(ce_oi)),
-            "pe_oi": int(round(pe_oi)),
-            "ce_chg_oi": int(round(ce_chg)),
-            "pe_chg_oi": int(round(pe_chg)),
-            "ce_chg_pct": ce_chg_pct,
-            "pe_chg_pct": pe_chg_pct,
-            "ce_contracts": ce_contracts,
-            "pe_contracts": pe_contracts,
-            "ce_ltp": round(ce_ltp, 2),
-            "pe_ltp": round(pe_ltp, 2),
-            "ce_vol": int(round(ce_vol)),
-            "pe_vol": int(round(pe_vol)),
-            "pe_strength_pct": 0.0,
-            "ce_strength_pct": 0.0,
-        })
-
-    rows.sort(key=lambda x: x["strike"])
-    if not rows:
-        return empty_res
-
-    closest_idx = min(range(len(rows)), key=lambda i: abs(rows[i]["strike"] - spot))
-    rows[closest_idx]["is_atm"] = True
-
-    strike_step = 50.0
-    if len(rows) >= 2:
-        diffs = [
-            round(rows[i + 1]["strike"] - rows[i]["strike"], 2)
-            for i in range(len(rows) - 1)
-            if rows[i + 1]["strike"] > rows[i]["strike"]
-        ]
-        if diffs:
-            strike_step = float(pd.Series(diffs).median())
-
-    max_pe_row = max(rows, key=lambda x: x["pe_oi"])
-    max_ce_row = max(rows, key=lambda x: x["ce_oi"])
-    strong_sup = max_pe_row["strike"] if max_pe_row["pe_oi"] > 0 else None
-    strong_res = max_ce_row["strike"] if max_ce_row["ce_oi"] > 0 else None
-
-    base_pe = max(float(max_pe_row["pe_oi"]), 1.0)
-    base_ce = max(float(max_ce_row["ce_oi"]), 1.0)
-
-    for r in rows:
-        r["pe_strength_pct"] = round((r["pe_oi"] / base_pe) * 100.0, 1) if max_pe_row["pe_oi"] > 0 else 0.0
-        r["ce_strength_pct"] = round((r["ce_oi"] / base_ce) * 100.0, 1) if max_ce_row["ce_oi"] > 0 else 0.0
-
-    other_pe = [r for r in rows if r["strike"] != strong_sup and r["pe_oi"] > 0]
-    weak_sup_row = max(other_pe, key=lambda x: x["pe_oi"]) if other_pe else None
-    weak_sup = weak_sup_row["strike"] if weak_sup_row else None
-    sup_shift_pct = weak_sup_row["pe_strength_pct"] if weak_sup_row else 0.0
-
-    support_shift = "STRONG"
-    if weak_sup is not None and strong_sup is not None and sup_shift_pct >= 65.0:
-        if weak_sup > strong_sup:
-            support_shift = "WTT"
-        elif weak_sup < strong_sup:
-            support_shift = "WTB"
-
-    other_ce = [r for r in rows if r["strike"] != strong_res and r["ce_oi"] > 0]
-    weak_res_row = max(other_ce, key=lambda x: x["ce_oi"]) if other_ce else None
-    weak_res = weak_res_row["strike"] if weak_res_row else None
-    res_shift_pct = weak_res_row["ce_strength_pct"] if weak_res_row else 0.0
-
-    resistance_shift = "STRONG"
-    if weak_res is not None and strong_res is not None and res_shift_pct >= 65.0:
-        if weak_res > strong_res:
-            resistance_shift = "WTT"
-        elif weak_res < strong_res:
-            resistance_shift = "WTB"
-
-    sup_ltp = float(max_pe_row["pe_ltp"] or 0.0)
-    res_ltp = float(max_ce_row["ce_ltp"] or 0.0)
-    eos = round(strong_sup - sup_ltp, 2) if strong_sup is not None else None
-    eor = round(strong_res + res_ltp, 2) if strong_res is not None else None
-
-    eos_minus_1 = round(eos - strike_step, 2) if eos is not None else None
-    eos_plus_1 = round(eos + strike_step, 2) if eos is not None else None
-    eor_minus_1 = round(eor - strike_step, 2) if eor is not None else None
-    eor_plus_1 = round(eor + strike_step, 2) if eor is not None else None
-
-    for r in rows:
-        st = r["strike"]
-        role = "NEUTRAL"
-        impact = "Balanced strike flow; monitor OI buildup around spot."
-
-        if strong_sup is not None and st == strong_sup:
-            role = "STRONG_SUPPORT"
-            impact = f"Strong Support ({r['pe_chg_pct']:+.1f}% OI chg, {r['pe_contracts']:+,} cntr): primary floor; EOS ~ {eos}."
-        elif strong_res is not None and st == strong_res:
-            role = "STRONG_RESISTANCE"
-            impact = f"Strong Resistance ({r['ce_chg_pct']:+.1f}% OI chg, {r['ce_contracts']:+,} cntr): primary ceiling; EOR ~ {eor}."
-        elif weak_sup is not None and st == weak_sup and r["pe_strength_pct"] >= 65.0:
-            role = "WEAK_SUPPORT"
-            dir_lbl = "WTT (upward shift)" if st > (strong_sup or st) else "WTB (downward shift)"
-            impact = f"Weak Support / {dir_lbl} at {r['pe_strength_pct']:.1f}% of peak ({r['pe_chg_oi']:+,} OI): watch 100% shift or unwind."
-        elif weak_res is not None and st == weak_res and r["ce_strength_pct"] >= 65.0:
-            role = "WEAK_RESISTANCE"
-            dir_lbl = "WTT (upward shift)" if st > (strong_res or st) else "WTB (downward shift)"
-            impact = f"Weak Resistance / {dir_lbl} at {r['ce_strength_pct']:.1f}% of peak ({r['ce_chg_oi']:+,} OI): watch breakout or shift."
-        elif r["pe_chg_oi"] < 0 and abs(r["pe_chg_pct"]) >= 15.0:
-            impact = f"Put unwinding ({r['pe_chg_pct']:+.1f}%): support weakening near {st}."
-        elif r["ce_chg_oi"] < 0 and abs(r["ce_chg_pct"]) >= 15.0:
-            impact = f"Call unwinding ({r['ce_chg_pct']:+.1f}%): resistance easing near {st}."
-
-        r["zone_role"] = role
-        r["impact_note"] = impact
-
-    if support_shift == "WTT" and resistance_shift in {"WTT", "STRONG"}:
-        sentiment_state = "BULLISH / WTT PRESSURE"
-    elif support_shift == "WTB" or resistance_shift == "WTB":
-        sentiment_state = "BEARISH / WTB PRESSURE"
-    elif support_shift != "STRONG" and resistance_shift != "STRONG" and support_shift != resistance_shift:
-        sentiment_state = "STATE OF CONFUSION (SOC)"
-    else:
-        sentiment_state = "RANGE-BOUND (EOS–EOR)"
-
-    start_i = max(0, closest_idx - 15)
-    end_i = min(len(rows), closest_idx + 16)
-    trimmed_rows = rows[start_i:end_i]
+    signal_state = "CONFIRMED" if (confirm_orb_15m and orb_confirmed) else "WATCHLIST"
+    gap_score = round(
+        (abs(gap_pct) * 20.0)
+        + (20.0 if (broke_prev_high or broke_prev_low) else 0.0)
+        + min(first_min_vol_ratio * 5.0, 25.0),
+        2,
+    )
 
     return {
-        "rows": trimmed_rows,
-        "strong_support": strong_sup,
-        "weak_support": weak_sup,
-        "strong_resistance": strong_res,
-        "weak_resistance": weak_res,
-        "support_shift": support_shift,
-        "resistance_shift": resistance_shift,
-        "support_shift_pct": sup_shift_pct,
-        "resistance_shift_pct": res_shift_pct,
-        "sentiment_state": sentiment_state,
-        "strike_step": strike_step,
-        "eos": eos,
-        "eor": eor,
-        "eos_minus_1": eos_minus_1,
-        "eos_plus_1": eos_plus_1,
-        "eor_minus_1": eor_minus_1,
-        "eor_plus_1": eor_plus_1,
+        "symbol": sym,
+        "gap_pct": gap_pct,
+        "open_eq_high": open_eq_high,
+        "open_eq_low": open_eq_low,
+        "broke_prev_high": broke_prev_high,
+        "broke_prev_low": broke_prev_low,
+        "first_min_vol_ratio": first_min_vol_ratio,
+        "nifty_gap_pct": round(nifty_gap_pct, 2),
+        "gap_side": side,
+        "orb_confirmed": orb_confirmed,
+        "signal_state": signal_state,
+        "gap_score": gap_score,
     }
 
 
-def _compute_oi_target(chain_summary: dict | None, entry: float, is_bull: bool) -> float | None:
-    if not chain_summary or not chain_summary.get("chain_available") or entry <= 0:
-        return None
-    sup = chain_summary.get("support_strike")
-    res = chain_summary.get("resistance_strike")
-    if sup is not None and res is not None and float(sup) == float(res):
-        return None
+def _select_option_leg_1pct_risk(
+    symbol: str,
+    side: str,
+    spot: float,
+    chain_df: pd.DataFrame | None,
+    expiry: str | None,
+    lot_size: int,
+) -> dict[str, Any]:
+    today_str = dt.datetime.now(IST).date().isoformat()
+    if expiry and str(expiry).strip()[:10] == today_str:
+        return {"available": False, "reason": "SKIP_EXPIRY_DAY", "lot_size": lot_size}
+    if chain_df is None or getattr(chain_df, "empty", True) or spot <= 0 or lot_size <= 0:
+        return {"available": False, "reason": "NO_CHAIN_OR_LOT", "lot_size": lot_size}
+
+    max_risk_cap = float(CAPITAL) * float(RISK_PCT) if CAPITAL_CONFIGURED else 0.0
+    max_alloc_cap = float(CAPITAL) * float(MAX_ALLOCATION_PCT) if CAPITAL_CONFIGURED else 0.0
+    is_ce = str(side).upper() in {"CE", "BULLISH", "BUY CALL (CE)"}
+    p = "ce" if is_ce else "pe"
+
     candidates = []
-    for key in ("resistance_strike", "support_strike", "max_pain"):
-        val = chain_summary.get(key)
-        try:
-            fval = float(val)
-            if fval > 0:
-                candidates.append(fval)
-        except (TypeError, ValueError):
+    for _, r in chain_df.iterrows():
+        strike = float(r.get("strike") or 0.0)
+        ltp = float(r.get(f"{p}_ltp") or 0.0)
+        bid = float(r.get(f"{p}_bid") or 0.0)
+        ask = float(r.get(f"{p}_ask") or 0.0)
+        oi = int(r.get(f"{p}_oi") or 0)
+        prev_oi = int(r.get(f"{p}_prev_oi") or 0)
+        if strike <= 0 or ltp <= 0:
             continue
-    if is_bull:
-        ahead = [x for x in candidates if x > entry]
-        return round(min(ahead), 2) if ahead else None
-    below = [x for x in candidates if x < entry]
-    return round(max(below), 2) if below else None
-
-
-def _select_capped_items(
-    items: list[dict],
-    max_items: int,
-    enforce_risk_cap: bool = True,
-    excluded_symbols: set[str] | None = None,
-) -> list[dict]:
-    selected: list[dict] = []
-    seen_syms: set[str] = set()
-    excluded = {str(s).strip().upper() for s in (excluded_symbols or set())}
-    sector_counts: dict[str, int] = {}
-    total_risk = 0.0
-    portfolio_risk_cap = CAPITAL * MAX_PORTFOLIO_RISK_PCT if (CAPITAL_CONFIGURED and enforce_risk_cap) else float("inf")
-
-    for item in items:
-        if len(selected) >= max_items:
-            break
-        sym = str(item.get("symbol") or "").strip().upper()
-        if not sym or sym in seen_syms or sym in excluded:
+        if oi <= prev_oi:
             continue
-        sec = str(item.get("sector") or "OTHER").upper()
-        if sector_counts.get(sec, 0) >= max(MAX_SECTOR_POSITIONS, 2):
-            continue
-        trade_risk = float(item.get("max_risk") or 0.0)
-        if enforce_risk_cap and CAPITAL_CONFIGURED and trade_risk > 0 and (total_risk + trade_risk) > portfolio_risk_cap:
-            continue
-        selected.append(item)
-        seen_syms.add(sym)
-        sector_counts[sec] = sector_counts.get(sec, 0) + 1
-        total_risk += trade_risk
-    return selected
-
-
-def _load_previous_morning_equity_symbols(session_date: str, current_mode: str, base_dir: str = "docs/data") -> set[str]:
-    if str(current_mode or "").upper() != "BTST":
-        return set()
-    used: set[str] = set()
-    history_dir = Path(base_dir) / "history"
-    if not history_dir.exists():
-        return used
-
-    candidates = [
-        history_dir / f"{session_date}_MORNING.json",
-        history_dir / f"{session_date}.json",
-    ]
-    for p in candidates:
-        if not p.exists():
-            continue
-        try:
-            raw = json.loads(p.read_text(encoding="utf-8"))
-            if p.name == f"{session_date}.json" and str(raw.get("mode") or "").upper() != "MORNING":
+        if bid > 0 and ask >= bid:
+            spread_pct = ((ask - bid) / ask) * 100.0
+            if spread_pct > 2.0:
                 continue
-            for item in (raw.get("equity_intraday") or []):
-                sym = str((item or {}).get("symbol") or "").strip().upper()
-                if sym:
-                    used.add(sym)
-        except Exception:
+        if is_ce and strike > spot:
             continue
-    return used
-
-
-def _btst_gapup_score(item: dict) -> float:
-    """Dedicated BTST scoring: prioritizes stocks likely to gap-up or make a big overnight move."""
-    chg = float(item.get("change_pct") or 0.0)
-    rng = abs(float(item.get("avg_range_rs") or 0.0))
-    rsi = float(item.get("rsi") or 50.0)
-    vol = float(item.get("vol_ratio") or 1.0)
-    close_pos = float(item.get("close_pos_ratio") or 0.5)
-    has_oc = 1.0 if item.get("has_option_chain") else 0.0
-    sent = str(((item.get("chain_analytics") or {}).get("sentiment_state")) or "").upper()
-
-    gapup_flag = 1.0 if (
-        chg >= 0.8
-        and close_pos >= 0.60
-        and vol >= 1.0
-        and 50.0 <= rsi <= 78.0
-    ) else 0.0
-
-    oc_bull_bonus = 10.0 if ("BULLISH" in sent or "WTT" in sent) else (4.0 if has_oc else 0.0)
-    move_bonus = 16.0 if rng >= 15.0 else (10.0 if rng >= 10.0 else 0.0)
-    chg_bonus = min(max(chg, 0.0) * 3.5, 22.0)
-
-    return (
-        float(item.get("score") or 0.0)
-        + (gapup_flag * 25.0)
-        + chg_bonus
-        + move_bonus
-        + oc_bull_bonus
-        + (close_pos * 10.0)
-    )
-
-
-def _select_btst_setups_10(
-    bull_candidates: list[dict],
-    bear_candidates: list[dict],
-    excluded_symbols: set[str] | None = None,
-) -> tuple[list[dict], list[dict]]:
-    """Dedicated BTST selector: strictly gap-up / big-overnight-mover candidates (no intraday pullback logic)."""
-    excluded = {str(s).strip().upper() for s in (excluded_symbols or set())}
-
-    gapup_pool = [
-        it for it in bull_candidates
-        if float(it.get("change_pct") or 0.0) >= 0.5
-        and float(it.get("close_pos_ratio") or 0.5) >= 0.50
-    ]
-    ranked_bull = sorted(gapup_pool or bull_candidates, key=_btst_gapup_score, reverse=True)
-    ranked_bear = sorted(
-        [it for it in bear_candidates if float(it.get("change_pct") or 0.0) <= -1.0 and float(it.get("close_pos_ratio") or 0.5) <= 0.45],
-        key=lambda x: abs(float(x.get("change_pct") or 0.0)) + abs(float(x.get("avg_range_rs") or 0.0)) * 0.2,
-        reverse=True,
-    )
-
-    bull_picked: list[dict] = []
-    bear_picked: list[dict] = []
-    chosen_syms: set[str] = set()
-
-    for it in ranked_bull:
-        if len(bull_picked) >= 8 or (len(bull_picked) + len(bear_picked)) >= 10:
-            break
-        sym = str(it.get("symbol") or "").strip().upper()
-        if not sym or sym in chosen_syms or sym in excluded:
+        if (not is_ce) and strike < spot:
             continue
-        item = dict(it)
-        chg_v = float(item.get("change_pct") or 0.0)
-        rng_v = float(item.get("avg_range_rs") or 0.0)
-        cpos = float(item.get("close_pos_ratio") or 0.5)
-        item["btst_candidate"] = True
-        item["btst_bias"] = "GAPUP_CANDIDATE"
-        item["equity_bucket"] = f"BTST GAP-UP ({chg_v:+.2f}%, ClsPos {cpos:.2f}, Rng ₹{rng_v:.1f})"
-        bull_picked.append(item)
-        chosen_syms.add(sym)
+        candidates.append((abs(strike - spot), strike, ltp, oi - prev_oi))
 
-    for it in ranked_bear:
-        if (len(bull_picked) + len(bear_picked)) >= 10:
-            break
-        sym = str(it.get("symbol") or "").strip().upper()
-        if not sym or sym in chosen_syms or sym in excluded:
-            continue
-        item = dict(it)
-        chg_v = float(item.get("change_pct") or 0.0)
-        rng_v = float(item.get("avg_range_rs") or 0.0)
-        item["btst_candidate"] = True
-        item["btst_bias"] = "GAPDOWN_WATCH"
-        item["equity_bucket"] = f"BTST GAP-DOWN ({chg_v:+.2f}%, Rng ₹{rng_v:.1f})"
-        bear_picked.append(item)
-        chosen_syms.add(sym)
+    if not candidates:
+        return {"available": False, "reason": "NO_ATM_ITM_OI_SPREAD_MATCH", "lot_size": lot_size}
 
-    if len(bull_picked) + len(bear_picked) < 10:
-        for it in sorted(bull_candidates, key=_btst_gapup_score, reverse=True):
-            if len(bull_picked) + len(bear_picked) >= 10:
-                break
-            sym = str(it.get("symbol") or "").strip().upper()
-            if not sym or sym in chosen_syms:
-                continue
-            item = dict(it)
-            chg_v = float(item.get("change_pct") or 0.0)
-            rng_v = float(item.get("avg_range_rs") or 0.0)
-            item["btst_candidate"] = True
-            item["btst_bias"] = "GAPUP_CANDIDATE"
-            item["equity_bucket"] = f"BTST GAP-UP ({chg_v:+.2f}%, Rng ₹{rng_v:.1f})"
-            bull_picked.append(item)
-            chosen_syms.add(sym)
+    candidates.sort(key=lambda x: (x[0], -x[3]))
+    _, pick_strike, pick_ltp, oi_inc = candidates[0]
+    one_lot_cost = pick_ltp * lot_size
+    if max_risk_cap > 0 and one_lot_cost > max_risk_cap:
+        return {
+            "available": False,
+            "reason": "SKIP_LOT_TOO_LARGE",
+            "strike": pick_strike,
+            "ltp": pick_ltp,
+            "lot_size": lot_size,
+            "one_lot_risk": round(one_lot_cost, 2),
+        }
 
-    return bull_picked, bear_picked
+    sizing = position_size(entry=pick_ltp, stop_loss=0.0, lot_size=lot_size)
+    qty = int((sizing or {}).get("qty") or 0)
+    if max_alloc_cap > 0 and (qty * pick_ltp) > max_alloc_cap:
+        qty = int(max_alloc_cap // (pick_ltp * lot_size)) * lot_size
+    if qty < lot_size:
+        return {"available": False, "reason": "SKIP_LOT_TOO_LARGE", "lot_size": lot_size}
 
-
-def _select_intraday_equity_10(
-    bull_candidates: list[dict],
-    bear_candidates: list[dict],
-    excluded_symbols: set[str] | None = None,
-    mode_tag: str = "MORNING",
-) -> tuple[list[dict], list[dict]]:
-    m_up = str(mode_tag or "MORNING").upper()
-    if m_up == "BTST":
-        return _select_btst_setups_10(bull_candidates, bear_candidates, excluded_symbols=excluded_symbols)
-
-    excluded = {str(s).strip().upper() for s in (excluded_symbols or set())}
-
-    def _rank_pool(pool: list[dict]) -> list[dict]:
-        return sorted(
-            pool,
-            key=lambda x: (
-                1 if abs(float(x.get("avg_range_rs") or 0.0)) >= 10.0 else 0,
-                float(x.get("score") or 0.0),
-                abs(float(x.get("change_pct") or 0.0)),
-            ),
-            reverse=True,
-        )
-
-    bull_picked: list[dict] = []
-    bear_picked: list[dict] = []
-    chosen_syms: set[str] = set()
-
-    for pool, target_list in (
-        (_rank_pool(bull_candidates), bull_picked),
-        (_rank_pool(bear_candidates), bear_picked),
-    ):
-        for it in pool:
-            if len(bull_picked) + len(bear_picked) >= 10 or len(target_list) >= 6:
-                break
-            sym = str(it.get("symbol") or "").strip().upper()
-            if not sym or sym in chosen_syms or sym in excluded:
-                continue
-            enriched_item = dict(it)
-            rng_val = float(enriched_item.get("avg_range_rs") or 0.0)
-            chg_val = float(enriched_item.get("change_pct") or 0.0)
-            oc_tag = "OC" if enriched_item.get("has_option_chain") else "EQ"
-            enriched_item["equity_bucket"] = f"{m_up} {oc_tag} ({chg_val:+.2f}%, Rng ₹{rng_val:.1f})"
-            target_list.append(enriched_item)
-            chosen_syms.add(sym)
-
-    if len(bull_picked) + len(bear_picked) < 10:
-        combined = _rank_pool(bull_candidates + bear_candidates)
-        for it in combined:
-            if len(bull_picked) + len(bear_picked) >= 10:
-                break
-            sym = str(it.get("symbol") or "").strip().upper()
-            if not sym or sym in chosen_syms:
-                continue
-            enriched_item = dict(it)
-            rng_val = float(enriched_item.get("avg_range_rs") or 0.0)
-            chg_val = float(enriched_item.get("change_pct") or 0.0)
-            oc_tag = "OC" if enriched_item.get("has_option_chain") else "EQ"
-            enriched_item["equity_bucket"] = f"{m_up} {oc_tag} ({chg_val:+.2f}%, Rng ₹{rng_val:.1f})"
-            if str(it.get("side") or "").upper() == "BULLISH":
-                bull_picked.append(enriched_item)
-            else:
-                bear_picked.append(enriched_item)
-            chosen_syms.add(sym)
-
-    return bull_picked, bear_picked
+    return {
+        "available": True,
+        "contract_type": "ATM_OR_1ITM",
+        "option_type": "CE" if is_ce else "PE",
+        "strike": pick_strike,
+        "ltp": round(pick_ltp, 2),
+        "oi_increase": oi_inc,
+        "qty": qty,
+        "max_risk": round(min(qty * pick_ltp, max_risk_cap if max_risk_cap > 0 else qty * pick_ltp), 2),
+        "expiry": expiry,
+    }
 
 
 def _safe_position_size(entry: float, stop_loss: float, lot_size: int = 1) -> dict:
@@ -1165,147 +724,36 @@ def _safe_position_size(entry: float, stop_loss: float, lot_size: int = 1) -> di
     return out
 
 
-def _build_entry_and_rationale(
-    sector: str,
+def _build_stock_setup(
+    sym: str,
+    ind: dict,
+    df: pd.DataFrame,
+    rs_info: dict,
     is_bull: bool,
-    close: float,
-    atr_val: float,
-    vwap: float | None,
-    ema20: float,
-    rsi: float,
-    vol_ratio: float,
-    chg_pct: float,
-    rs_score: float,
-    chain_summary: dict | None,
-    chain_analytics: dict | None = None,
-    avg_range_rs: float = 0.0,
-    close_pos_ratio: float = 0.5,
-    is_btst: bool = False,
-) -> dict:
-    atr_safe = max(float(atr_val or 0.0), 0.05)
-    anchor = float(vwap) if (vwap is not None and float(vwap) > 0) else ema20
-    dist_from_anchor_atr = abs(close - anchor) / atr_safe
-
-    if is_btst and is_bull:
-        gapup_likely = (chg_pct >= 0.8 and close_pos_ratio >= 0.60 and vol_ratio >= 1.0)
-        best_low = round(max(close - 0.5 * atr_safe, anchor), 2)
-        best_high = round(close, 2)
-        if best_low > best_high:
-            best_low, best_high = best_high, best_low
-        if gapup_likely:
-            extension_status = "BTST GAP-UP CANDIDATE (Strong Close)"
-            entry_action = "HOLD OVERNIGHT FOR NEXT-DAY GAP/MOVE"
-        else:
-            extension_status = "BTST WATCH / MODERATE MOMENTUM"
-            entry_action = "VERIFY CLOSE & OI BEFORE OVERNIGHT HOLD"
-    elif is_bull:
-        overextended = (rsi >= 82.0) or (chg_pct >= 8.0) or (close > anchor and dist_from_anchor_atr >= 2.5)
-        best_low = round(max(min(anchor, close) - 0.25 * atr_safe, close - 1.0 * atr_safe), 2)
-        best_high = round(max(anchor, close - 0.35 * atr_safe), 2)
-        if best_low > best_high:
-            best_low, best_high = best_high, best_low
-        if overextended:
-            extension_status = "EXTENDED / PULLBACK WATCH"
-            entry_action = "PULLBACK OR BREAKOUT CONFIRM"
-        elif dist_from_anchor_atr > 1.1:
-            extension_status = "EARLY RALLY / STRETCHED UP"
-            entry_action = "PREFER PULLBACK TO BEST ZONE"
-        else:
-            extension_status = "EARLY RALLY / IN-ZONE"
-            entry_action = "IMMEDIATE OR BEST ZONE"
-    else:
-        overextended = (rsi <= 18.0) or (chg_pct <= -8.0) or (close < anchor and dist_from_anchor_atr >= 2.5)
-        best_low = round(min(anchor, close + 0.35 * atr_safe), 2)
-        best_high = round(min(max(anchor, close) + 0.25 * atr_safe, close + 1.0 * atr_safe), 2)
-        if best_low > best_high:
-            best_low, best_high = best_high, best_low
-        if overextended:
-            extension_status = "EXTENDED DOWN / BOUNCE WATCH"
-            entry_action = "BOUNCE OR BREAKDOWN CONFIRM"
-        elif dist_from_anchor_atr > 1.1:
-            extension_status = "EARLY DROP / STRETCHED DOWN"
-            entry_action = "PREFER BOUNCE TO BEST ZONE"
-        else:
-            extension_status = "EARLY DROP / IN-ZONE"
-            entry_action = "IMMEDIATE OR BEST ZONE"
-
-    oi_txt = ""
-    if chain_summary and chain_summary.get("oi_build_up"):
-        oi_txt = f" OI: {chain_summary.get('oi_build_up')} (PCR {chain_summary.get('pcr')})."
-
-    ca = chain_analytics or {}
-    lvl_txt = ""
-    if ca.get("eos") is not None or ca.get("eor") is not None:
-        lvl_txt = f" EOS {ca.get('eos')} / EOR {ca.get('eor')} [{ca.get('sentiment_state')}]."
-
-    rng_txt = f" AvgRng ₹{avg_range_rs:.1f}." if avg_range_rs > 0 else ""
-    vwap_txt = f"VWAP {vwap:.2f}" if (vwap is not None and vwap > 0) else "VWAP N/A"
-    dir_txt = "Bullish alignment" if is_bull else "Bearish alignment"
-    btst_txt = f" ClsPos {close_pos_ratio:.2f}." if is_btst else ""
-    why_trade = (
-        f"{dir_txt} ({chg_pct:+.2f}%), {'above' if close >= ema20 else 'below'} EMA20 ({ema20:.2f}), "
-        f"{vwap_txt}, RSI {rsi:.1f}, Vol {vol_ratio:.2f}x, "
-        f"RS vs Nifty {rs_score:+.2f}% in {sector}.{btst_txt}{rng_txt}{oi_txt}{lvl_txt}"
-    )
-
-    return {
-        "why_trade": why_trade,
-        "extension_status": extension_status,
-        "entry_action": entry_action,
-        "best_entry_low": best_low,
-        "best_entry_high": best_high,
-    }
-
-
-def _build_stock_setup(sym: str, ind: dict, rs_info: dict, is_bull: bool, chain_bundle: dict | None) -> dict | None:
+    chain_bundle: dict | None,
+    nifty_5d_pct: float = 0.0,
+    sector_chg_pct: float = 0.0,
+    gap_meta: dict[str, Any] | None = None,
+) -> dict | None:
     close = float(ind["close"])
-    if close <= 0:
+    atr_val = float(ind.get("atr") or 0.0)
+    avg_turnover = float(ind.get("avg_turnover") or 0.0)
+    if not _passes_liquidity_and_movement_filter(close, atr_val, avg_turnover):
         return None
-    atr_val = float(ind.get("atr") or max(close * 0.015, 1.0))
+
     vwap = ind.get("vwap")
     ema20 = float(ind.get("ema20") or close)
     ema50 = float(ind.get("ema50") or close)
     rsi = float(ind.get("rsi") or 50.0)
     vol_ratio = float(ind.get("vol_ratio") or 1.0)
     chg_pct = float(ind.get("change_pct") or 0.0)
-    avg_turnover = float(ind.get("avg_turnover") or 0.0)
     avg_range_rs = float(ind.get("avg_range_rs") or 0.0)
     close_pos_ratio = float(ind.get("close_pos_ratio") or 0.5)
     has_oc = _has_option_chain_support(sym, chain_bundle)
-    is_btst = str(MODE or "").upper() == "BTST"
-
-    if avg_turnover > 0 and avg_turnover < max(MIN_DAILY_TURNOVER_RS * 0.5, 1_000_000):
-        return None
-    if vol_ratio > 0 and vol_ratio < 0.40:
-        return None
-
-    if is_btst and is_bull:
-        # For BTST gap-up candidates: require positive move and price above EMA20
-        if chg_pct < 0.0 or close < ema20:
-            return None
-        sl = round(close - 1.6 * atr_val, 2)
-        pa_t1 = round(close + 2.0 * atr_val, 2)
-        pa_t2 = round(close + 3.4 * atr_val, 2)
-    elif is_bull:
-        if chg_pct < -1.5 or close < ema20:
-            return None
-        sl = round(close - 1.5 * atr_val, 2)
-        pa_t1 = round(close + 1.8 * atr_val, 2)
-        pa_t2 = round(close + 3.0 * atr_val, 2)
-    else:
-        if chg_pct > 1.5 or close > ema20:
-            return None
-        sl = round(close + 1.5 * atr_val, 2)
-        pa_t1 = round(max(close - 1.8 * atr_val, 0.05), 2)
-        pa_t2 = round(max(close - 3.0 * atr_val, 0.05), 2)
-
-    if (is_bull and sl >= close) or (not is_bull and sl <= close):
-        return None
 
     chain_summary = (chain_bundle or {}).get("summary") or {}
     chain_df = (chain_bundle or {}).get("df")
     expiry = (chain_bundle or {}).get("expiry")
-    oi_target = _compute_oi_target(chain_summary, close, is_bull=is_bull)
 
     opt_plan = select_option_strategy(
         symbol=sym,
@@ -1320,44 +768,70 @@ def _build_stock_setup(sym: str, ind: dict, rs_info: dict, is_bull: bool, chain_
     lot_sz = _resolve_lot_size(sym, opt_plan)
     opt_plan["lot_size"] = lot_sz
 
+    day_low = float(pd.to_numeric(df["Low"], errors="coerce").iloc[-1]) if not df.empty else close
+    sector = SECTOR_MAP.get(sym, "OTHER")
+    rs_score = float((rs_info or {}).get("rs_score") or 0.0)
+
+    if RUN_MODE == "BTST" and is_bull:
+        row_for_btst = {
+            "close": close,
+            "entry": close,
+            "atr": atr_val,
+            "day_low": day_low,
+            "close_pos_ratio": close_pos_ratio,
+            "vol_ratio": vol_ratio,
+            "ema20": ema20,
+            "ema50": ema50,
+            "ret_5d_pct": float((rs_info or {}).get("s_5d_pct") or chg_pct),
+            "rsi": rsi,
+        }
+        btst_res = btst_rally_score(
+            row=row_for_btst,
+            df=df,
+            nifty_5d_pct=nifty_5d_pct,
+            sector_chg_pct=sector_chg_pct,
+        )
+        if not btst_res:
+            return None
+        sl = float(btst_res["stop_loss"])
+        pa_t1 = float(btst_res["target_1"])
+        pa_t2 = float(btst_res["target_2"])
+        adj_score = float(btst_res["btst_score"])
+        why_trade = f"BTST Score {adj_score:.0f}/100: " + (", ".join(btst_res["btst_reasons"]) or "Momentum close")
+        extension_status = "BTST OVERNIGHT SETUP"
+        entry_action = "BUY NEAR CLOSE / HOLD NEXT SESSION"
+    else:
+        if is_bull:
+            if chg_pct < -1.5 or close < ema20:
+                return None
+            sl = round(close - 1.5 * atr_val, 2)
+            pa_t1 = round(close + 1.8 * atr_val, 2)
+            pa_t2 = round(close + 3.0 * atr_val, 2)
+        else:
+            if chg_pct > 1.5 or close > ema20:
+                return None
+            sl = round(close + 1.5 * atr_val, 2)
+            pa_t1 = round(max(close - 1.8 * atr_val, 0.05), 2)
+            pa_t2 = round(max(close - 3.0 * atr_val, 0.05), 2)
+
+        base_score = float(ind.get("bull_score" if is_bull else "bear_score") or 50.0)
+        adj_score = round(max(0.0, min(100.0, 0.75 * base_score + 0.25 * (50.0 + rs_score * 1.5))), 2)
+        gm = gap_meta or {}
+        state_lbl = gm.get("signal_state") or "WATCHLIST"
+        gap_lbl = f"Gap {gm.get('gap_pct', 0.0):+.2f}% [{state_lbl}]" if gm else f"Chg {chg_pct:+.2f}%"
+        why_trade = (
+            f"{'Bullish' if is_bull else 'Bearish'} {gap_lbl}, EMA20 {ema20:.2f}, "
+            f"ATR {atr_val:.2f}, Vol {vol_ratio:.2f}x, RS {rs_score:+.2f}% in {sector}."
+        )
+        extension_status = gm.get("signal_state") or "INTRADAY SETUP"
+        entry_action = "ORB CONFIRMED ENTRY" if gm.get("orb_confirmed") else "WATCHLIST / CONFIRMATION"
+
+    if (is_bull and sl >= close) or (not is_bull and sl <= close):
+        return None
+
     sizing = _safe_position_size(entry=close, stop_loss=sl, lot_size=lot_sz)
     if int(sizing.get("qty") or 0) <= 0:
         return None
-
-    chain_analytics = _build_option_chain_analytics(chain_df, spot=close, lot_size=lot_sz)
-
-    rs_score = float((rs_info or {}).get("rs_score") or 0.0)
-    sector = SECTOR_MAP.get(sym, "OTHER")
-    rationale = _build_entry_and_rationale(
-        sector=sector,
-        is_bull=is_bull,
-        close=close,
-        atr_val=atr_val,
-        vwap=vwap,
-        ema20=ema20,
-        rsi=rsi,
-        vol_ratio=vol_ratio,
-        chg_pct=chg_pct,
-        rs_score=rs_score,
-        chain_summary=chain_summary,
-        chain_analytics=chain_analytics,
-        avg_range_rs=avg_range_rs,
-        close_pos_ratio=close_pos_ratio,
-        is_btst=is_btst,
-    )
-
-    base_score = float(ind.get("bull_score" if is_bull else "bear_score") or 50.0)
-    range_bonus = 18.0 if avg_range_rs >= 15.0 else (12.0 if avg_range_rs >= 10.0 else 0.0)
-    oc_bonus = 8.0 if has_oc else 0.0
-    if is_btst and is_bull:
-        early_bonus = (12.0 if close_pos_ratio >= 0.65 else 0.0) + min(max(chg_pct, 0.0) * 2.5, 18.0)
-    else:
-        early_bonus = 6.0 if (1.0 <= abs(chg_pct) <= 5.5 and 45.0 <= rsi <= 76.0) else min(abs(chg_pct) * 1.5, 10.0)
-
-    adj_score = round(
-        max(0.0, min(100.0, 0.70 * base_score + 0.15 * (50.0 + rs_score * 1.5) + range_bonus + oc_bonus + early_bonus)),
-        2,
-    )
 
     return {
         "symbol": sym,
@@ -1376,7 +850,7 @@ def _build_stock_setup(sym: str, ind: dict, rs_info: dict, is_bull: bool, chain_
         "target_2": pa_t2,
         "pa_target_1": pa_t1,
         "pa_target_2": pa_t2,
-        "oi_target": oi_target,
+        "oi_target": None,
         "rsi": round(rsi, 1),
         "vol_ratio": round(vol_ratio, 2),
         "vwap": round(float(vwap), 2) if (vwap is not None and float(vwap) > 0) else None,
@@ -1384,13 +858,14 @@ def _build_stock_setup(sym: str, ind: dict, rs_info: dict, is_bull: bool, chain_
         "ema50": round(ema50, 2),
         "rs_score": rs_score,
         "score": adj_score,
-        "history_label": ind.get("history_label", "1y"),
-        "chain_summary": chain_summary,
-        "chain_analytics": chain_analytics,
-        "option_chain": chain_analytics.get("rows", []),
+        "why_trade": why_trade,
+        "extension_status": extension_status,
+        "entry_action": entry_action,
+        "best_entry_low": round(min(close, sl), 2),
+        "best_entry_high": round(max(close, pa_t1), 2),
         "option_expiry": expiry,
         "option_plan": opt_plan,
-        **rationale,
+        "gap_meta": gap_meta or {},
         **sizing,
     }
 
@@ -1415,9 +890,8 @@ def _build_index_trades(
         atr_val = float(ind.get("atr") or max(spot * 0.01, 1.0))
         ema20 = float(ind.get("ema20") or spot)
         session_vwap = _compute_session_vwap(df, live_vwap=ov.get("vwap"), lookback_days=1)
-        close_pos_ratio = _compute_close_position_ratio(df, spot)
-
         is_bull = spot >= ema20 and chg_pct >= -0.35
+
         chain_df, expiry = None, None
         chain_summary = {}
         try:
@@ -1443,39 +917,25 @@ def _build_index_trades(
         if not isinstance(plan, dict):
             plan = {}
 
+        lot_size = _resolve_lot_size(idx_sym, plan)
+        plan["lot_size"] = lot_size
+        leg_1pct = _select_option_leg_1pct_risk(
+            symbol=idx_sym,
+            side="CE" if is_bull else "PE",
+            spot=spot,
+            chain_df=chain_df,
+            expiry=expiry,
+            lot_size=lot_size,
+        )
+
         sl = round(spot - 1.5 * atr_val, 2) if is_bull else round(spot + 1.5 * atr_val, 2)
         pa_t1 = round(spot + 1.5 * atr_val, 2) if is_bull else round(max(spot - 1.5 * atr_val, 0.0), 2)
         pa_t2 = round(spot + 2.5 * atr_val, 2) if is_bull else round(max(spot - 2.5 * atr_val, 0.0), 2)
-        oi_target = _compute_oi_target(chain_summary, spot, is_bull=is_bull)
-
-        lot_size = _resolve_lot_size(idx_sym, plan)
-        plan["lot_size"] = lot_size
-        chain_analytics = _build_option_chain_analytics(chain_df, spot=spot, lot_size=lot_size)
-        max_loss_lot = plan.get("max_loss_lot")
-        sizing_status = "CAPITAL NOT CONFIGURED" if not CAPITAL_CONFIGURED else "1 Lot Risk Cap"
-
-        rationale = _build_entry_and_rationale(
-            sector="INDEX",
-            is_bull=is_bull,
-            close=spot,
-            atr_val=atr_val,
-            vwap=session_vwap,
-            ema20=ema20,
-            rsi=float(ind.get("rsi") or 50.0),
-            vol_ratio=float(ind.get("vol_ratio") or 0.0),
-            chg_pct=chg_pct,
-            rs_score=0.0,
-            chain_summary=chain_summary,
-            chain_analytics=chain_analytics,
-            close_pos_ratio=close_pos_ratio,
-            is_btst=(str(MODE or "").upper() == "BTST"),
-        )
+        max_loss_lot = leg_1pct.get("max_risk") if leg_1pct.get("available") else plan.get("max_loss_lot")
 
         trades.append({
             "symbol": idx_sym,
             "sector": "INDEX",
-            "has_option_chain": True,
-            "close_pos_ratio": close_pos_ratio,
             "side": "BULLISH" if is_bull else "BEARISH",
             "entry": round(spot, 2),
             "close": round(spot, 2),
@@ -1486,18 +946,18 @@ def _build_index_trades(
             "target_2": pa_t2,
             "pa_target_1": pa_t1,
             "pa_target_2": pa_t2,
-            "oi_target": oi_target,
+            "oi_target": None,
+            "vwap": session_vwap,
             "qty": lot_size,
             "est_margin": max_loss_lot,
             "exposure": max_loss_lot,
             "max_risk": max_loss_lot,
-            "sizing_status": sizing_status,
+            "sizing_status": leg_1pct.get("reason") if not leg_1pct.get("available") else "1% Risk Cap",
+            "option_leg_1pct": leg_1pct,
             "chain_summary": chain_summary,
-            "chain_analytics": chain_analytics,
-            "option_chain": chain_analytics.get("rows", []),
             "option_expiry": expiry,
             "option_plan": plan,
-            **rationale,
+            "why_trade": f"{'Bullish' if is_bull else 'Bearish'} index structure ({chg_pct:+.2f}%), EMA20 {ema20:.2f}.",
         })
     return trades
 
@@ -1509,29 +969,17 @@ def export_web_dashboard_data(payload: dict, base_dir: str = "docs/data") -> Non
 
     now_ist = dt.datetime.now(IST)
     session_date = now_ist.date().isoformat()
-    mode_tag = str(payload.get("mode") or MODE or "RUN").upper()
+    mode_tag = RUN_MODE
 
     enriched = dict(payload)
     enriched["mode"] = mode_tag
     enriched["generated_at_ist"] = now_ist.strftime("%Y-%m-%d %H:%M:%S IST")
     enriched["session_date"] = session_date
-    enriched["session_guardrails"] = _build_session_guardrails(now_ist)
 
-    (root / "latest.json").write_text(
-        json.dumps(enriched, indent=2, default=str),
-        encoding="utf-8",
-    )
+    (root / "latest.json").write_text(json.dumps(enriched, indent=2, default=str), encoding="utf-8")
+    (history_dir / f"{session_date}.json").write_text(json.dumps(enriched, indent=2, default=str), encoding="utf-8")
+    (history_dir / f"{session_date}_{mode_tag}.json").write_text(json.dumps(enriched, indent=2, default=str), encoding="utf-8")
 
-    (history_dir / f"{session_date}.json").write_text(
-        json.dumps(enriched, indent=2, default=str),
-        encoding="utf-8",
-    )
-    (history_dir / f"{session_date}_{mode_tag}.json").write_text(
-        json.dumps(enriched, indent=2, default=str),
-        encoding="utf-8",
-    )
-
-    manifest_path = root / "manifest.json"
     entries = []
     for f in sorted(history_dir.glob("*.json"), reverse=True):
         stem = f.stem
@@ -1552,7 +1000,7 @@ def export_web_dashboard_data(payload: dict, base_dir: str = "docs/data") -> Non
         except Exception:
             continue
 
-    manifest_path.write_text(
+    (root / "manifest.json").write_text(
         json.dumps(
             {
                 "updated_at_ist": now_ist.strftime("%Y-%m-%d %H:%M:%S IST"),
@@ -1566,15 +1014,31 @@ def export_web_dashboard_data(payload: dict, base_dir: str = "docs/data") -> Non
 
 
 def run_screener():
+    now_ist = dt.datetime.now(IST)
+    confirm_orb_15m = (RUN_MODE == "MORNING") and ((now_ist.hour * 60 + now_ist.minute) >= (9 * 60 + 28))
+
     candles, data_source, live_overrides = load_candles_1y()
-    logging.info("Loaded candles for %d symbols using %s", len(candles), data_source)
+    logging.info("Loaded candles for %d symbols using %s (mode=%s)", len(candles), data_source, RUN_MODE)
+
     global_cues = fetch_global_cues()
     nse_live_snap = _fetch_nse_mcp_live_snapshot()
-
     sectors = compute_sector_strength(candles)
     rs_map = compute_relative_strength(candles)
+    sector_map_pct = {str(s.get("name") or "").upper(): float(s.get("raw_avg") or 0.0) for s in (sectors or [])}
+
+    nifty_ov = live_overrides.get("NIFTY") or {}
+    nifty_gap_info = _compute_intraday_gap_and_orb("NIFTY", nifty_ov, candles.get("NIFTY"), nifty_gap_pct=0.0, confirm_orb_15m=confirm_orb_15m)
+    nifty_gap_pct = float(nifty_gap_info.get("gap_pct") or 0.0)
+
+    nifty_df = candles.get("NIFTY")
+    nifty_5d_pct = 0.0
+    if nifty_df is not None and len(nifty_df) >= 6:
+        nc = pd.to_numeric(nifty_df["Close"], errors="coerce").dropna()
+        if len(nc) >= 6 and float(nc.iloc[-6]) > 0:
+            nifty_5d_pct = ((float(nc.iloc[-1]) / float(nc.iloc[-6])) - 1.0) * 100.0
 
     indicators_by_sym: dict[str, dict] = {}
+    gap_by_sym: dict[str, dict] = {}
     adv, dec, above20, above50, total_stocks = 0, 0, 0, 0, 0
 
     for sym in STOCKS_UNIVERSE:
@@ -1591,16 +1055,17 @@ def run_screener():
         ind["close"] = close
         ind["change_pct"] = chg
         ind["close_pos_ratio"] = _compute_close_position_ratio(df, close)
-
-        session_vwap = _compute_session_vwap(df, live_vwap=ov.get("vwap"), lookback_days=1)
-        avg_range_rs = _compute_avg_daily_range_rs(df, lookback=14)
+        ind["vwap"] = _compute_session_vwap(df, live_vwap=ov.get("vwap"), lookback_days=1)
+        ind["avg_range_rs"] = _compute_avg_daily_range_rs(df, lookback=14)
         vol_20 = pd.to_numeric(df["Volume"], errors="coerce").tail(20).mean()
         close_20 = pd.to_numeric(df["Close"], errors="coerce").tail(20).mean()
-
-        ind["vwap"] = session_vwap
-        ind["avg_range_rs"] = avg_range_rs
         ind["avg_turnover"] = float((vol_20 or 0.0) * (close_20 or close))
+
         indicators_by_sym[sym] = ind
+        if RUN_MODE == "MORNING":
+            gap_by_sym[sym] = _compute_intraday_gap_and_orb(
+                sym, ov, df, nifty_gap_pct=nifty_gap_pct, confirm_orb_15m=confirm_orb_15m
+            )
 
         total_stocks += 1
         if chg > 0:
@@ -1616,12 +1081,11 @@ def run_screener():
         indicators_by_sym.keys(),
         key=lambda s: (
             1.0 if int(LOT_SIZES.get(s.upper(), 0) or 0) > 1 else 0.0,
-            1.0 if abs(float(indicators_by_sym[s].get("avg_range_rs") or 0.0)) >= 10.0 else 0.0,
+            1.0 if float(indicators_by_sym[s].get("atr") or 0.0) >= 15.0 else 0.0,
             max(
                 float(indicators_by_sym[s].get("bull_score") or 0.0),
                 float(indicators_by_sym[s].get("bear_score") or 0.0),
-            )
-            + abs(float(indicators_by_sym[s].get("change_pct") or 0.0)) * 2.0,
+            ),
         ),
         reverse=True,
     )
@@ -1629,7 +1093,7 @@ def run_screener():
     bull_candidates, bear_candidates = [], []
     chain_cache: dict[str, dict] = {}
     chain_fetches = 0
-    max_chain_fetches = 28
+    max_chain_fetches = 24
 
     def _get_chain(sym: str, spot: float) -> dict:
         nonlocal chain_fetches
@@ -1656,48 +1120,49 @@ def run_screener():
 
     for sym in ranked_syms:
         ind = indicators_by_sym[sym]
-        b_score = float(ind.get("bull_score") or 0.0)
-        s_score = float(ind.get("bear_score") or 0.0)
+        df = candles[sym]
         rs_info = rs_map.get(sym, {})
-        if b_score >= s_score and b_score >= 48.0:
+        sec_pct = sector_map_pct.get(SECTOR_MAP.get(sym, "OTHER").upper(), 0.0)
+        gm = gap_by_sym.get(sym)
+
+        if RUN_MODE == "BTST":
             cb = _get_chain(sym, float(ind["close"]))
-            setup = _build_stock_setup(sym, ind, rs_info, True, cb)
+            setup = _build_stock_setup(
+                sym, ind, df, rs_info, True, cb,
+                nifty_5d_pct=nifty_5d_pct, sector_chg_pct=sec_pct, gap_meta=gm,
+            )
             if setup:
                 bull_candidates.append(setup)
-        elif s_score > b_score and s_score >= 48.0:
-            cb = _get_chain(sym, float(ind["close"]))
-            setup = _build_stock_setup(sym, ind, rs_info, False, cb)
-            if setup:
-                bear_candidates.append(setup)
+        else:
+            b_score = float(ind.get("bull_score") or 0.0)
+            s_score = float(ind.get("bear_score") or 0.0)
+            if b_score >= s_score and b_score >= 48.0:
+                cb = _get_chain(sym, float(ind["close"]))
+                setup = _build_stock_setup(
+                    sym, ind, df, rs_info, True, cb,
+                    nifty_5d_pct=nifty_5d_pct, sector_chg_pct=sec_pct, gap_meta=gm,
+                )
+                if setup:
+                    bull_candidates.append(setup)
+            elif s_score > b_score and s_score >= 48.0:
+                cb = _get_chain(sym, float(ind["close"]))
+                setup = _build_stock_setup(
+                    sym, ind, df, rs_info, False, cb,
+                    nifty_5d_pct=nifty_5d_pct, sector_chg_pct=sec_pct, gap_meta=gm,
+                )
+                if setup:
+                    bear_candidates.append(setup)
 
-    if str(MODE or "").upper() == "BTST":
-        bull_candidates.sort(key=_btst_gapup_score, reverse=True)
-    else:
-        bull_candidates.sort(key=lambda x: x.get("score", 0.0), reverse=True)
-    bear_candidates.sort(key=lambda x: x.get("score", 0.0), reverse=True)
+    bull_candidates.sort(key=lambda x: float(x.get("score") or 0.0), reverse=True)
+    bear_candidates.sort(key=lambda x: float(x.get("score") or 0.0), reverse=True)
 
-    options_bullish = _select_capped_items(bull_candidates, max_items=5, enforce_risk_cap=False)
-    options_bearish = _select_capped_items(bear_candidates, max_items=5, enforce_risk_cap=False)
+    options_bullish = bull_candidates[:5]
+    options_bearish = bear_candidates[:5] if RUN_MODE != "BTST" else []
 
-    option_symbols = {
-        str(x.get("symbol") or "").strip().upper()
-        for x in (options_bullish + options_bearish)
-        if x.get("symbol")
-    }
-    session_date_now = dt.datetime.now(IST).date().isoformat()
-    prev_morning_eq_syms = _load_previous_morning_equity_symbols(
-        session_date=session_date_now,
-        current_mode=MODE,
-        base_dir="docs/data",
-    )
-    excluded_eq_syms = option_symbols | prev_morning_eq_syms
-
-    intraday_bullish, intraday_bearish = _select_intraday_equity_10(
-        bull_candidates=bull_candidates,
-        bear_candidates=bear_candidates,
-        excluded_symbols=excluded_eq_syms,
-        mode_tag=MODE,
-    )
+    chosen_syms = {str(x.get("symbol") or "").upper() for x in (options_bullish + options_bearish)}
+    eq_pool = [x for x in (bull_candidates + bear_candidates) if str(x.get("symbol") or "").upper() not in chosen_syms][:10]
+    intraday_bullish = [x for x in eq_pool if x.get("side") == "BULLISH"]
+    intraday_bearish = [x for x in eq_pool if x.get("side") != "BULLISH"]
     equity_intraday = intraday_bullish + intraday_bearish
 
     index_trades = _build_index_trades(candles, live_overrides=live_overrides)
@@ -1729,7 +1194,7 @@ def run_screener():
 
     payload = {
         "title": TITLE,
-        "mode": MODE,
+        "mode": RUN_MODE,
         "summary": {
             "ideas_count": total_ideas,
             "stock_setups_count": stock_setups_count,
@@ -1773,7 +1238,7 @@ def run_screener():
 
     send_alert(payload)
     logging.info(
-        "Dispatched %d total ideas (%d stock setups: %dB/%dS opt + %d eq [10 target]) using %s",
+        "Dispatched %d total ideas (%d stock setups: %dB/%dS opt + %d eq) using %s",
         total_ideas,
         stock_setups_count,
         len(options_bullish),
