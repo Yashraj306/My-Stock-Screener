@@ -1,3 +1,9 @@
+import gzip
+import io
+import logging
+import pandas as pd
+import requests
+
 INDEX_MAP = {
     "NIFTY": "NSE_INDEX|Nifty 50",
     "BANKNIFTY": "NSE_INDEX|Nifty Bank",
@@ -138,7 +144,6 @@ ISIN_MAP = {
     "DLF": "INE271C01023",
 }
 
-# BSE-focused equities (mapped to BSE_EQ|<ISIN> & .BO fallback)
 BSE_ISIN_MAP = {
     "BSE": "INE118H01025",
     "CDSL": "INE736A01011",
@@ -160,7 +165,6 @@ BSE_ISIN_MAP = {
     "ALKYLAMINE": "INE150B01039",
     "FINOLEX": "INE235A01022",
     "KEI": "INE878B01027",
-    # Newly Added BSE Equities
     "ANGELONE": "INE732I01013",
     "CAMS": "INE596I01012",
     "KFINTECH": "INE138Y01010",
@@ -291,3 +295,36 @@ def eq_keys() -> dict:
         if sym not in mapping:
             mapping[sym] = f"BSE_EQ|{isin}"
     return mapping
+
+
+def resolve_upstox_keys_from_master(symbols: list[str] | None = None) -> dict[str, str]:
+    """Fetches Upstox NSE/BSE instrument master CSVs and resolves valid instrument_key by tradingsymbol."""
+    target = {str(s).strip().upper() for s in (symbols or STOCKS_UNIVERSE) if s}
+    resolved: dict[str, str] = {}
+    urls = [
+        ("NSE", "https://assets.upstox.com/market-quote/instruments/exchange/NSE.csv.gz"),
+        ("BSE", "https://assets.upstox.com/market-quote/instruments/exchange/BSE.csv.gz"),
+    ]
+    for exch, url in urls:
+        if len(resolved) >= len(target):
+            break
+        try:
+            resp = requests.get(url, timeout=10)
+            if resp.status_code != 200 or not resp.content:
+                continue
+            with gzip.GzipFile(fileobj=io.BytesIO(resp.content)) as gz:
+                df = pd.read_csv(gz, usecols=lambda c: c in {"tradingsymbol", "instrument_key", "instrument_type"})
+            if df.empty or "tradingsymbol" not in df.columns or "instrument_key" not in df.columns:
+                continue
+            if "instrument_type" in df.columns:
+                eq_df = df[df["instrument_type"].astype(str).str.upper().isin({"EQ", "EQUITY"})]
+                if not eq_df.empty:
+                    df = eq_df
+            for _, row in df.iterrows():
+                tsym = str(row.get("tradingsymbol") or "").strip().upper()
+                ikey = str(row.get("instrument_key") or "").strip()
+                if tsym in target and ikey and tsym not in resolved:
+                    resolved[tsym] = ikey
+        except Exception as exc:
+            logging.debug("Upstox %s master fetch failed: %s", exch, exc)
+    return resolved
