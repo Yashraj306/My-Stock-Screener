@@ -3,7 +3,7 @@
 <head>
   <meta charset="UTF-8" />
   <meta name="viewport" content="width=device-width, initial-scale=1.0" />
-  <meta name="description" content="Quant &amp; Hedging Desk — Institutional NSE/BSE Screener Terminal with BTST, Intraday ORB, Option Chain Plans, and Walk-Forward Performance." />
+  <meta name="description" content="Quant &amp; Hedging Desk — Institutional NSE/BSE Screener Terminal with F&amp;O Setups, Probability, OI/PA Targets, Support/Resistance, and Smartlists." />
   <meta http-equiv="Content-Security-Policy" content="default-src 'self' https://fonts.googleapis.com https://fonts.gstatic.com; script-src 'self' 'unsafe-inline'; style-src 'self' 'unsafe-inline' https://fonts.googleapis.com; font-src 'self' https://fonts.gstatic.com; img-src 'self' data:; connect-src 'self' https:; frame-ancestors 'none';" />
   <title>Quant &amp; Hedging Desk — Institutional Screener Terminal</title>
   <link rel="preconnect" href="https://fonts.googleapis.com">
@@ -179,7 +179,7 @@
 
     .kpi-grid {
       display: grid;
-      grid-template-columns: repeat(auto-fit, minmax(200px, 1fr));
+      grid-template-columns: repeat(auto-fit, minmax(190px, 1fr));
       gap: 12px;
       margin-bottom: 14px;
     }
@@ -258,7 +258,7 @@
 
     .cards-grid {
       display: grid;
-      grid-template-columns: repeat(auto-fill, minmax(350px, 1fr));
+      grid-template-columns: repeat(auto-fill, minmax(355px, 1fr));
       gap: 14px;
     }
 
@@ -269,37 +269,52 @@
       padding: 15px;
       display: flex;
       flex-direction: column;
-      gap: 11px;
+      gap: 10px;
       transition: transform 0.16s ease, border-color 0.16s ease;
     }
     .card:hover { transform: translateY(-2px); border-color: #334b75; }
 
     .card-head { display: flex; justify-content: space-between; align-items: flex-start; gap: 8px; }
-    .sym { font-size: 1.08rem; font-weight: 700; }
+    .sym { font-size: 1.06rem; font-weight: 700; }
     .sector-tag { font-size: 0.72rem; color: var(--muted); margin-top: 2px; }
 
+    .badge-group { display: flex; align-items: center; gap: 6px; flex-wrap: wrap; justify-content: flex-end; }
     .badge {
-      padding: 4px 8px;
+      padding: 3px 8px;
       border-radius: 6px;
-      font-size: 0.72rem;
+      font-size: 0.7rem;
       font-weight: 700;
       letter-spacing: 0.3px;
       white-space: nowrap;
     }
     .badge-bull { background: var(--bull-bg); color: var(--bull); border: 1px solid rgba(16,185,129,0.3); }
     .badge-bear { background: var(--bear-bg); color: var(--bear); border: 1px solid rgba(244,63,94,0.3); }
+    .badge-prob { background: rgba(56, 189, 248, 0.14); color: #7dd3fc; border: 1px solid rgba(56,189,248,0.35); }
 
     .levels {
       display: grid;
       grid-template-columns: repeat(4, 1fr);
-      gap: 7px;
-      background: rgba(15, 23, 42, 0.72);
+      gap: 6px;
+      background: rgba(15, 23, 42, 0.75);
       border: 1px solid var(--border);
       border-radius: 10px;
-      padding: 9px;
+      padding: 8px;
     }
-    .lvl span { display: block; font-size: 0.66rem; color: var(--muted); text-transform: uppercase; }
-    .lvl strong { font-size: 0.86rem; }
+    .lvl span { display: block; font-size: 0.64rem; color: var(--muted); text-transform: uppercase; }
+    .lvl strong { font-size: 0.84rem; }
+
+    .sr-strip {
+      display: flex;
+      flex-wrap: wrap;
+      justify-content: space-between;
+      gap: 6px 10px;
+      background: rgba(23, 32, 51, 0.65);
+      border: 1px solid var(--border);
+      border-radius: 8px;
+      padding: 7px 10px;
+      font-size: 0.74rem;
+      color: #cbd5e1;
+    }
 
     .meta-row {
       display: flex;
@@ -307,7 +322,7 @@
       align-items: center;
       justify-content: space-between;
       gap: 6px 12px;
-      font-size: 0.76rem;
+      font-size: 0.75rem;
       color: var(--muted);
     }
     .chip {
@@ -321,7 +336,7 @@
       border: 1px solid rgba(56, 189, 248, 0.25);
     }
     .rationale {
-      font-size: 0.79rem;
+      font-size: 0.78rem;
       color: #cbd5e1;
       background: rgba(30, 41, 59, 0.45);
       padding: 8px 10px;
@@ -330,7 +345,7 @@
     }
 
     .opt-box {
-      font-size: 0.76rem;
+      font-size: 0.75rem;
       background: rgba(56, 189, 248, 0.06);
       border: 1px dashed rgba(56, 189, 248, 0.3);
       border-radius: 8px;
@@ -338,6 +353,28 @@
       color: #bae6fd;
       line-height: 1.5;
     }
+
+    .smart-grid {
+      display: grid;
+      grid-template-columns: repeat(auto-fit, minmax(290px, 1fr));
+      gap: 14px;
+      margin-top: 10px;
+    }
+    .smart-card {
+      background: var(--surface);
+      border: 1px solid var(--border);
+      border-radius: 12px;
+      padding: 14px;
+    }
+    .smart-row {
+      display: flex;
+      justify-content: space-between;
+      align-items: center;
+      padding: 7px 0;
+      border-bottom: 1px solid rgba(31, 45, 71, 0.65);
+      font-size: 0.8rem;
+    }
+    .smart-row:last-child { border-bottom: none; }
 
     .perf-panel {
       background: var(--surface);
@@ -386,7 +423,7 @@
 </head>
 <body>
   <div class="disclaimer-strip" role="note">
-    Educational output, not investment advice. Paper-trading &amp; analytical reference only; verify levels and risk before any trade.
+    Educational output, not investment advice. Paper-trading &amp; analytical reference only; verify live quotes, OI, and risk before any trade.
   </div>
 
   <header class="topbar">
@@ -441,17 +478,19 @@
       <div class="tabs" id="categoryTabs">
         <button type="button" class="tab active" data-tab="ALL">All Setups</button>
         <button type="button" class="tab" data-tab="INDEX">Index Ideas</button>
-        <button type="button" class="tab" data-tab="OPT_BULL">Options Bullish</button>
-        <button type="button" class="tab" data-tab="OPT_BEAR">Options Bearish</button>
+        <button type="button" class="tab" data-tab="OPT_BULL">F&amp;O Bullish</button>
+        <button type="button" class="tab" data-tab="OPT_BEAR">F&amp;O Bearish</button>
         <button type="button" class="tab" data-tab="EQ_INTRA">Equity Setups</button>
+        <button type="button" class="tab" data-tab="SMARTLISTS">Upstox Smartlists</button>
         <button type="button" class="tab" data-tab="PERFORMANCE">Performance</button>
       </div>
       <div class="controls">
         <select id="quickPreset" aria-label="Quick Setup Preset">
           <option value="ALL">All Setups</option>
-          <option value="BTST">BTST Gap-Up</option>
+          <option value="BTST">BTST Overnight</option>
           <option value="ORB_CONFIRMED">9:30 ORB Confirmed</option>
           <option value="HIGH_ATR">₹15+ ATR Movers</option>
+          <option value="HIGH_PROB">Prob &ge; 70%</option>
         </select>
         <select id="sectorFilter" aria-label="Filter by Sector">
           <option value="ALL">All Sectors</option>
@@ -461,6 +500,10 @@
     </section>
 
     <div id="contentArea"></div>
+
+    <section id="smartlistsSection" class="hidden" aria-label="Upstox Smartlists">
+      <div class="smart-grid" id="smartlistsGrid"></div>
+    </section>
 
     <section id="performanceSection" class="perf-panel hidden" aria-label="Category Performance">
       <div style="display:flex;flex-wrap:wrap;justify-content:space-between;align-items:center;gap:8px;">
@@ -732,8 +775,17 @@
       const chgDisp = Number.isFinite(chgNum) ? `(${chgNum >= 0 ? '+' : ''}${chgNum.toFixed(2)}%)` : '';
       const chgCls = Number.isFinite(chgNum) ? (chgNum > 0 ? 'pos' : (chgNum < 0 ? 'neg' : 'neu')) : 'neu';
 
+      const probVal = item.move_probability_pct !== undefined && item.move_probability_pct !== null
+        ? `${Number(item.move_probability_pct).toFixed(0)}% Prob`
+        : null;
+
+      const paT1 = item.pa_target_1 ?? item.target_1;
+      const paT2 = item.pa_target_2 ?? item.target_2;
+      const oiTgt = item.oi_target;
+
       const ch = item.chain_summary || {};
       const oiParts = [
+        oiTgt ? `OI Tgt ${esc(oiTgt)}` : '',
         ch.pcr !== undefined && ch.pcr !== null ? `PCR ${esc(ch.pcr)}` : '',
         ch.max_pain !== undefined && ch.max_pain !== null ? `MaxPain ${esc(ch.max_pain)}` : '',
         ch.oi_build_up ? esc(ch.oi_build_up) : '',
@@ -750,18 +802,26 @@
               <div class="sym mono">${fmtNum(item.symbol)} <span class="${chgCls}" style="font-size:0.84rem;">${esc(chgDisp)}</span></div>
               <div class="sector-tag">${fmtNum(item.sector || 'EQUITY')} • ${fmtNum(tagLabel)} • Score: <strong class="mono">${fmtNum(item.score)}</strong></div>
             </div>
-            <span class="badge ${badgeCls}">${fmtNum(item.side || 'SETUP')}</span>
+            <div class="badge-group">
+              ${probVal ? `<span class="badge badge-prob mono">${esc(probVal)}</span>` : ''}
+              <span class="badge ${badgeCls}">${fmtNum(item.side || 'SETUP')}</span>
+            </div>
           </div>
 
           <div class="levels mono">
             <div class="lvl"><span>Entry</span><strong>${fmtNum(item.entry)}</strong></div>
             <div class="lvl"><span>Stop Loss</span><strong class="neg">${fmtNum(item.stop_loss)}</strong></div>
-            <div class="lvl"><span>Target 1</span><strong class="pos">${fmtNum(item.target_1)}</strong></div>
-            <div class="lvl"><span>Target 2</span><strong class="pos">${fmtNum(item.target_2)}</strong></div>
+            <div class="lvl"><span>PA T1</span><strong class="pos">${fmtNum(paT1)}</strong></div>
+            <div class="lvl"><span>PA T2</span><strong class="pos">${fmtNum(paT2)}</strong></div>
+          </div>
+
+          <div class="sr-strip mono">
+            <span>Imm. Support: <strong class="pos">${fmtNum(item.immediate_support)}</strong></span>
+            <span>Imm. Resistance: <strong class="neg">${fmtNum(item.immediate_resistance)}</strong></span>
+            <span>OI Target: <strong>${fmtNum(oiTgt)}</strong></span>
           </div>
 
           <div class="meta-row">
-            <span>Best Zone: <strong class="mono">${fmtNum(item.best_entry_low)}–${fmtNum(item.best_entry_high)}</strong></span>
             ${item.atr !== undefined && item.atr !== null ? `<span>ATR: <strong class="mono">₹${fmtNum(item.atr)}</strong></span>` : ''}
             ${item.vwap ? `<span>VWAP: <strong class="mono">${fmtNum(item.vwap)}</strong></span>` : ''}
             <span>Qty: <strong class="mono">${fmtNum(item.qty)}</strong></span>
@@ -769,9 +829,9 @@
           </div>
 
           ${(tagChips || sparkSvg) ? `<div class="meta-row"><div>${tagChips}</div><div>${sparkSvg}</div></div>` : ''}
-          ${oiParts.length ? `<div class="meta-row"><span>OI Chain: <strong class="mono">${oiParts.join(' • ')}</strong></span></div>` : ''}
+          ${oiParts.length ? `<div class="meta-row"><span>OI &amp; Chain: <strong class="mono">${oiParts.join(' • ')}</strong></span></div>` : ''}
           ${renderOptionPlanBlock(item.option_plan)}
-          <div class="rationale">${fmtNum(item.why_trade || item.entry_action || 'Systematic technical & relative strength alignment.')}</div>
+          <div class="rationale">${fmtNum(item.why_trade || item.entry_action || 'Systematic technical, OI & relative strength alignment.')}</div>
         </article>`;
     }
 
@@ -791,6 +851,31 @@
             <div class="hm-name">${esc(s.name)}</div>
             <div class="hm-pct mono ${pCls}">${esc(s.avg_move || '0.00%')}</div>
           </div>`;
+      }).join('');
+    }
+
+    function renderSmartlists(smart) {
+      const grid = document.getElementById('smartlistsGrid');
+      const sl = smart || {};
+      const blocks = [
+        { title: 'Top Gainers (NSE/BSE)', items: sl.top_gainers || [], metricKey: 'change_pct', suffix: '%', posOnly: true },
+        { title: 'Top Losers (NSE/BSE)', items: sl.top_losers || [], metricKey: 'change_pct', suffix: '%', posOnly: false },
+        { title: 'Intraday Recovery (Low → LTP)', items: sl.intraday_recovery || [], metricKey: 'recovery_pct', suffix: '% Rec', posOnly: true },
+        { title: 'Near 52-Week High', items: sl.near_52w_high || [], metricKey: 'pct_from_52w_high', suffix: '% vs 52WH', posOnly: false },
+      ];
+
+      grid.innerHTML = blocks.map((b) => {
+        const rowsHtml = (b.items || []).slice(0, 6).map((it) => {
+          const val = Number(it[b.metricKey] ?? 0);
+          const cls = val > 0 ? 'pos' : (val < 0 ? 'neg' : 'neu');
+          return `
+            <div class="smart-row">
+              <div><strong class="mono">${esc(it.symbol)}</strong> <span class="mono" style="color:var(--muted);font-size:0.74rem;">₹${esc(it.ltp)}</span></div>
+              <div class="mono ${cls}"><strong>${val >= 0 ? '+' : ''}${val.toFixed(2)}${esc(b.suffix)}</strong></div>
+            </div>`;
+        }).join('') || '<div class="smart-row" style="color:var(--muted);">No items in this list.</div>';
+
+        return `<div class="smart-card"><strong style="font-size:0.86rem;">${esc(b.title)}</strong><div style="margin-top:6px;">${rowsHtml}</div></div>`;
       }).join('');
     }
 
@@ -872,7 +957,7 @@
         <div class="kpi">
           <div class="kpi-label">Active Ideas</div>
           <div class="kpi-val mono">${fmtNum(s.ideas_count)}</div>
-          <div class="kpi-sub">Stock Setups: ${fmtNum(s.stock_setups_count)}</div>
+          <div class="kpi-sub">F&amp;O Universe: ${fmtNum(s.fo_stocks_analyzed ?? s.stock_setups_count)}</div>
         </div>
       `;
 
@@ -881,13 +966,20 @@
 
       const contentEl = document.getElementById('contentArea');
       const perfEl = document.getElementById('performanceSection');
+      const smartEl = document.getElementById('smartlistsSection');
+
+      perfEl.classList.add('hidden');
+      smartEl.classList.add('hidden');
 
       if (activeTab === 'PERFORMANCE') {
         contentEl.innerHTML = '';
         perfEl.classList.remove('hidden');
         renderPerformanceTab(data.performance);
+      } else if (activeTab === 'SMARTLISTS') {
+        contentEl.innerHTML = '';
+        smartEl.classList.remove('hidden');
+        renderSmartlists(data.smartlists);
       } else {
-        perfEl.classList.add('hidden');
         const q = document.getElementById('searchInput').value.trim().toUpperCase();
         const sec = document.getElementById('sectorFilter').value;
         const preset = document.getElementById('quickPreset').value;
@@ -903,15 +995,17 @@
             matchPreset = Boolean(item.gap_meta && item.gap_meta.orb_confirmed) || String(item.extension_status || '').toUpperCase().includes('CONFIRMED');
           } else if (preset === 'HIGH_ATR') {
             matchPreset = Number(item.atr || 0) >= 15.0;
+          } else if (preset === 'HIGH_PROB') {
+            matchPreset = Number(item.move_probability_pct || 0) >= 70.0;
           }
           return matchSym && matchSec && matchPreset;
         });
 
         const sections = [
           { key: 'INDEX', title: 'Index Option & Hedging Ideas', tag: 'INDEX', items: filterFn(data.index_trades) },
-          { key: 'OPT_BULL', title: 'Options Bullish Candidates', tag: 'OPT BULL', items: filterFn(data.options_bullish || (data.setups || {}).bullish) },
-          { key: 'OPT_BEAR', title: 'Options Bearish Candidates', tag: 'OPT BEAR', items: filterFn(data.options_bearish || (data.setups || {}).bearish) },
-          { key: 'EQ_INTRA', title: 'Equity Setups', tag: 'EQUITY', items: filterFn(data.equity_intraday) },
+          { key: 'OPT_BULL', title: 'F&O Bullish Setups (All Option-Chain Stocks)', tag: 'OPT BULL', items: filterFn(data.options_bullish || (data.setups || {}).bullish) },
+          { key: 'OPT_BEAR', title: 'F&O Bearish Setups (All Option-Chain Stocks)', tag: 'OPT BEAR', items: filterFn(data.options_bearish || (data.setups || {}).bearish) },
+          { key: 'EQ_INTRA', title: 'Additional Equity Setups', tag: 'EQUITY', items: filterFn(data.equity_intraday) },
         ].filter((secObj) => activeTab === 'ALL' || activeTab === secObj.key);
 
         let html = '';
