@@ -3,7 +3,7 @@
 <head>
   <meta charset="UTF-8" />
   <meta name="viewport" content="width=device-width, initial-scale=1.0" />
-  <meta name="description" content="Quant &amp; Hedging Desk — Institutional NSE/BSE Screener Terminal with F&amp;O Setups, Probability, OI/PA Targets, Support/Resistance, and Smartlists." />
+  <meta name="description" content="Quant &amp; Hedging Desk — Institutional NSE/BSE Screener Terminal with Top 40 Setups, All Ranked &amp; Sector Stocks, OI/PA Targets, Support/Resistance, and Smartlists." />
   <meta http-equiv="Content-Security-Policy" content="default-src 'self' https://fonts.googleapis.com https://fonts.gstatic.com; script-src 'self' 'unsafe-inline'; style-src 'self' 'unsafe-inline' https://fonts.googleapis.com; font-src 'self' https://fonts.gstatic.com; img-src 'self' data:; connect-src 'self' https:; frame-ancestors 'none';" />
   <title>Quant &amp; Hedging Desk — Institutional Screener Terminal</title>
   <link rel="preconnect" href="https://fonts.googleapis.com">
@@ -384,7 +384,7 @@
       margin-top: 12px;
     }
     .table-scroll { width: 100%; overflow-x: auto; margin-top: 10px; }
-    table { width: 100%; border-collapse: collapse; min-width: 680px; font-size: 0.82rem; }
+    table { width: 100%; border-collapse: collapse; min-width: 780px; font-size: 0.82rem; }
     th, td { padding: 9px 12px; border-bottom: 1px solid var(--border); text-align: left; }
     th { color: var(--muted); font-size: 0.72rem; text-transform: uppercase; background: var(--surface-2); }
 
@@ -476,11 +476,12 @@
 
     <section class="filter-bar">
       <div class="tabs" id="categoryTabs">
-        <button type="button" class="tab active" data-tab="ALL">All Setups</button>
+        <button type="button" class="tab active" data-tab="ALL">Top 40 Setups</button>
         <button type="button" class="tab" data-tab="INDEX">Index Ideas</button>
-        <button type="button" class="tab" data-tab="OPT_BULL">F&amp;O Bullish</button>
-        <button type="button" class="tab" data-tab="OPT_BEAR">F&amp;O Bearish</button>
-        <button type="button" class="tab" data-tab="EQ_INTRA">Equity Setups</button>
+        <button type="button" class="tab" data-tab="OPT_BULL">F&amp;O Bullish (10)</button>
+        <button type="button" class="tab" data-tab="OPT_BEAR">F&amp;O Bearish (10)</button>
+        <button type="button" class="tab" data-tab="EQ_INTRA">Equity (20)</button>
+        <button type="button" class="tab" data-tab="ALL_RANKED">All Ranked &amp; Sector</button>
         <button type="button" class="tab" data-tab="SMARTLISTS">Upstox Smartlists</button>
         <button type="button" class="tab" data-tab="PERFORMANCE">Performance</button>
       </div>
@@ -500,6 +501,32 @@
     </section>
 
     <div id="contentArea"></div>
+
+    <section id="rankedSection" class="perf-panel hidden" aria-label="All Ranked Stocks by Rank and Sector">
+      <div style="display:flex;flex-wrap:wrap;justify-content:space-between;align-items:center;gap:8px;">
+        <strong>All Analyzed Stocks — Rank &amp; Sector View</strong>
+        <span style="font-size:0.78rem;color:var(--muted);">Top 40 setups highlighted; remaining F&amp;O stocks ordered by Probability &amp; Score.</span>
+      </div>
+      <div class="table-scroll">
+        <table>
+          <thead>
+            <tr>
+              <th scope="col">Rank</th>
+              <th scope="col">Symbol</th>
+              <th scope="col">Sector</th>
+              <th scope="col">Side</th>
+              <th scope="col">Prob %</th>
+              <th scope="col">Entry</th>
+              <th scope="col">SL</th>
+              <th scope="col">PA T1 / T2</th>
+              <th scope="col">OI Tgt</th>
+              <th scope="col">Sup / Res</th>
+            </tr>
+          </thead>
+          <tbody id="rankedTbody"></tbody>
+        </table>
+      </div>
+    </section>
 
     <section id="smartlistsSection" class="hidden" aria-label="Upstox Smartlists">
       <div class="smart-grid" id="smartlistsGrid"></div>
@@ -747,6 +774,7 @@
         ...(payload.options_bullish || []),
         ...(payload.options_bearish || []),
         ...(payload.equity_intraday || []),
+        ...(payload.ranked_stocks || []),
       ];
       const sectors = Array.from(new Set(allItems.map((x) => x && x.sector).filter(Boolean))).sort();
       const sel = document.getElementById('sectorFilter');
@@ -835,6 +863,45 @@
         </article>`;
     }
 
+    function renderRankedTab(payload) {
+      const tbody = document.getElementById('rankedTbody');
+      const q = document.getElementById('searchInput').value.trim().toUpperCase();
+      const sec = document.getElementById('sectorFilter').value;
+      const preset = document.getElementById('quickPreset').value;
+
+      const list = (payload.ranked_stocks || []).filter((item) => {
+        if (!item) return false;
+        const matchSym = !q || String(item.symbol || '').toUpperCase().includes(q);
+        const matchSec = sec === 'ALL' || String(item.sector || '') === sec;
+        const matchProb = preset !== 'HIGH_PROB' || Number(item.move_probability_pct || 0) >= 70.0;
+        return matchSym && matchSec && matchProb;
+      });
+
+      if (!list.length) {
+        tbody.innerHTML = `<tr><td colspan="10" style="text-align:center;color:var(--muted);">No ranked stocks match filter.</td></tr>`;
+        return;
+      }
+
+      tbody.innerHTML = list.map((it) => {
+        const isBull = String(it.side || '').toUpperCase().includes('BULL');
+        const sideCls = isBull ? 'pos' : 'neg';
+        const topBadge = it.is_top_40 ? ` <span class="chip mono">TOP 40</span>` : '';
+        return `
+          <tr>
+            <td class="mono"><strong>#${fmtNum(it.rank)}</strong></td>
+            <td class="mono"><strong>${fmtNum(it.symbol)}</strong>${topBadge}</td>
+            <td class="mono">${fmtNum(it.sector)}</td>
+            <td class="mono ${sideCls}"><strong>${fmtNum(it.side)}</strong></td>
+            <td class="mono"><strong>${fmtNum(it.move_probability_pct)}%</strong></td>
+            <td class="mono">${fmtNum(it.entry)}</td>
+            <td class="mono neg">${fmtNum(it.stop_loss)}</td>
+            <td class="mono pos">${fmtNum(it.pa_target_1)} / ${fmtNum(it.pa_target_2)}</td>
+            <td class="mono">${fmtNum(it.oi_target)}</td>
+            <td class="mono">${fmtNum(it.immediate_support)} / ${fmtNum(it.immediate_resistance)}</td>
+          </tr>`;
+      }).join('');
+    }
+
     function renderHeatmap(sectors) {
       const el = document.getElementById('sectorHeatmap');
       const list = Array.isArray(sectors) ? sectors.slice(0, 12) : [];
@@ -858,10 +925,10 @@
       const grid = document.getElementById('smartlistsGrid');
       const sl = smart || {};
       const blocks = [
-        { title: 'Top Gainers (NSE/BSE)', items: sl.top_gainers || [], metricKey: 'change_pct', suffix: '%', posOnly: true },
-        { title: 'Top Losers (NSE/BSE)', items: sl.top_losers || [], metricKey: 'change_pct', suffix: '%', posOnly: false },
-        { title: 'Intraday Recovery (Low → LTP)', items: sl.intraday_recovery || [], metricKey: 'recovery_pct', suffix: '% Rec', posOnly: true },
-        { title: 'Near 52-Week High', items: sl.near_52w_high || [], metricKey: 'pct_from_52w_high', suffix: '% vs 52WH', posOnly: false },
+        { title: 'Top Gainers (NSE/BSE)', items: sl.top_gainers || [], metricKey: 'change_pct', suffix: '%' },
+        { title: 'Top Losers (NSE/BSE)', items: sl.top_losers || [], metricKey: 'change_pct', suffix: '%' },
+        { title: 'Intraday Recovery (Low → LTP)', items: sl.intraday_recovery || [], metricKey: 'recovery_pct', suffix: '% Rec' },
+        { title: 'Near 52-Week High', items: sl.near_52w_high || [], metricKey: 'pct_from_52w_high', suffix: '% vs 52WH' },
       ];
 
       grid.innerHTML = blocks.map((b) => {
@@ -955,9 +1022,9 @@
           <div class="kpi-sub mono">${fmtNum(s.breadth_ratio)} • &gt;EMA20: ${fmtNum(s.above_ema20)}%</div>
         </div>
         <div class="kpi">
-          <div class="kpi-label">Active Ideas</div>
-          <div class="kpi-val mono">${fmtNum(s.ideas_count)}</div>
-          <div class="kpi-sub">F&amp;O Universe: ${fmtNum(s.fo_stocks_analyzed ?? s.stock_setups_count)}</div>
+          <div class="kpi-label">Top Setups / Ranked</div>
+          <div class="kpi-val mono">${fmtNum(s.ideas_count)} / ${fmtNum(s.total_ranked_stocks ?? (data.ranked_stocks || []).length)}</div>
+          <div class="kpi-sub">F&amp;O Analyzed: ${fmtNum(s.fo_stocks_analyzed ?? s.stock_setups_count)}</div>
         </div>
       `;
 
@@ -965,13 +1032,19 @@
       populateSectors(data);
 
       const contentEl = document.getElementById('contentArea');
+      const rankedEl = document.getElementById('rankedSection');
       const perfEl = document.getElementById('performanceSection');
       const smartEl = document.getElementById('smartlistsSection');
 
+      rankedEl.classList.add('hidden');
       perfEl.classList.add('hidden');
       smartEl.classList.add('hidden');
 
-      if (activeTab === 'PERFORMANCE') {
+      if (activeTab === 'ALL_RANKED') {
+        contentEl.innerHTML = '';
+        rankedEl.classList.remove('hidden');
+        renderRankedTab(data);
+      } else if (activeTab === 'PERFORMANCE') {
         contentEl.innerHTML = '';
         perfEl.classList.remove('hidden');
         renderPerformanceTab(data.performance);
@@ -1003,9 +1076,9 @@
 
         const sections = [
           { key: 'INDEX', title: 'Index Option & Hedging Ideas', tag: 'INDEX', items: filterFn(data.index_trades) },
-          { key: 'OPT_BULL', title: 'F&O Bullish Setups (All Option-Chain Stocks)', tag: 'OPT BULL', items: filterFn(data.options_bullish || (data.setups || {}).bullish) },
-          { key: 'OPT_BEAR', title: 'F&O Bearish Setups (All Option-Chain Stocks)', tag: 'OPT BEAR', items: filterFn(data.options_bearish || (data.setups || {}).bearish) },
-          { key: 'EQ_INTRA', title: 'Additional Equity Setups', tag: 'EQUITY', items: filterFn(data.equity_intraday) },
+          { key: 'OPT_BULL', title: 'Top 10 F&O Bullish Setups', tag: 'OPT BULL', items: filterFn(data.options_bullish || (data.setups || {}).bullish) },
+          { key: 'OPT_BEAR', title: 'Top 10 F&O Bearish Setups', tag: 'OPT BEAR', items: filterFn(data.options_bearish || (data.setups || {}).bearish) },
+          { key: 'EQ_INTRA', title: 'Top 20 Equity Setups (10 Bull + 10 Bear, Sector-Balanced)', tag: 'EQUITY', items: filterFn(data.equity_intraday) },
         ].filter((secObj) => activeTab === 'ALL' || activeTab === secObj.key);
 
         let html = '';
@@ -1086,9 +1159,21 @@
       setRunStatus('Live run endpoint cleared; using static JSON refresh.', 'st-stale', 'STATIC MODE');
     });
 
-    document.getElementById('searchInput').addEventListener('input', () => currentPayload && renderDashboard(currentPayload));
-    document.getElementById('sectorFilter').addEventListener('change', () => currentPayload && renderDashboard(currentPayload));
-    document.getElementById('quickPreset').addEventListener('change', () => currentPayload && renderDashboard(currentPayload));
+    document.getElementById('searchInput').addEventListener('input', () => {
+      if (!currentPayload) return;
+      if (activeTab === 'ALL_RANKED') renderRankedTab(currentPayload);
+      else renderDashboard(currentPayload);
+    });
+    document.getElementById('sectorFilter').addEventListener('change', () => {
+      if (!currentPayload) return;
+      if (activeTab === 'ALL_RANKED') renderRankedTab(currentPayload);
+      else renderDashboard(currentPayload);
+    });
+    document.getElementById('quickPreset').addEventListener('change', () => {
+      if (!currentPayload) return;
+      if (activeTab === 'ALL_RANKED') renderRankedTab(currentPayload);
+      else renderDashboard(currentPayload);
+    });
 
     document.querySelectorAll('.tab').forEach((btn) => {
       btn.addEventListener('click', () => {
