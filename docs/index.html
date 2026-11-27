@@ -3,6 +3,8 @@
 <head>
   <meta charset="UTF-8" />
   <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+  <meta name="description" content="Quant &amp; Hedging Desk — Institutional NSE/BSE Screener Terminal with BTST, Intraday ORB, Option Chain Plans, and Walk-Forward Performance." />
+  <meta http-equiv="Content-Security-Policy" content="default-src 'self' https://fonts.googleapis.com https://fonts.gstatic.com; script-src 'self' 'unsafe-inline'; style-src 'self' 'unsafe-inline' https://fonts.googleapis.com; font-src 'self' https://fonts.gstatic.com; img-src 'self' data:; connect-src 'self' https:; frame-ancestors 'none';" />
   <title>Quant &amp; Hedging Desk — Institutional Screener Terminal</title>
   <link rel="preconnect" href="https://fonts.googleapis.com">
   <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
@@ -36,6 +38,15 @@
     .mono {
       font-family: 'JetBrains Mono', monospace;
       font-variant-numeric: tabular-nums;
+    }
+
+    .disclaimer-strip {
+      background: #131c2e;
+      border-bottom: 1px solid var(--border);
+      color: #cbd5e1;
+      font-size: 0.75rem;
+      padding: 6px 16px;
+      text-align: center;
     }
 
     .topbar {
@@ -127,7 +138,7 @@
     }
     .st-fresh { background: var(--bull-bg); color: var(--bull); border: 1px solid rgba(16,185,129,0.35); }
     .st-stale { background: var(--warn-bg); color: var(--warn); border: 1px solid rgba(245,158,11,0.35); }
-    .st-err { background: var(--bear-bg); color: var(--bear); border: 1px solid rgba(244,63,94,0.35); }
+    .st-err { background: var(--bear-bg); color: #fca5a5; border: 1px solid rgba(244,63,94,0.45); }
 
     .endpoint-drawer {
       display: none;
@@ -170,7 +181,7 @@
       display: grid;
       grid-template-columns: repeat(auto-fit, minmax(200px, 1fr));
       gap: 12px;
-      margin-bottom: 18px;
+      margin-bottom: 14px;
     }
     .kpi {
       background: var(--surface);
@@ -184,6 +195,23 @@
     .kpi-label { font-size: 0.72rem; text-transform: uppercase; letter-spacing: 0.6px; color: var(--muted); }
     .kpi-val { font-size: 1.3rem; font-weight: 700; margin-top: 4px; }
     .kpi-sub { font-size: 0.78rem; margin-top: 3px; color: var(--muted); }
+
+    .heatmap-strip {
+      display: grid;
+      grid-template-columns: repeat(auto-fill, minmax(122px, 1fr));
+      gap: 8px;
+      margin-bottom: 16px;
+    }
+    .hm-box {
+      background: var(--surface);
+      border: 1px solid var(--border);
+      border-radius: 9px;
+      padding: 7px 10px;
+    }
+    .hm-box.up { background: rgba(16, 185, 129, 0.10); border-color: rgba(16, 185, 129, 0.3); }
+    .hm-box.dn { background: rgba(244, 63, 94, 0.10); border-color: rgba(244, 63, 94, 0.3); }
+    .hm-name { font-size: 0.7rem; font-weight: 700; color: #e2e8f0; }
+    .hm-pct { font-size: 0.82rem; font-weight: 700; margin-top: 1px; }
 
     .pos { color: var(--bull); }
     .neg { color: var(--bear); }
@@ -276,9 +304,21 @@
     .meta-row {
       display: flex;
       flex-wrap: wrap;
+      align-items: center;
+      justify-content: space-between;
       gap: 6px 12px;
       font-size: 0.76rem;
       color: var(--muted);
+    }
+    .chip {
+      display: inline-block;
+      font-size: 0.68rem;
+      font-weight: 700;
+      padding: 2px 6px;
+      border-radius: 5px;
+      background: rgba(56, 189, 248, 0.12);
+      color: #bae6fd;
+      border: 1px solid rgba(56, 189, 248, 0.25);
     }
     .rationale {
       font-size: 0.79rem;
@@ -298,6 +338,18 @@
       color: #bae6fd;
       line-height: 1.5;
     }
+
+    .perf-panel {
+      background: var(--surface);
+      border: 1px solid var(--border);
+      border-radius: 12px;
+      padding: 16px;
+      margin-top: 12px;
+    }
+    .table-scroll { width: 100%; overflow-x: auto; margin-top: 10px; }
+    table { width: 100%; border-collapse: collapse; min-width: 680px; font-size: 0.82rem; }
+    th, td { padding: 9px 12px; border-bottom: 1px solid var(--border); text-align: left; }
+    th { color: var(--muted); font-size: 0.72rem; text-transform: uppercase; background: var(--surface-2); }
 
     .empty-box {
       background: var(--surface);
@@ -322,6 +374,8 @@
       font-size: 0.82rem;
     }
 
+    .hidden { display: none; }
+
     @media (max-width: 640px) {
       .topbar { padding: 10px 12px; }
       .container { padding: 14px 12px 44px; }
@@ -331,6 +385,10 @@
   </style>
 </head>
 <body>
+  <div class="disclaimer-strip" role="note">
+    Educational output, not investment advice. Paper-trading &amp; analytical reference only; verify levels and risk before any trade.
+  </div>
+
   <header class="topbar">
     <div class="brand">
       <div class="brand-dot" id="statusDot"></div>
@@ -341,7 +399,7 @@
     </div>
 
     <div class="controls">
-      <select id="historySelect" title="Select Historical Session">
+      <select id="historySelect" title="Select Historical Session" aria-label="Select Historical Session">
         <option value="data/latest.json">Latest Run (Fresh)</option>
       </select>
       <button type="button" class="toggle" id="autoSyncBtn" title="Toggle 15s background re-check">Auto-Sync: OFF</button>
@@ -352,16 +410,16 @@
 
   <main class="container">
     <div class="endpoint-drawer" id="endpointDrawer">
-      <label for="runEndpointInput" style="color:#cbd5e1;font-weight:600;">Live Run / Webhook URL (POST):</label>
+      <label for="runEndpointInput" style="color:#cbd5e1;font-weight:600;">Live Run / Webhook URL (HTTPS POST):</label>
       <input
         type="url"
         id="runEndpointInput"
-        placeholder="Optional: https://your-backend/run-screener (leave blank for static JSON refresh)"
+        placeholder="Optional: https://your-backend/run-screener (https:// only)"
       />
       <button type="button" class="primary" id="saveEndpointBtn">Save</button>
       <button type="button" id="clearEndpointBtn">Clear</button>
       <small style="width:100%;color:var(--muted);">
-        Note: Never embed API tokens or secrets in browser URLs/inputs. Static GitHub Pages refreshes from <code>data/latest.json</code>; a POST endpoint triggers live server execution when configured.
+        Only HTTPS URLs are permitted. Static GitHub Pages refreshes from <code>data/latest.json</code>; a POST endpoint triggers live server execution when configured.
       </small>
     </div>
 
@@ -377,15 +435,24 @@
 
     <section class="kpi-grid" id="kpiGrid"></section>
 
+    <section class="heatmap-strip" id="sectorHeatmap" aria-label="Sector Heatmap"></section>
+
     <section class="filter-bar">
       <div class="tabs" id="categoryTabs">
         <button type="button" class="tab active" data-tab="ALL">All Setups</button>
         <button type="button" class="tab" data-tab="INDEX">Index Ideas</button>
         <button type="button" class="tab" data-tab="OPT_BULL">Options Bullish</button>
         <button type="button" class="tab" data-tab="OPT_BEAR">Options Bearish</button>
-        <button type="button" class="tab" data-tab="EQ_INTRA">Equity Intraday</button>
+        <button type="button" class="tab" data-tab="EQ_INTRA">Equity Setups</button>
+        <button type="button" class="tab" data-tab="PERFORMANCE">Performance</button>
       </div>
       <div class="controls">
+        <select id="quickPreset" aria-label="Quick Setup Preset">
+          <option value="ALL">All Setups</option>
+          <option value="BTST">BTST Gap-Up</option>
+          <option value="ORB_CONFIRMED">9:30 ORB Confirmed</option>
+          <option value="HIGH_ATR">₹15+ ATR Movers</option>
+        </select>
         <select id="sectorFilter" aria-label="Filter by Sector">
           <option value="ALL">All Sectors</option>
         </select>
@@ -395,8 +462,32 @@
 
     <div id="contentArea"></div>
 
+    <section id="performanceSection" class="perf-panel hidden" aria-label="Category Performance">
+      <div style="display:flex;flex-wrap:wrap;justify-content:space-between;align-items:center;gap:8px;">
+        <strong>Category Performance Breakdown</strong>
+        <span class="neu" style="font-size:0.78rem;">Sample size &lt; 100 closed trades per category is low-sample; treat win-rate with caution.</span>
+      </div>
+      <div class="table-scroll">
+        <table>
+          <thead>
+            <tr>
+              <th scope="col">Category</th>
+              <th scope="col">Closed</th>
+              <th scope="col">Open</th>
+              <th scope="col">W / L</th>
+              <th scope="col">Win Rate</th>
+              <th scope="col">Net P&amp;L (₹)</th>
+              <th scope="col">Sample Note</th>
+            </tr>
+          </thead>
+          <tbody id="perfTbody"></tbody>
+        </table>
+      </div>
+    </section>
+
     <section class="wf-banner" id="wfBanner"></section>
   </main>
+
   <script>
     const ENDPOINT_STORAGE_KEY = 'mss_live_run_endpoint_v1';
     let currentPayload = null;
@@ -424,6 +515,15 @@
       return 'neu';
     };
 
+    function isHttpsUrl(raw) {
+      try {
+        const u = new URL(String(raw || '').trim());
+        return u.protocol === 'https:';
+      } catch (_) {
+        return false;
+      }
+    }
+
     function setRunStatus(msg, badgeType = 'st-stale', badgeLabel = 'SNAPSHOT') {
       document.getElementById('runStatusText').textContent = msg;
       const b = document.getElementById('freshnessBadge');
@@ -449,11 +549,31 @@
       if (ageMin <= 15) {
         setRunStatus(`Snapshot age: ${ageMin} min (${genRaw})`, 'st-fresh', 'RECENT DATA');
       } else if (ageMin <= 1440) {
-        setRunStatus(`Snapshot age: ${ageMin} min (${genRaw}) — not tick-by-tick live`, 'st-stale', `${ageMin}M OLD`);
+        setRunStatus(`Snapshot age: ${ageMin} min (${genRaw}) — within 1 trading day`, 'st-stale', `${ageMin}M OLD`);
       } else {
         const hrs = Math.round(ageMin / 60);
-        setRunStatus(`Snapshot is ${hrs}h old (${genRaw}) — market closed or batch run pending`, 'st-stale', 'STALE / CLOSED');
+        setRunStatus(`Snapshot is ${hrs}h old (>1 trading day: ${genRaw}) — stale data`, 'st-err', 'STALE >1D');
       }
+    }
+
+    function renderSparkline(arr) {
+      if (!Array.isArray(arr) || arr.length < 2) return '';
+      const nums = arr.map(Number).filter(Number.isFinite);
+      if (nums.length < 2) return '';
+      const min = Math.min(...nums);
+      const max = Math.max(...nums);
+      const span = max - min || 1;
+      const w = 72;
+      const h = 22;
+      const pts = nums
+        .map((val, idx) => {
+          const x = ((idx / (nums.length - 1)) * w).toFixed(1);
+          const y = (h - 3 - ((val - min) / span) * (h - 6)).toFixed(1);
+          return `${x},${y}`;
+        })
+        .join(' ');
+      const col = nums[nums.length - 1] >= nums[0] ? '#10b981' : '#f43f5e';
+      return `<svg width="${w}" height="${h}" viewBox="0 0 ${w} ${h}" aria-hidden="true"><polyline fill="none" stroke="${col}" stroke-width="1.8" points="${pts}" /></svg>`;
     }
 
     async function fetchJsonNoCache(url) {
@@ -532,8 +652,11 @@
         document.getElementById('contentArea').innerHTML = `
           <div class="empty-box">
             <h3>Data snapshot not found (${esc(filePath)})</h3>
-            <p style="margin-top:6px;">Run the screener workflow or configure a live run endpoint to generate <code>docs/data/latest.json</code>.</p>
+            <p style="margin-top:6px;">Run the screener workflow or configure an HTTPS run endpoint to generate <code>docs/data/latest.json</code>.</p>
+            <button type="button" class="primary" style="margin-top:12px;" id="emptyRetryBtn">↻ Retry</button>
           </div>`;
+        const rBtn = document.getElementById('emptyRetryBtn');
+        if (rBtn) rBtn.addEventListener('click', () => loadSnapshot(filePath, true));
       }
     }
 
@@ -546,7 +669,7 @@
 
       const endpoint = (localStorage.getItem(ENDPOINT_STORAGE_KEY) || '').trim();
       try {
-        if (endpoint) {
+        if (endpoint && isHttpsUrl(endpoint)) {
           setRunStatus('Triggering remote screener run...', 'st-stale', 'RUNNING');
           const modeVal = (currentPayload && currentPayload.mode) || 'BTST';
           const resp = await fetch(endpoint, {
@@ -616,6 +739,10 @@
         ch.oi_build_up ? esc(ch.oi_build_up) : '',
       ].filter(Boolean);
 
+      const tags = Array.isArray(item.setup_tags) ? item.setup_tags.slice(0, 3) : [];
+      const tagChips = tags.map((t) => `<span class="chip mono">${esc(t)}</span>`).join(' ');
+      const sparkSvg = renderSparkline(item.sparkline_10d);
+
       return `
         <article class="card">
           <div class="card-head">
@@ -635,16 +762,63 @@
 
           <div class="meta-row">
             <span>Best Zone: <strong class="mono">${fmtNum(item.best_entry_low)}–${fmtNum(item.best_entry_high)}</strong></span>
+            ${item.atr !== undefined && item.atr !== null ? `<span>ATR: <strong class="mono">₹${fmtNum(item.atr)}</strong></span>` : ''}
             ${item.vwap ? `<span>VWAP: <strong class="mono">${fmtNum(item.vwap)}</strong></span>` : ''}
-            ${item.oi_target ? `<span>OI Target: <strong class="mono">${fmtNum(item.oi_target)}</strong></span>` : ''}
             <span>Qty: <strong class="mono">${fmtNum(item.qty)}</strong></span>
             ${item.max_risk !== undefined && item.max_risk !== null ? `<span>Risk: <strong class="mono">₹${fmtNum(item.max_risk)}</strong></span>` : ''}
           </div>
 
+          ${(tagChips || sparkSvg) ? `<div class="meta-row"><div>${tagChips}</div><div>${sparkSvg}</div></div>` : ''}
           ${oiParts.length ? `<div class="meta-row"><span>OI Chain: <strong class="mono">${oiParts.join(' • ')}</strong></span></div>` : ''}
           ${renderOptionPlanBlock(item.option_plan)}
           <div class="rationale">${fmtNum(item.why_trade || item.entry_action || 'Systematic technical & relative strength alignment.')}</div>
         </article>`;
+    }
+
+    function renderHeatmap(sectors) {
+      const el = document.getElementById('sectorHeatmap');
+      const list = Array.isArray(sectors) ? sectors.slice(0, 12) : [];
+      if (!list.length) {
+        el.innerHTML = '';
+        return;
+      }
+      el.innerHTML = list.map((s) => {
+        const avg = Number(s.raw_avg ?? 0);
+        const cls = avg > 0.05 ? 'up' : (avg < -0.05 ? 'dn' : '');
+        const pCls = avg > 0.05 ? 'pos' : (avg < -0.05 ? 'neg' : 'neu');
+        return `
+          <div class="hm-box ${cls}">
+            <div class="hm-name">${esc(s.name)}</div>
+            <div class="hm-pct mono ${pCls}">${esc(s.avg_move || '0.00%')}</div>
+          </div>`;
+      }).join('');
+    }
+
+    function renderPerformanceTab(perf) {
+      const tbody = document.getElementById('perfTbody');
+      const byCat = (perf && perf.by_category) || {};
+      const cats = ['EQ_BTST', 'EQ_INTRA', 'OPT_BULL', 'OPT_BEAR', 'INDEX'];
+      tbody.innerHTML = cats.map((cat) => {
+        const st = byCat[cat] || {};
+        const closed = Number(st.closed_count || 0);
+        const open = Number(st.open_count || 0);
+        const wins = Number(st.wins || 0);
+        const losses = Number(st.losses || 0);
+        const wr = closed > 0 ? `${Number(st.win_rate_pct || 0).toFixed(1)}%` : 'N/A';
+        const pnl = Number(st.net_pnl_rs || 0);
+        const pnlCls = pnl > 0 ? 'pos' : (pnl < 0 ? 'neg' : 'neu');
+        const note = closed < 100 ? `Low sample (${closed} &lt; 100)` : 'Sample &ge; 100';
+        return `
+          <tr>
+            <td class="mono"><strong>${esc(cat)}</strong></td>
+            <td class="mono">${closed}</td>
+            <td class="mono">${open}</td>
+            <td class="mono">${wins}W / ${losses}L</td>
+            <td class="mono">${esc(wr)}</td>
+            <td class="mono ${pnlCls}"><strong>${pnl >= 0 ? '+' : ''}${pnl.toFixed(2)}</strong></td>
+            <td><span class="chip">${note}</span></td>
+          </tr>`;
+      }).join('');
     }
 
     function flashIfChanged(key, newVal) {
@@ -702,49 +876,70 @@
         </div>
       `;
 
+      renderHeatmap(data.sectors);
       populateSectors(data);
 
-      const q = document.getElementById('searchInput').value.trim().toUpperCase();
-      const sec = document.getElementById('sectorFilter').value;
-      const filterFn = (arr) => (arr || []).filter((item) => {
-        if (!item) return false;
-        const matchSym = !q || String(item.symbol || '').toUpperCase().includes(q);
-        const matchSec = sec === 'ALL' || String(item.sector || '') === sec;
-        return matchSym && matchSec;
-      });
+      const contentEl = document.getElementById('contentArea');
+      const perfEl = document.getElementById('performanceSection');
 
-      const sections = [
-        { key: 'INDEX', title: 'Index Option & Hedging Ideas', tag: 'INDEX', items: filterFn(data.index_trades) },
-        { key: 'OPT_BULL', title: 'Options Bullish Candidates', tag: 'OPT BULL', items: filterFn(data.options_bullish || (data.setups || {}).bullish) },
-        { key: 'OPT_BEAR', title: 'Options Bearish Candidates', tag: 'OPT BEAR', items: filterFn(data.options_bearish || (data.setups || {}).bearish) },
-        { key: 'EQ_INTRA', title: 'Equity Intraday / Swing Setups', tag: 'EQUITY', items: filterFn(data.equity_intraday) },
-      ].filter((secObj) => activeTab === 'ALL' || activeTab === secObj.key);
+      if (activeTab === 'PERFORMANCE') {
+        contentEl.innerHTML = '';
+        perfEl.classList.remove('hidden');
+        renderPerformanceTab(data.performance);
+      } else {
+        perfEl.classList.add('hidden');
+        const q = document.getElementById('searchInput').value.trim().toUpperCase();
+        const sec = document.getElementById('sectorFilter').value;
+        const preset = document.getElementById('quickPreset').value;
 
-      let html = '';
-      sections.forEach((secObj) => {
-        if (!secObj.items.length) return;
-        html += `
-          <div class="section-title">
-            <span>${esc(secObj.title)}</span>
-            <span class="mono" style="font-size:0.78rem; color:var(--muted);">${secObj.items.length} setups</span>
-          </div>
-          <div class="cards-grid">${secObj.items.map((i) => renderCard(i, secObj.tag)).join('')}</div>`;
-      });
+        const filterFn = (arr) => (arr || []).filter((item) => {
+          if (!item) return false;
+          const matchSym = !q || String(item.symbol || '').toUpperCase().includes(q);
+          const matchSec = sec === 'ALL' || String(item.sector || '') === sec;
+          let matchPreset = true;
+          if (preset === 'BTST') {
+            matchPreset = String(item.extension_status || '').toUpperCase().includes('BTST') || String(data.mode || '').toUpperCase() === 'BTST';
+          } else if (preset === 'ORB_CONFIRMED') {
+            matchPreset = Boolean(item.gap_meta && item.gap_meta.orb_confirmed) || String(item.extension_status || '').toUpperCase().includes('CONFIRMED');
+          } else if (preset === 'HIGH_ATR') {
+            matchPreset = Number(item.atr || 0) >= 15.0;
+          }
+          return matchSym && matchSec && matchPreset;
+        });
 
-      document.getElementById('contentArea').innerHTML = html || `<div class="empty-box">No setups match the selected filter/date criteria.</div>`;
+        const sections = [
+          { key: 'INDEX', title: 'Index Option & Hedging Ideas', tag: 'INDEX', items: filterFn(data.index_trades) },
+          { key: 'OPT_BULL', title: 'Options Bullish Candidates', tag: 'OPT BULL', items: filterFn(data.options_bullish || (data.setups || {}).bullish) },
+          { key: 'OPT_BEAR', title: 'Options Bearish Candidates', tag: 'OPT BEAR', items: filterFn(data.options_bearish || (data.setups || {}).bearish) },
+          { key: 'EQ_INTRA', title: 'Equity Setups', tag: 'EQUITY', items: filterFn(data.equity_intraday) },
+        ].filter((secObj) => activeTab === 'ALL' || activeTab === secObj.key);
+
+        let html = '';
+        sections.forEach((secObj) => {
+          if (!secObj.items.length) return;
+          html += `
+            <div class="section-title">
+              <span>${esc(secObj.title)}</span>
+              <span class="mono" style="font-size:0.78rem; color:var(--muted);">${secObj.items.length} setups</span>
+            </div>
+            <div class="cards-grid">${secObj.items.map((i) => renderCard(i, secObj.tag)).join('')}</div>`;
+        });
+
+        contentEl.innerHTML = html || `<div class="empty-box">No setups match the selected filter/date criteria.</div>`;
+      }
 
       const wf = data.walk_forward || {};
-      const wrDisp = (wf.net_win_rate_pct !== null && wf.net_win_rate_pct !== undefined)
-        ? `${fmtNum(wf.net_win_rate_pct)}%`
-        : 'N/A';
+      const wrVal = wf.win_rate_pct !== undefined ? wf.win_rate_pct : wf.net_win_rate_pct;
+      const pnlVal = wf.net_pnl_rs !== undefined ? wf.net_pnl_rs : wf.total_net_pnl;
+      const wrDisp = (wrVal !== null && wrVal !== undefined) ? `${fmtNum(wrVal)}%` : 'N/A';
 
       document.getElementById('wfBanner').innerHTML = `
         <div>
           <strong>Walk-Forward Ledger:</strong> Closed Trades: <span class="mono">${fmtNum(wf.closed_trades)}</span> •
           Post-Cost Win Rate: <span class="mono">${wrDisp}</span> •
-          Net P&amp;L: <span class="mono">₹${fmtNum(wf.total_net_pnl)}</span>
+          Net P&amp;L: <span class="mono">₹${fmtNum(pnlVal)}</span>
         </div>
-        <div style="color:var(--warn); font-size:0.77rem;">${fmtNum(wf.sample_warning || 'Low sample size; do not treat small-sample results as proven.')}</div>
+        <div style="color:var(--warn); font-size:0.77rem;">${fmtNum(wf.note || wf.sample_warning || 'Low sample size; do not treat small-sample results as proven.')}</div>
       `;
     }
 
@@ -776,10 +971,19 @@
 
     document.getElementById('saveEndpointBtn').addEventListener('click', () => {
       const val = document.getElementById('runEndpointInput').value.trim();
-      if (val) localStorage.setItem(ENDPOINT_STORAGE_KEY, val);
-      else localStorage.removeItem(ENDPOINT_STORAGE_KEY);
+      if (!val) {
+        localStorage.removeItem(ENDPOINT_STORAGE_KEY);
+        document.getElementById('endpointDrawer').classList.remove('open');
+        setRunStatus('Using static JSON refresh only.', 'st-stale', 'CONFIGURED');
+        return;
+      }
+      if (!isHttpsUrl(val)) {
+        setRunStatus('Rejected endpoint: only https:// URLs are allowed.', 'st-err', 'INVALID URL');
+        return;
+      }
+      localStorage.setItem(ENDPOINT_STORAGE_KEY, val);
       document.getElementById('endpointDrawer').classList.remove('open');
-      setRunStatus(val ? 'Live run endpoint saved.' : 'Using static JSON refresh only.', 'st-stale', 'CONFIGURED');
+      setRunStatus('HTTPS live run endpoint saved.', 'st-stale', 'CONFIGURED');
     });
 
     document.getElementById('clearEndpointBtn').addEventListener('click', () => {
@@ -790,6 +994,7 @@
 
     document.getElementById('searchInput').addEventListener('input', () => currentPayload && renderDashboard(currentPayload));
     document.getElementById('sectorFilter').addEventListener('change', () => currentPayload && renderDashboard(currentPayload));
+    document.getElementById('quickPreset').addEventListener('change', () => currentPayload && renderDashboard(currentPayload));
 
     document.querySelectorAll('.tab').forEach((btn) => {
       btn.addEventListener('click', () => {
