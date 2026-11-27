@@ -50,7 +50,13 @@ from options_data import chain_upstox
 from setups import btst_rally_score, position_size
 from tech import clean_ohlcv, compute_indicators
 from tracker import evaluate_signals_chronologically, log_signals, walk_forward_summary
-from universe import BSE_STOCKS_UNIVERSE, LOT_SIZES, STOCKS_UNIVERSE, eq_keys
+from universe import (
+    BSE_STOCKS_UNIVERSE,
+    LOT_SIZES,
+    STOCKS_UNIVERSE,
+    eq_keys,
+    resolve_upstox_keys_from_master,
+)
 
 warnings.filterwarnings("ignore")
 logging.basicConfig(level=logging.INFO, format="%(asctime)s - %(levelname)s - %(message)s")
@@ -498,39 +504,89 @@ def _apply_live_quotes_to_candles(
 def _fetch_yf_1y(symbol: str) -> pd.DataFrame | None:
     global _WARNED_YF_COUNT
     primary_ticker = _yf_ticker(symbol)
-    try:
-        hist = yf.Ticker(primary_ticker).history(period="1y", interval="1d", auto_adjust=False)
-        cleaned_hist = _clean_yf_duplicates(hist)
-        norm_hist = clean_ohlcv(cleaned_hist) if cleaned_hist is not None else None
-        if norm_hist is not None and len(norm_hist) >= 20:
-            return norm_hist
-    except Exception as exc:
-        if _WARNED_YF_COUNT < 6:
-            _WARNED_YF_COUNT += 1
-            logging.warning("YF %s err: %s", primary_ticker, exc)
+    alt_ticker = (
+        f"{symbol}.NS"
+        if primary_ticker.endswith(".BO")
+        else (f"{symbol}.BO" if primary_ticker.endswith(".NS") else primary_ticker)
+    )
+    candidates = [primary_ticker] if primary_ticker == alt_ticker else [primary_ticker, alt_ticker]
+
+    for ticker in candidates:
+        try:
+            hist = yf.Ticker(ticker).history(period="1y", interval="1d", auto_adjust=False)
+            cleaned_hist = _clean_yf_duplicates(hist)
+            norm_hist = clean_ohlcv(cleaned_hist) if cleaned_hist is not None else None
+            if norm_hist is not None and len(norm_hist) >= 20:
+                return norm_hist
+
+            df = yf.download(
+                ticker,
+                period="1y",
+                interval="1d",
+                progress=False,
+                threads=False,
+                timeout=6,
+                auto_adjust=False,
+                group_by="column",
+            )
+            cleaned_raw = _clean_yf_duplicates(df)
+            norm_dl = clean_ohlcv(cleaned_raw) if cleaned_raw is not None else None
+            if norm_dl is not None and len(norm_dl) >= 20:
+                return norm_dl
+        except Exception as exc:
+            if _WARNED_YF_COUNT < 6:
+                _WARNED_YF_COUNT += 1
+                logging.warning("YF %s err: %s", ticker, exc)
     return None
 
 
 def load_candles_1y() -> tuple[dict[str, pd.DataFrame], str, dict[str, dict[str, float]]]:
-    keys = eq_keys()
+    keys = dict(eq_keys())
     candles: dict[str, pd.DataFrame] = {}
     upstox_hits = 0
+    failed_upstox_syms: list[str] = []
 
     def _worker(sym: str):
         df = _fetch_upstox_1y(keys.get(sym, ""), symbol=sym)
         if df is not None and not df.empty:
             return sym, df, "UPSTOX"
-        yf_df = _fetch_yf_1y(sym)
-        if yf_df is not None and not yf_df.empty:
-            return sym, yf_df, "YF"
-        return sym, None, "NONE"
+        return sym, None, "MISS"
 
     with ThreadPoolExecutor(max_workers=12) as pool:
         for sym, df, src in pool.map(_worker, list(keys.keys())):
             if df is not None and not df.empty:
                 candles[sym] = df
-                if src == "UPSTOX":
-                    upstox_hits += 1
+                upstox_hits += 1
+            else:
+                failed_upstox_syms.append(sym)
+
+    # Resolve valid instrument keys from Upstox master for symbols that failed initial key lookup
+    if UPSTOX_ACCESS_TOKEN and failed_upstox_syms:
+        resolved_map = resolve_upstox_keys_from_master(failed_upstox_syms)
+        retry_syms: list[str] = []
+        for sym, new_key in resolved_map.items():
+            if new_key and new_key != keys.get(sym):
+                keys[sym] = new_key
+                retry_syms.append(sym)
+
+        if retry_syms:
+            with ThreadPoolExecutor(max_workers=8) as pool:
+                for sym, df, src in pool.map(
+                    lambda s: (s, _fetch_upstox_1y(keys.get(s, ""), symbol=s), "UPSTOX_RESOLVED"),
+                    retry_syms,
+                ):
+                    if df is not None and not df.empty:
+                        candles[sym] = df
+                        upstox_hits += 1
+                        if sym in failed_upstox_syms:
+                            failed_upstox_syms.remove(sym)
+
+    # Fallback to yfinance only for symbols still missing after Upstox + master resolution
+    if failed_upstox_syms:
+        with ThreadPoolExecutor(max_workers=8) as pool:
+            for sym, yf_df in pool.map(lambda s: (s, _fetch_yf_1y(s)), failed_upstox_syms):
+                if yf_df is not None and not yf_df.empty:
+                    candles[sym] = yf_df
 
     live_quotes = _fetch_upstox_live_quotes(keys)
     live_overrides = _apply_live_quotes_to_candles(candles, live_quotes)
@@ -751,7 +807,6 @@ def _build_stock_setup(
     close_pos_ratio = float(ind.get("close_pos_ratio") or 0.5)
     has_oc = _has_option_chain_support(sym, chain_bundle)
 
-    chain_summary = (chain_bundle or {}).get("summary") or {}
     chain_df = (chain_bundle or {}).get("df")
     expiry = (chain_bundle or {}).get("expiry")
 
@@ -782,7 +837,7 @@ def _build_stock_setup(
             "vol_ratio": vol_ratio,
             "ema20": ema20,
             "ema50": ema50,
-            "ret_5d_pct": float((rs_info or {}).get("s_5d_pct") or chg_pct),
+            "ret_5d_pct": float((rs_info or {}).get("rs_5d") or chg_pct),
             "rsi": rsi,
         }
         btst_res = btst_rally_score(
@@ -1027,7 +1082,9 @@ def run_screener():
     sector_map_pct = {str(s.get("name") or "").upper(): float(s.get("raw_avg") or 0.0) for s in (sectors or [])}
 
     nifty_ov = live_overrides.get("NIFTY") or {}
-    nifty_gap_info = _compute_intraday_gap_and_orb("NIFTY", nifty_ov, candles.get("NIFTY"), nifty_gap_pct=0.0, confirm_orb_15m=confirm_orb_15m)
+    nifty_gap_info = _compute_intraday_gap_and_orb(
+        "NIFTY", nifty_ov, candles.get("NIFTY"), nifty_gap_pct=0.0, confirm_orb_15m=confirm_orb_15m
+    )
     nifty_gap_pct = float(nifty_gap_info.get("gap_pct") or 0.0)
 
     nifty_df = candles.get("NIFTY")
