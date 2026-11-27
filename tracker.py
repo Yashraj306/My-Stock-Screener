@@ -196,7 +196,6 @@ def evaluate_signals_chronologically(
         sessions_elapsed = len(later_bars)
         r["sessions_open"] = str(sessions_elapsed)
 
-        # Check SL/TP across subsequent bars
         exit_px = None
         exit_dt = None
         close_status = None
@@ -222,7 +221,6 @@ def evaluate_signals_chronologically(
                     exit_px, exit_dt, close_status, close_reason = t1_px, bar_dt, "CLOSED_TP1", "Target 1 hit"
                     break
 
-            # Time-stop rules: Intraday closes same/next bar; BTST closes at next session close
             if cat == "EQ_INTRA" and sessions_elapsed >= 1:
                 exit_px, exit_dt, close_status, close_reason = b_close, bar_dt, "CLOSED_TIME", "Intraday time-stop"
                 break
@@ -230,7 +228,6 @@ def evaluate_signals_chronologically(
                 exit_px, exit_dt, close_status, close_reason = b_close, bar_dt, "CLOSED_TIME", "BTST next-session close"
                 break
 
-        # Any OPEN row older than max_open_sessions (5) -> CLOSED_TIME at that day's close with charges
         if close_status is None and sessions_elapsed > max_open_sessions:
             last_dt, last_bar = later_bars[-1]
             c_px = float(last_bar.get("Close") or entry_px)
@@ -283,4 +280,48 @@ def walk_forward_summary(path: Path = LOG_PATH, min_trades: int = 10) -> dict[st
         "closed_trades": total_closed,
         "win_rate_pct": round((wins / total_closed) * 100.0, 2),
         "net_pnl_rs": round(sum(net_pnls), 2),
+    }
+
+
+def category_performance_summary(path: Path = LOG_PATH) -> dict[str, Any]:
+    """
+    Computes per-category performance metrics (EQ_BTST, EQ_INTRA, OPT_BULL, OPT_BEAR, INDEX)
+    with sample-size warnings (< 100 closed trades) for the dashboard Performance tab.
+    """
+    rows = _read_rows(path)
+    categories = ["EQ_BTST", "EQ_INTRA", "OPT_BULL", "OPT_BEAR", "INDEX"]
+    stats_by_cat: dict[str, dict[str, Any]] = {}
+
+    for cat in categories:
+        cat_rows = [r for r in rows if str(r.get("category") or "").strip().upper() == cat]
+        closed = [r for r in cat_rows if str(r.get("status") or "").strip().upper().startswith("CLOSED_")]
+        open_cnt = sum(1 for r in cat_rows if str(r.get("status") or "").strip().upper() == "OPEN")
+        closed_cnt = len(closed)
+        net_pnls = [float(r.get("net_pnl_rs") or 0.0) for r in closed]
+        wins = sum(1 for p in net_pnls if p > 0)
+        losses = sum(1 for p in net_pnls if p < 0)
+        win_rate = round((wins / closed_cnt) * 100.0, 2) if closed_cnt > 0 else 0.0
+        net_total = round(sum(net_pnls), 2)
+
+        stats_by_cat[cat] = {
+            "category": cat,
+            "closed_count": closed_cnt,
+            "open_count": open_cnt,
+            "wins": wins,
+            "losses": losses,
+            "win_rate_pct": win_rate,
+            "net_pnl_rs": net_total,
+            "sample_warning": closed_cnt < 100,
+        }
+
+    all_closed = [r for r in rows if str(r.get("status") or "").strip().upper().startswith("CLOSED_")]
+    all_open = [r for r in rows if str(r.get("status") or "").strip().upper() == "OPEN"]
+    stale_open = [r for r in all_open if int(r.get("sessions_open") or 0) >= 3]
+
+    return {
+        "by_category": stats_by_cat,
+        "total_closed": len(all_closed),
+        "total_open": len(all_open),
+        "stale_open_count": len(stale_open),
+        "sample_threshold": 100,
     }
