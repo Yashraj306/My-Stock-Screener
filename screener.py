@@ -49,7 +49,12 @@ from option_strategy import select_option_strategy
 from options_data import chain_upstox
 from setups import btst_rally_score, position_size
 from tech import clean_ohlcv, compute_indicators
-from tracker import evaluate_signals_chronologically, log_signals, walk_forward_summary
+from tracker import (
+    category_performance_summary,
+    evaluate_signals_chronologically,
+    log_signals,
+    walk_forward_summary,
+)
 from universe import (
     BSE_STOCKS_UNIVERSE,
     LOT_SIZES,
@@ -220,6 +225,46 @@ def _compute_close_position_ratio(df: pd.DataFrame, close: float) -> float:
         ratio = (close - l) / (h - l)
         return round(max(0.0, min(1.0, ratio)), 2)
     return 0.5
+
+
+def _extract_sparkline_and_patterns(df: pd.DataFrame | None, close: float) -> dict[str, Any]:
+    """
+    Extracts last 10 closing prices for inline SVG sparklines and detects
+    price-action badges (Inside Bar, 20D High/Low, PDH/PDL break).
+    """
+    if df is None or getattr(df, "empty", True):
+        return {"sparkline_10d": [], "setup_tags": []}
+
+    closes = pd.to_numeric(df["Close"], errors="coerce").dropna()
+    highs = pd.to_numeric(df["High"], errors="coerce").dropna()
+    lows = pd.to_numeric(df["Low"], errors="coerce").dropna()
+
+    sparkline_10d = [round(float(x), 2) for x in closes.tail(10).tolist()]
+    tags: list[str] = []
+
+    if len(highs) >= 2 and len(lows) >= 2:
+        cur_h, prev_h = float(highs.iloc[-1]), float(highs.iloc[-2])
+        cur_l, prev_l = float(lows.iloc[-1]), float(lows.iloc[-2])
+
+        if cur_h <= prev_h and cur_l >= prev_l:
+            tags.append("INSIDE_BAR")
+        if close > prev_h:
+            tags.append("PDH_BREAK")
+        elif close < prev_l:
+            tags.append("PDL_BREAK")
+
+    if len(highs) >= 21 and len(lows) >= 21:
+        hi_20 = float(highs.iloc[-21:-1].max())
+        lo_20 = float(lows.iloc[-21:-1].min())
+        if close > hi_20:
+            tags.append("20D_HIGH_BO")
+        elif close < lo_20:
+            tags.append("20D_LOW_BD")
+
+    return {
+        "sparkline_10d": sparkline_10d,
+        "setup_tags": tags,
+    }
 
 
 def _parse_mcp_tool_result(result: Any) -> Any:
@@ -560,7 +605,6 @@ def load_candles_1y() -> tuple[dict[str, pd.DataFrame], str, dict[str, dict[str,
             else:
                 failed_upstox_syms.append(sym)
 
-    # Resolve valid instrument keys from Upstox master for symbols that failed initial key lookup
     if UPSTOX_ACCESS_TOKEN and failed_upstox_syms:
         resolved_map = resolve_upstox_keys_from_master(failed_upstox_syms)
         retry_syms: list[str] = []
@@ -581,7 +625,6 @@ def load_candles_1y() -> tuple[dict[str, pd.DataFrame], str, dict[str, dict[str,
                         if sym in failed_upstox_syms:
                             failed_upstox_syms.remove(sym)
 
-    # Fallback to yfinance only for symbols still missing after Upstox + master resolution
     if failed_upstox_syms:
         with ThreadPoolExecutor(max_workers=8) as pool:
             for sym, yf_df in pool.map(lambda s: (s, _fetch_yf_1y(s)), failed_upstox_syms):
@@ -826,6 +869,7 @@ def _build_stock_setup(
     day_low = float(pd.to_numeric(df["Low"], errors="coerce").iloc[-1]) if not df.empty else close
     sector = SECTOR_MAP.get(sym, "OTHER")
     rs_score = float((rs_info or {}).get("rs_score") or 0.0)
+    pa_extra = _extract_sparkline_and_patterns(df, close)
 
     if RUN_MODE == "BTST" and is_bull:
         row_for_btst = {
@@ -899,6 +943,8 @@ def _build_stock_setup(
         "close": round(close, 2),
         "spot": round(close, 2),
         "change_pct": round(chg_pct, 2),
+        "atr": round(atr_val, 2),
+        "atr_pct": round((atr_val / close) * 100.0, 2) if close > 0 else 0.0,
         "avg_range_rs": round(avg_range_rs, 2),
         "stop_loss": sl,
         "target_1": pa_t1,
@@ -921,6 +967,8 @@ def _build_stock_setup(
         "option_expiry": expiry,
         "option_plan": opt_plan,
         "gap_meta": gap_meta or {},
+        "sparkline_10d": pa_extra["sparkline_10d"],
+        "setup_tags": pa_extra["setup_tags"],
         **sizing,
     }
 
@@ -946,6 +994,7 @@ def _build_index_trades(
         ema20 = float(ind.get("ema20") or spot)
         session_vwap = _compute_session_vwap(df, live_vwap=ov.get("vwap"), lookback_days=1)
         is_bull = spot >= ema20 and chg_pct >= -0.35
+        pa_extra = _extract_sparkline_and_patterns(df, spot)
 
         chain_df, expiry = None, None
         chain_summary = {}
@@ -996,6 +1045,7 @@ def _build_index_trades(
             "close": round(spot, 2),
             "spot": round(spot, 2),
             "change_pct": round(chg_pct, 2),
+            "atr": round(atr_val, 2),
             "stop_loss": sl,
             "target_1": pa_t1,
             "target_2": pa_t2,
@@ -1012,6 +1062,8 @@ def _build_index_trades(
             "chain_summary": chain_summary,
             "option_expiry": expiry,
             "option_plan": plan,
+            "sparkline_10d": pa_extra["sparkline_10d"],
+            "setup_tags": pa_extra["setup_tags"],
             "why_trade": f"{'Bullish' if is_bull else 'Bearish'} index structure ({chg_pct:+.2f}%), EMA20 {ema20:.2f}.",
         })
     return trades
@@ -1288,9 +1340,11 @@ def run_screener():
         "intraday_bearish": intraday_bearish,
     }
 
-    evaluate_signals_chronologically(candles_by_symbol=candles)
+    eval_summary = evaluate_signals_chronologically(candles_by_symbol=candles)
     log_signals(payload)
     payload["walk_forward"] = walk_forward_summary()
+    payload["performance"] = category_performance_summary()
+    payload["tracker_health"] = eval_summary
     export_web_dashboard_data(payload)
 
     send_alert(payload)
