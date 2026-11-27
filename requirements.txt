@@ -1,8 +1,9 @@
 # My Stock Screener - Python dependencies
 # Runtime: Python 3.11
 
-requests>=2.31.0
-pandas>=2.1.0
-numpy>=1.26.0
-yfinance>=0.2.40
-mcp>=1.2.0
+numpy==1.26.4
+pandas==2.2.3
+requests==2.32.3
+yfinance==0.2.50
+pytest==8.3.4
+
