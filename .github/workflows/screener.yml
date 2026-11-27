@@ -57,7 +57,7 @@ jobs:
           '
 
       - name: Run Unit Tests
-        run: pytest -q
+        run: python -m pytest -q
 
       - name: Run Screener Engine
         env:
