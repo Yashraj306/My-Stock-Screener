@@ -46,8 +46,8 @@ from market import (
 )
 from notify import send_alert
 from option_strategy import select_option_strategy
-from options_data import chain_upstox
-from setups import btst_rally_score, position_size
+from options_data import build_upstox_smartlists_and_movers, chain_upstox
+from setups import btst_bearish_score, btst_rally_score, position_size
 from tech import clean_ohlcv, compute_indicators
 from tracker import (
     category_performance_summary,
@@ -60,6 +60,7 @@ from universe import (
     LOT_SIZES,
     STOCKS_UNIVERSE,
     eq_keys,
+    get_nse_fo_option_stocks,
     resolve_upstox_keys_from_master,
 )
 
@@ -228,10 +229,6 @@ def _compute_close_position_ratio(df: pd.DataFrame, close: float) -> float:
 
 
 def _extract_sparkline_and_patterns(df: pd.DataFrame | None, close: float) -> dict[str, Any]:
-    """
-    Extracts last 10 closing prices for inline SVG sparklines and detects
-    price-action badges (Inside Bar, 20D High/Low, PDH/PDL break).
-    """
     if df is None or getattr(df, "empty", True):
         return {"sparkline_10d": [], "setup_tags": []}
 
@@ -264,6 +261,98 @@ def _extract_sparkline_and_patterns(df: pd.DataFrame | None, close: float) -> di
     return {
         "sparkline_10d": sparkline_10d,
         "setup_tags": tags,
+    }
+
+
+def _compute_support_resistance_and_probability(
+    df: pd.DataFrame | None,
+    close: float,
+    atr: float,
+    ema20: float,
+    ema50: float,
+    rsi: float,
+    vol_ratio: float,
+    rs_score: float,
+    sector_chg_pct: float,
+    is_bull: bool,
+    chain_summary: dict[str, Any],
+) -> dict[str, Any]:
+    recent_high = close + 1.5 * atr
+    recent_low = max(close - 1.5 * atr, 0.05)
+
+    if df is not None and not getattr(df, "empty", True):
+        highs = pd.to_numeric(df["High"], errors="coerce").dropna().tail(10)
+        lows = pd.to_numeric(df["Low"], errors="coerce").dropna().tail(10)
+        if not highs.empty:
+            hi_above = [float(x) for x in highs.tolist() if float(x) > close * 1.001]
+            recent_high = min(hi_above) if hi_above else float(highs.max())
+        if not lows.empty:
+            lo_below = [float(x) for x in lows.tolist() if float(x) < close * 0.999]
+            recent_low = max(lo_below) if lo_below else float(lows.min())
+
+    oi_sup = chain_summary.get("immediate_support")
+    oi_res = chain_summary.get("immediate_resistance")
+
+    imm_support = round(max(recent_low, float(oi_sup)) if oi_sup else recent_low, 2)
+    imm_resistance = round(min(recent_high, float(oi_res)) if oi_res else recent_high, 2)
+    if imm_support >= close:
+        imm_support = round(max(close - 1.0 * atr, 0.05), 2)
+    if imm_resistance <= close:
+        imm_resistance = round(close + 1.0 * atr, 2)
+
+    if is_bull:
+        pa_t1 = round(max(close + 0.8 * atr, imm_resistance if imm_resistance > close else close + 0.8 * atr), 2)
+        pa_t2 = round(max(close + 1.5 * atr, pa_t1 + 0.7 * atr), 2)
+        oi_target = round(float(chain_summary.get("oi_target_bull") or pa_t1), 2)
+    else:
+        pa_t1 = round(max(min(close - 0.8 * atr, imm_support if imm_support < close else close - 0.8 * atr), 0.05), 2)
+        pa_t2 = round(max(min(close - 1.5 * atr, pa_t1 - 0.7 * atr), 0.05), 2)
+        oi_target = round(float(chain_summary.get("oi_target_bear") or pa_t1), 2)
+
+    prob = 50.0
+    if is_bull:
+        if close > ema20:
+            prob += 7.0
+        if ema20 > ema50:
+            prob += 6.0
+        if 52.0 <= rsi <= 75.0:
+            prob += 5.0
+        if vol_ratio >= 1.3:
+            prob += 6.0
+        if rs_score > 0:
+            prob += min(rs_score * 1.2, 7.0)
+        if sector_chg_pct > 0:
+            prob += min(sector_chg_pct * 2.0, 5.0)
+        if chain_summary.get("chain_available"):
+            pcr = chain_summary.get("pcr")
+            if pcr is not None and float(pcr) >= 1.0:
+                prob += 5.0
+    else:
+        if close < ema20:
+            prob += 7.0
+        if ema20 < ema50:
+            prob += 6.0
+        if 25.0 <= rsi <= 48.0:
+            prob += 5.0
+        if vol_ratio >= 1.3:
+            prob += 6.0
+        if rs_score < 0:
+            prob += min(abs(rs_score) * 1.2, 7.0)
+        if sector_chg_pct < 0:
+            prob += min(abs(sector_chg_pct) * 2.0, 5.0)
+        if chain_summary.get("chain_available"):
+            pcr = chain_summary.get("pcr")
+            if pcr is not None and float(pcr) <= 1.0:
+                prob += 5.0
+
+    prob_clamped = round(max(35.0, min(92.0, prob)), 1)
+    return {
+        "immediate_support": imm_support,
+        "immediate_resistance": imm_resistance,
+        "pa_target_1": pa_t1,
+        "pa_target_2": pa_t2,
+        "oi_target": oi_target,
+        "move_probability_pct": prob_clamped,
     }
 
 
@@ -850,6 +939,7 @@ def _build_stock_setup(
     close_pos_ratio = float(ind.get("close_pos_ratio") or 0.5)
     has_oc = _has_option_chain_support(sym, chain_bundle)
 
+    chain_summary = (chain_bundle or {}).get("summary") or {}
     chain_df = (chain_bundle or {}).get("df")
     expiry = (chain_bundle or {}).get("expiry")
 
@@ -866,16 +956,36 @@ def _build_stock_setup(
     lot_sz = _resolve_lot_size(sym, opt_plan)
     opt_plan["lot_size"] = lot_sz
 
+    day_high = float(pd.to_numeric(df["High"], errors="coerce").iloc[-1]) if not df.empty else close
     day_low = float(pd.to_numeric(df["Low"], errors="coerce").iloc[-1]) if not df.empty else close
     sector = SECTOR_MAP.get(sym, "OTHER")
     rs_score = float((rs_info or {}).get("rs_score") or 0.0)
     pa_extra = _extract_sparkline_and_patterns(df, close)
+    levels_and_prob = _compute_support_resistance_and_probability(
+        df=df,
+        close=close,
+        atr=atr_val,
+        ema20=ema20,
+        ema50=ema50,
+        rsi=rsi,
+        vol_ratio=vol_ratio,
+        rs_score=rs_score,
+        sector_chg_pct=sector_chg_pct,
+        is_bull=is_bull,
+        chain_summary=chain_summary,
+    )
 
-    if RUN_MODE == "BTST" and is_bull:
+    pa_t1 = levels_and_prob["pa_target_1"]
+    pa_t2 = levels_and_prob["pa_target_2"]
+    oi_t = levels_and_prob["oi_target"]
+    prob_pct = levels_and_prob["move_probability_pct"]
+
+    if RUN_MODE == "BTST":
         row_for_btst = {
             "close": close,
             "entry": close,
             "atr": atr_val,
+            "day_high": day_high,
             "day_low": day_low,
             "close_pos_ratio": close_pos_ratio,
             "vol_ratio": vol_ratio,
@@ -884,34 +994,41 @@ def _build_stock_setup(
             "ret_5d_pct": float((rs_info or {}).get("rs_5d") or chg_pct),
             "rsi": rsi,
         }
-        btst_res = btst_rally_score(
-            row=row_for_btst,
-            df=df,
-            nifty_5d_pct=nifty_5d_pct,
-            sector_chg_pct=sector_chg_pct,
+        btst_res = (
+            btst_rally_score(
+                row=row_for_btst,
+                df=df,
+                nifty_5d_pct=nifty_5d_pct,
+                sector_chg_pct=sector_chg_pct,
+            )
+            if is_bull
+            else btst_bearish_score(
+                row=row_for_btst,
+                df=df,
+                nifty_5d_pct=nifty_5d_pct,
+                sector_chg_pct=sector_chg_pct,
+            )
         )
         if not btst_res:
             return None
         sl = float(btst_res["stop_loss"])
-        pa_t1 = float(btst_res["target_1"])
-        pa_t2 = float(btst_res["target_2"])
         adj_score = float(btst_res["btst_score"])
-        why_trade = f"BTST Score {adj_score:.0f}/100: " + (", ".join(btst_res["btst_reasons"]) or "Momentum close")
+        label = "BTST Bull" if is_bull else "BTST Bear"
+        why_trade = (
+            f"{label} Score {adj_score:.0f}/100 (Prob {prob_pct:.0f}%): "
+            + (", ".join(btst_res["btst_reasons"]) or "Momentum close")
+        )
         extension_status = "BTST OVERNIGHT SETUP"
-        entry_action = "BUY NEAR CLOSE / HOLD NEXT SESSION"
+        entry_action = "BUY NEAR CLOSE / HOLD NEXT SESSION" if is_bull else "SELL NEAR CLOSE / HOLD NEXT SESSION"
     else:
         if is_bull:
             if chg_pct < -1.5 or close < ema20:
                 return None
             sl = round(close - 1.5 * atr_val, 2)
-            pa_t1 = round(close + 1.8 * atr_val, 2)
-            pa_t2 = round(close + 3.0 * atr_val, 2)
         else:
             if chg_pct > 1.5 or close > ema20:
                 return None
             sl = round(close + 1.5 * atr_val, 2)
-            pa_t1 = round(max(close - 1.8 * atr_val, 0.05), 2)
-            pa_t2 = round(max(close - 3.0 * atr_val, 0.05), 2)
 
         base_score = float(ind.get("bull_score" if is_bull else "bear_score") or 50.0)
         adj_score = round(max(0.0, min(100.0, 0.75 * base_score + 0.25 * (50.0 + rs_score * 1.5))), 2)
@@ -919,8 +1036,8 @@ def _build_stock_setup(
         state_lbl = gm.get("signal_state") or "WATCHLIST"
         gap_lbl = f"Gap {gm.get('gap_pct', 0.0):+.2f}% [{state_lbl}]" if gm else f"Chg {chg_pct:+.2f}%"
         why_trade = (
-            f"{'Bullish' if is_bull else 'Bearish'} {gap_lbl}, EMA20 {ema20:.2f}, "
-            f"ATR {atr_val:.2f}, Vol {vol_ratio:.2f}x, RS {rs_score:+.2f}% in {sector}."
+            f"{'Bullish' if is_bull else 'Bearish'} {gap_lbl}, Prob {prob_pct:.0f}%, EMA20 {ema20:.2f}, "
+            f"Sup {levels_and_prob['immediate_support']} / Res {levels_and_prob['immediate_resistance']}, RS {rs_score:+.2f}%."
         )
         extension_status = gm.get("signal_state") or "INTRADAY SETUP"
         entry_action = "ORB CONFIRMED ENTRY" if gm.get("orb_confirmed") else "WATCHLIST / CONFIRMATION"
@@ -951,7 +1068,11 @@ def _build_stock_setup(
         "target_2": pa_t2,
         "pa_target_1": pa_t1,
         "pa_target_2": pa_t2,
-        "oi_target": None,
+        "oi_target": oi_t,
+        "immediate_support": levels_and_prob["immediate_support"],
+        "immediate_resistance": levels_and_prob["immediate_resistance"],
+        "move_probability_pct": prob_pct,
+        "chain_summary": chain_summary,
         "rsi": round(rsi, 1),
         "vol_ratio": round(vol_ratio, 2),
         "vwap": round(float(vwap), 2) if (vwap is not None and float(vwap) > 0) else None,
@@ -992,6 +1113,9 @@ def _build_index_trades(
         chg_pct = float(ov.get("change_pct") if "change_pct" in ov else (ind.get("change_pct") or 0.0))
         atr_val = float(ind.get("atr") or max(spot * 0.01, 1.0))
         ema20 = float(ind.get("ema20") or spot)
+        ema50 = float(ind.get("ema50") or spot)
+        rsi = float(ind.get("rsi") or 50.0)
+        vol_ratio = float(ind.get("vol_ratio") or 1.0)
         session_vwap = _compute_session_vwap(df, live_vwap=ov.get("vwap"), lookback_days=1)
         is_bull = spot >= ema20 and chg_pct >= -0.35
         pa_extra = _extract_sparkline_and_patterns(df, spot)
@@ -1009,6 +1133,20 @@ def _build_index_trades(
                 chain_summary = analyze_chain(chain_df, spot) or {}
         except Exception as exc:
             logging.debug("Index option chain fetch failed for %s: %s", idx_sym, exc)
+
+        levels_and_prob = _compute_support_resistance_and_probability(
+            df=df,
+            close=spot,
+            atr=atr_val,
+            ema20=ema20,
+            ema50=ema50,
+            rsi=rsi,
+            vol_ratio=vol_ratio,
+            rs_score=0.0,
+            sector_chg_pct=chg_pct,
+            is_bull=is_bull,
+            chain_summary=chain_summary,
+        )
 
         plan = select_option_strategy(
             symbol=idx_sym,
@@ -1033,8 +1171,10 @@ def _build_index_trades(
         )
 
         sl = round(spot - 1.5 * atr_val, 2) if is_bull else round(spot + 1.5 * atr_val, 2)
-        pa_t1 = round(spot + 1.5 * atr_val, 2) if is_bull else round(max(spot - 1.5 * atr_val, 0.0), 2)
-        pa_t2 = round(spot + 2.5 * atr_val, 2) if is_bull else round(max(spot - 2.5 * atr_val, 0.0), 2)
+        pa_t1 = levels_and_prob["pa_target_1"]
+        pa_t2 = levels_and_prob["pa_target_2"]
+        oi_t = levels_and_prob["oi_target"]
+        prob_pct = levels_and_prob["move_probability_pct"]
         max_loss_lot = leg_1pct.get("max_risk") if leg_1pct.get("available") else plan.get("max_loss_lot")
 
         trades.append({
@@ -1051,7 +1191,10 @@ def _build_index_trades(
             "target_2": pa_t2,
             "pa_target_1": pa_t1,
             "pa_target_2": pa_t2,
-            "oi_target": None,
+            "oi_target": oi_t,
+            "immediate_support": levels_and_prob["immediate_support"],
+            "immediate_resistance": levels_and_prob["immediate_resistance"],
+            "move_probability_pct": prob_pct,
             "vwap": session_vwap,
             "qty": lot_size,
             "est_margin": max_loss_lot,
@@ -1064,7 +1207,10 @@ def _build_index_trades(
             "option_plan": plan,
             "sparkline_10d": pa_extra["sparkline_10d"],
             "setup_tags": pa_extra["setup_tags"],
-            "why_trade": f"{'Bullish' if is_bull else 'Bearish'} index structure ({chg_pct:+.2f}%), EMA20 {ema20:.2f}.",
+            "why_trade": (
+                f"{'Bullish' if is_bull else 'Bearish'} index ({chg_pct:+.2f}%), Prob {prob_pct:.0f}%, "
+                f"Sup {levels_and_prob['immediate_support']} / Res {levels_and_prob['immediate_resistance']}, EMA20 {ema20:.2f}."
+            ),
         })
     return trades
 
@@ -1186,15 +1332,19 @@ def run_screener():
         if close >= float(ind.get("ema50") or close):
             above50 += 1
 
-    ranked_syms = sorted(
-        indicators_by_sym.keys(),
-        key=lambda s: (
-            1.0 if int(LOT_SIZES.get(s.upper(), 0) or 0) > 1 else 0.0,
-            1.0 if float(indicators_by_sym[s].get("atr") or 0.0) >= 15.0 else 0.0,
-            max(
-                float(indicators_by_sym[s].get("bull_score") or 0.0),
-                float(indicators_by_sym[s].get("bear_score") or 0.0),
-            ),
+    fo_stocks_syms = get_nse_fo_option_stocks(candles=candles)
+    if not fo_stocks_syms:
+        fo_stocks_syms = [
+            s for s in STOCKS_UNIVERSE
+            if s in indicators_by_sym and s not in {"NIFTY", "BANKNIFTY", "FINNIFTY", "SENSEX"}
+        ]
+    else:
+        fo_stocks_syms = [s for s in fo_stocks_syms if s in indicators_by_sym]
+
+    fo_stocks_syms.sort(
+        key=lambda s: max(
+            float(indicators_by_sym[s].get("bull_score") or 0.0),
+            float(indicators_by_sym[s].get("bear_score") or 0.0),
         ),
         reverse=True,
     )
@@ -1202,7 +1352,7 @@ def run_screener():
     bull_candidates, bear_candidates = [], []
     chain_cache: dict[str, dict] = {}
     chain_fetches = 0
-    max_chain_fetches = 24
+    max_chain_fetches = max(len(fo_stocks_syms), 40)
 
     def _get_chain(sym: str, spot: float) -> dict:
         nonlocal chain_fetches
@@ -1227,26 +1377,32 @@ def run_screener():
         chain_cache[sym] = bundle
         return bundle
 
-    for sym in ranked_syms:
+    for sym in fo_stocks_syms:
         ind = indicators_by_sym[sym]
         df = candles[sym]
         rs_info = rs_map.get(sym, {})
         sec_pct = sector_map_pct.get(SECTOR_MAP.get(sym, "OTHER").upper(), 0.0)
         gm = gap_by_sym.get(sym)
+        cb = _get_chain(sym, float(ind["close"]))
 
         if RUN_MODE == "BTST":
-            cb = _get_chain(sym, float(ind["close"]))
-            setup = _build_stock_setup(
+            bull_setup = _build_stock_setup(
                 sym, ind, df, rs_info, True, cb,
                 nifty_5d_pct=nifty_5d_pct, sector_chg_pct=sec_pct, gap_meta=gm,
             )
-            if setup:
-                bull_candidates.append(setup)
+            if bull_setup:
+                bull_candidates.append(bull_setup)
+
+            bear_setup = _build_stock_setup(
+                sym, ind, df, rs_info, False, cb,
+                nifty_5d_pct=nifty_5d_pct, sector_chg_pct=sec_pct, gap_meta=gm,
+            )
+            if bear_setup:
+                bear_candidates.append(bear_setup)
         else:
             b_score = float(ind.get("bull_score") or 0.0)
             s_score = float(ind.get("bear_score") or 0.0)
             if b_score >= s_score and b_score >= 48.0:
-                cb = _get_chain(sym, float(ind["close"]))
                 setup = _build_stock_setup(
                     sym, ind, df, rs_info, True, cb,
                     nifty_5d_pct=nifty_5d_pct, sector_chg_pct=sec_pct, gap_meta=gm,
@@ -1254,7 +1410,6 @@ def run_screener():
                 if setup:
                     bull_candidates.append(setup)
             elif s_score > b_score and s_score >= 48.0:
-                cb = _get_chain(sym, float(ind["close"]))
                 setup = _build_stock_setup(
                     sym, ind, df, rs_info, False, cb,
                     nifty_5d_pct=nifty_5d_pct, sector_chg_pct=sec_pct, gap_meta=gm,
@@ -1262,19 +1417,20 @@ def run_screener():
                 if setup:
                     bear_candidates.append(setup)
 
-    bull_candidates.sort(key=lambda x: float(x.get("score") or 0.0), reverse=True)
-    bear_candidates.sort(key=lambda x: float(x.get("score") or 0.0), reverse=True)
+    bull_candidates.sort(key=lambda x: (float(x.get("move_probability_pct") or 0.0), float(x.get("score") or 0.0)), reverse=True)
+    bear_candidates.sort(key=lambda x: (float(x.get("move_probability_pct") or 0.0), float(x.get("score") or 0.0)), reverse=True)
 
-    options_bullish = bull_candidates[:5]
-    options_bearish = bear_candidates[:5] if RUN_MODE != "BTST" else []
+    options_bullish = bull_candidates
+    options_bearish = bear_candidates
 
     chosen_syms = {str(x.get("symbol") or "").upper() for x in (options_bullish + options_bearish)}
-    eq_pool = [x for x in (bull_candidates + bear_candidates) if str(x.get("symbol") or "").upper() not in chosen_syms][:10]
+    eq_pool = [x for x in (bull_candidates + bear_candidates) if str(x.get("symbol") or "").upper() not in chosen_syms]
     intraday_bullish = [x for x in eq_pool if x.get("side") == "BULLISH"]
     intraday_bearish = [x for x in eq_pool if x.get("side") != "BULLISH"]
     equity_intraday = intraday_bullish + intraday_bearish
 
     index_trades = _build_index_trades(candles, live_overrides=live_overrides)
+    smartlists = build_upstox_smartlists_and_movers(candles, live_overrides=live_overrides)
 
     def _idx_fmt(sym: str):
         ov = live_overrides.get(sym)
@@ -1307,6 +1463,7 @@ def run_screener():
         "summary": {
             "ideas_count": total_ideas,
             "stock_setups_count": stock_setups_count,
+            "fo_stocks_analyzed": len(fo_stocks_syms),
             "breadth_tone": breadth_tone,
             "data_source": data_source,
             "nifty_spot": n_spot,
@@ -1328,6 +1485,7 @@ def run_screener():
         },
         "global_cues": global_cues or [],
         "sectors": sectors,
+        "smartlists": smartlists,
         "index_trades": index_trades,
         "setups": {
             "bullish": options_bullish,
@@ -1349,12 +1507,13 @@ def run_screener():
 
     send_alert(payload)
     logging.info(
-        "Dispatched %d total ideas (%d stock setups: %dB/%dS opt + %d eq) using %s",
+        "Dispatched %d total ideas (%d stock setups: %dB/%dS opt + %d eq across %d F&O stocks) using %s",
         total_ideas,
         stock_setups_count,
         len(options_bullish),
         len(options_bearish),
         len(equity_intraday),
+        len(fo_stocks_syms),
         data_source,
     )
 
