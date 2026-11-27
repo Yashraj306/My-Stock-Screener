@@ -1,132 +1,117 @@
-import math
+import datetime as dt
+from typing import Any
+import numpy as np
 import pandas as pd
 
-from config import (
-    ALLOW_MIS_LEVERAGE,
-    CAPITAL,
-    CAPITAL_CONFIGURED,
-    MAX_ALLOCATION_PCT,
-    MIS_LEVERAGE,
-    RISK_PCT,
-)
-from tech import analyze, atr, clean_ohlcv, compute_indicators, cumulative_vwap, pct
 
+def btst_rally_score(
+    row: dict[str, Any],
+    df: pd.DataFrame | None = None,
+    nifty_5d_pct: float = 0.0,
+    sector_chg_pct: float = 0.0,
+    event_meta: dict[str, Any] | None = None,
+) -> dict[str, Any] | None:
+    """
+    Computes 0-100 BTST gap-up/rally score and BTST targets/SL.
+    Returns None if rejected by overbought/streak/event filters.
+    """
+    close = float(row.get("close") or row.get("entry") or 0.0)
+    atr = float(row.get("atr") or 0.0)
+    rsi = row.get("rsi")
+    if close <= 0 or atr <= 0:
+        return None
+    if rsi is not None and not pd.isna(rsi) and float(rsi) > 80.0:
+        return None
 
-def _to_fraction(val: float, default: float) -> float:
-    try:
-        f = float(val)
-    except (TypeError, ValueError):
-        return default
-    if f <= 0:
-        return 0.0
-    return f / 100.0 if f > 1.0 else f
+    reasons: list[str] = []
+    score = 0.0
 
+    # Reject >= 3 consecutive up days
+    if df is not None and not df.empty and len(df) >= 4:
+        closes = pd.to_numeric(df["Close"], errors="coerce").dropna().tail(4).tolist()
+        if len(closes) == 4 and closes[1] > closes[0] and closes[2] > closes[1] and closes[3] > closes[2]:
+            return None
 
-def position_size(
-    entry: float,
-    stop_loss: float,
-    capital: float | None = None,
-    risk_pct: float | None = None,
-    max_allocation_pct: float | None = None,
-    allow_leverage: bool | None = None,
-    leverage: float | None = None,
-) -> dict:
-    cap = CAPITAL if capital is None else float(capital)
-    cap_ok = (cap > 0.0) if capital is not None else bool(CAPITAL_CONFIGURED and CAPITAL > 0.0)
+    # Reject earnings or ex-date next day if available
+    ev = event_meta or {}
+    if bool(ev.get("earnings_tomorrow")) or bool(ev.get("ex_date_tomorrow")):
+        return None
+    next_ev_date = str(ev.get("next_event_date") or "").strip()[:10]
+    if next_ev_date:
+        try:
+            ev_dt = dt.date.fromisoformat(next_ev_date)
+            today_ist = dt.datetime.now(dt.timezone(dt.timedelta(hours=5, minutes=30))).date()
+            if (ev_dt - today_ist).days in {0, 1}:
+                return None
+        except ValueError:
+            pass
 
-    r_frac = _to_fraction(RISK_PCT if risk_pct is None else risk_pct, 0.01)
-    a_frac = _to_fraction(MAX_ALLOCATION_PCT if max_allocation_pct is None else max_allocation_pct, 0.25)
+    # 1. close_position_ratio >= 0.8 (+20)
+    cpr = float(row.get("close_pos_ratio") or 0.0)
+    if cpr >= 0.8:
+        score += 20.0
+        reasons.append(f"CPR {cpr:.2f}>=0.8 (+20)")
 
-    lev_enabled = ALLOW_MIS_LEVERAGE if allow_leverage is None else bool(allow_leverage)
-    lev_mult_raw = MIS_LEVERAGE if leverage is None else float(leverage)
-    lev_mult = lev_mult_raw if (lev_enabled and lev_mult_raw > 1.0) else 1.0
+    # 2. volume >= 1.5x 20d avg (+15)
+    vol_ratio = float(row.get("vol_ratio") or 0.0)
+    if vol_ratio >= 1.5:
+        score += 15.0
+        reasons.append(f"Vol {vol_ratio:.2f}x>=1.5x (+15)")
 
-    if not cap_ok or cap <= 0.0:
-        return {
-            "qty": 0,
-            "exposure": 0.0,
-            "est_margin": 0.0,
-            "max_risk": 0.0,
-            "sizing_status": "CAPITAL NOT CONFIGURED",
-        }
+    # 3. close above 20-day high (+20) or NR7/ATR contraction then breakout (+15)
+    broke_20d_high = False
+    nr7_breakout = False
+    if df is not None and not df.empty and len(df) >= 21:
+        highs = pd.to_numeric(df["High"], errors="coerce").dropna()
+        lows = pd.to_numeric(df["Low"], errors="coerce").dropna()
+        if len(highs) >= 21:
+            prior_20_high = float(highs.iloc[-21:-1].max())
+            if close > prior_20_high:
+                broke_20d_high = True
+        if len(highs) >= 8 and len(lows) >= 8:
+            ranges = (highs.tail(8) - lows.tail(8)).dropna()
+            if len(ranges) == 8:
+                prior_7_ranges = ranges.iloc[:-1]
+                nr7 = float(ranges.iloc[-1]) < float(prior_7_ranges.min())
+                atr_contracted = float(prior_7_ranges.mean()) <= atr * 1.05
+                if nr7 and atr_contracted and close >= float(highs.iloc[-2]):
+                    nr7_breakout = True
 
-    entry_f = float(entry or 0.0)
-    sl_f = float(stop_loss or 0.0)
-    risk_per_share = abs(entry_f - sl_f)
-    if entry_f <= 0.0 or risk_per_share <= 0.0:
-        return {
-            "qty": 0,
-            "exposure": 0.0,
-            "est_margin": 0.0,
-            "max_risk": 0.0,
-            "sizing_status": "INVALID SL / ENTRY",
-        }
+    if broke_20d_high:
+        score += 20.0
+        reasons.append("20d high breakout (+20)")
+    elif nr7_breakout:
+        score += 15.0
+        reasons.append("NR7/ATR squeeze breakout (+15)")
 
-    max_risk_budget = cap * r_frac
-    max_notional_by_alloc = (cap * a_frac) * lev_mult
+    # 4. close > EMA20 > EMA50 (+10)
+    ema20 = row.get("ema20")
+    ema50 = row.get("ema50")
+    if ema20 is not None and ema50 is not None and close > float(ema20) > float(ema50):
+        score += 10.0
+        reasons.append("Close>EMA20>EMA50 (+10)")
 
-    qty_by_risk = math.floor(max_risk_budget / risk_per_share)
-    qty_by_alloc = math.floor(max_notional_by_alloc / entry_f)
-    qty = max(min(qty_by_risk, qty_by_alloc), 0)
+    # 5. relative strength vs Nifty over 5d (+10)
+    stock_5d = float(row.get("ret_5d_pct") or 0.0)
+    if (stock_5d - float(nifty_5d_pct or 0.0)) > 0.0:
+        score += 10.0
+        reasons.append("5d RS vs Nifty (+10)")
 
-    if qty <= 0:
-        return {
-            "qty": 0,
-            "exposure": 0.0,
-            "est_margin": 0.0,
-            "max_risk": 0.0,
-            "sizing_status": "SIZE TOO SMALL FOR RISK CAP",
-        }
+    # 6. sector index up (+10)
+    if float(sector_chg_pct or 0.0) > 0.0:
+        score += 10.0
+        reasons.append(f"Sector up {float(sector_chg_pct):+.2f}% (+10)")
 
-    exposure = round(qty * entry_f, 2)
-    est_margin = round(exposure / lev_mult, 2)
-    max_risk = round(qty * risk_per_share, 2)
-    lev_label = f"MIS {lev_mult:g}x" if lev_mult > 1.0 else "1x Cash"
+    day_low = float(row.get("day_low") or close)
+    target_1 = round(close + 0.5 * atr, 2)
+    target_2 = round(close + 0.8 * atr, 2)
+    sl = round(max(close - 1.0 * atr, day_low), 2)
 
     return {
-        "qty": qty,
-        "exposure": exposure,
-        "est_margin": est_margin,
-        "max_risk": max_risk,
-        "sizing_status": f"{lev_label} Assumed",
+        "btst_score": round(min(100.0, score), 2),
+        "btst_reasons": reasons,
+        "entry": round(close, 2),
+        "target_1": target_1,
+        "target_2": target_2,
+        "stop_loss": sl,
     }
-
-
-def build_directional_levels(entry: float, atr_val: float, ema20: float, vwap: float, is_bull: bool) -> dict | None:
-    c = float(entry or 0.0)
-    if c <= 0.0:
-        return None
-    a = float(atr_val or 0.0)
-    if a <= 0.0:
-        a = max(c * 0.015, 0.05)
-
-    if is_bull:
-        sl = round(max(c - 1.5 * a, min(float(ema20 or c), float(vwap or c)) * 0.992), 2)
-        if sl >= c:
-            sl = round(max(c - 1.5 * a, 0.05), 2)
-        if sl >= c:
-            return None
-        t1 = round(c + 1.8 * a, 2)
-        t2 = round(c + 3.0 * a, 2)
-    else:
-        sl = round(min(c + 1.5 * a, max(float(ema20 or c), float(vwap or c)) * 1.008), 2)
-        if sl <= c:
-            sl = round(c + 1.5 * a, 2)
-        if sl <= c:
-            return None
-        t1 = round(max(c - 1.8 * a, 0.05), 2)
-        t2 = round(max(c - 3.0 * a, 0.05), 2)
-
-    return {"stop_loss": sl, "target_1": t1, "target_2": t2}
-
-
-__all__ = [
-    "analyze",
-    "atr",
-    "build_directional_levels",
-    "clean_ohlcv",
-    "compute_indicators",
-    "cumulative_vwap",
-    "pct",
-    "position_size",
-]
